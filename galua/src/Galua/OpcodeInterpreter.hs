@@ -1,0 +1,507 @@
+{-# LANGUAGE RecordWildCards, NamedFieldPuns #-}
+{-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE BangPatterns #-}
+module Galua.OpcodeInterpreter where
+
+import           Control.Exception hiding (Handler)
+import           Control.Monad
+import           Control.Monad.IO.Class
+import           Data.Bits
+import           Data.Foldable
+import           Data.IORef
+import qualified Data.Vector as Vector
+
+
+import           Language.Lua.Bytecode
+import           Language.Lua.Bytecode.FunId
+import           Galua.Value
+import           Galua.Overloading
+import           Galua.Mach
+import           Galua.Number
+import           Galua.LuaString
+import qualified Galua.SizedVector as SV
+
+-- | Compute the 'Value' corresponding to a bytecode file 'Constant'.
+constantValue :: Constant -> IO Value
+constantValue k =
+  case k of
+    KNil      -> return Nil
+    KNum d    -> return (Number (Double d))
+    KInt i    -> return (Number (Int i))
+    KBool b   -> return (Bool b)
+    KString s -> String <$> fromByteString s
+    KLongString s -> String <$> fromByteString s
+
+
+
+-- | Attempt to load the instruction stored at the given address
+-- in the currently executing function.
+loadInstruction :: Int {- ^ instruction counter -} -> Mach OpCode
+loadInstruction i =
+  do (_,fun) <- asLuaFunction =<< getsExecEnv execFunction
+     case funcCode fun Vector.!? i of
+       Nothing -> interpThrow (BadPc i)
+       Just x -> return x
+
+-- | Attempt to load the EXTRAARG instruction stored at the given address
+-- in the currently executing function.
+loadExtraArg :: Int {- ^ program counter -} -> Mach Int
+loadExtraArg pc =
+  do instr <- loadInstruction pc
+     case instr of
+       OP_EXTRAARG k -> return k
+       _ -> interpThrow ExpectedExtraArg
+
+
+
+
+
+-- | Compute the result of executing the opcode at the given address
+-- within the current function execution environment.
+execute :: Int {- ^ program counter -} -> Mach a
+execute pc =
+
+  do instr <- loadInstruction pc
+     let advance      = jump 0
+         jump i       = machGoto (pc + i + 1)
+         getExtraArg  = loadExtraArg (pc+1)
+         tgt =: m     = m >>= set tgt >> advance
+
+     case instr of
+       OP_MOVE     tgt src -> tgt =: get src
+       OP_LOADK    tgt src -> tgt =: get src
+       OP_GETUPVAL tgt src -> tgt =: get src
+       OP_SETUPVAL src tgt -> tgt =: get src
+                   -- SETUPVAL's argument order is different!
+
+       OP_LOADKX tgt ->
+         do src <- Kst <$> getExtraArg
+            set tgt =<< get src
+            jump 1 -- skip over the extrarg
+
+       OP_LOADBOOL tgt b c ->
+         do set tgt (Bool b)
+            jump (if c then 1 else 0)
+
+       OP_LOADNIL tgt count ->
+         do traverse_ (\r -> set r Nil) [tgt .. plusReg tgt count]
+            advance
+
+       OP_GETTABUP tgt src tabKey ->
+         do t <- get src
+            k <- get tabKey
+            tgt =: indexValue t k
+
+       OP_GETTABLE tgt src tabKey ->
+         do t <- get src
+            k <- get tabKey
+            tgt =: indexValue t k
+
+       OP_SETTABUP tgt key src ->
+         do t <- get tgt
+            k <- get key
+            v <- get src
+            setTable t k v
+            advance
+
+       OP_SETTABLE tgt key src ->
+         do t <- get tgt
+            k <- get key
+            v <- get src
+            setTable t k v
+            advance
+
+       OP_NEWTABLE tgt arraySize hashSize ->
+        tgt =: (Table <$> machNewTable arraySize hashSize)
+
+       OP_SELF tgt src key ->
+         do t <- get src
+            k <- get key
+            v <- indexValue t k
+            set tgt v
+            set (succ tgt) t
+            advance
+
+       OP_ADD  tgt op1 op2 -> tgt =: binArithOp "__add" (+)       op1 op2
+       OP_SUB  tgt op1 op2 -> tgt =: binArithOp "__sub" (-)       op1 op2
+       OP_MUL  tgt op1 op2 -> tgt =: binArithOp "__mul" (*)       op1 op2
+       OP_MOD  tgt op1 op2 -> tgt =: opMod                        op1 op2
+       OP_POW  tgt op1 op2 -> tgt =: binArithOp "__pow" numberPow op1 op2
+       OP_DIV  tgt op1 op2 -> tgt =: binArithOp "__div" numberDiv op1 op2
+       OP_IDIV tgt op1 op2 -> tgt =: opIDiv                       op1 op2
+       OP_BAND tgt op1 op2 -> tgt =: binIntOp "__band" (.&.)      op1 op2
+       OP_BOR  tgt op1 op2 -> tgt =: binIntOp "__bor" (.|.)       op1 op2
+       OP_BXOR tgt op1 op2 -> tgt =: binIntOp "__bxor" xor        op1 op2
+       OP_SHL  tgt op1 op2 -> tgt =: binIntOp "__shl" wordshiftL  op1 op2
+       OP_SHR  tgt op1 op2 -> tgt =: binIntOp "__shr" wordshiftR  op1 op2
+
+       OP_UNM  tgt op1  -> tgt =: (get op1 >>= valueArith1 "__unm" negate)
+       OP_BNOT tgt op1  -> tgt =: (get op1 >>= valueInt1 "__bnot" complement)
+       OP_LEN  tgt op1  -> tgt =: (get op1 >>= valueLength         )
+       OP_NOT  tgt op1  -> tgt =: (get op1 >>= opNot               )
+
+       OP_CONCAT tgt start end ->
+         do xs  <- traverse get [start .. end]
+            tgt =: opConcat xs
+
+       OP_JMP mbCloseReg jmp ->
+         do traverse_ closeStack mbCloseReg
+            jump jmp
+
+       OP_EQ invert op1 op2 -> jump =<< relOp valueEqual     invert op1 op2
+       OP_LT invert op1 op2 -> jump =<< relOp valueLess      invert op1 op2
+       OP_LE invert op1 op2 -> jump =<< relOp valueLessEqual invert op1 op2
+
+       OP_TEST ra c ->
+          do a <- get ra
+             jump (if valueBool a == c then 0 else 1)
+
+       OP_TESTSET ra rb c ->
+          do b <- get rb
+             if valueBool b == c
+               then do set ra b
+                       advance
+               else jump 1
+
+       OP_CALL a b c ->
+         do u      <- get a
+            args   <- getCallArguments (succ a) b
+            result <- callValue u args
+            setCallResults a c result
+            advance
+
+       OP_TAILCALL a b _c ->
+         do u       <- get a
+            args    <- getCallArguments (succ a) b
+            (f,as)  <- resolveFunction u args
+            machTailcall f as
+
+       OP_RETURN a c ->
+         do vs <- getCallArguments a c
+            machReturn vs
+
+       OP_FORLOOP a sBx ->
+         do initial <- forloopAsNumber "initial" =<< get a
+            limit   <- forloopAsNumber "limit"   =<< get (plusReg a 1)
+            step    <- forloopAsNumber "step"    =<< get (plusReg a 2)
+            let next = initial + step
+                cond | 0 < step = next <= limit
+                     | otherwise = limit <= next
+            if cond
+              then do set a (Number next)
+                      set (plusReg a 3) (Number next)
+                      jump sBx
+              else advance
+
+       OP_FORPREP a jmp ->
+         do initial <- forloopAsNumber "initial" =<< get a
+            limit   <- forloopAsNumber "limit"   =<< get (plusReg a 1)
+            step    <- forloopAsNumber "step"    =<< get (plusReg a 2)
+            set a (Number (initial - step))
+            set (plusReg a 1) (Number limit) -- save back the Number form
+            set (plusReg a 2) (Number step)  -- save back the Number form
+            jump jmp
+
+       OP_TFORCALL a c ->
+         do f  <- get a
+            a1 <- get (plusReg a 1)
+            a2 <- get (plusReg a 2)
+            result <- callValue f [a1,a2]
+            let resultRegs = regRange (plusReg a 3) c
+            zipWithM_ set resultRegs (result ++ repeat Nil)
+            advance
+
+       OP_TFORLOOP a sBx ->
+         do v <- get (succ a)
+            if v == Nil
+              then advance
+              else do set a v
+                      jump sBx
+
+       OP_SETLIST a b c ->
+         do tab' <- get a
+            tab <- case tab' of
+                     Table tab -> return tab
+                     _ -> interpThrow SetListNeedsTable
+
+            count <-
+              if b == 0
+                 then do Reg top <- getTop
+                         let Reg aval = a
+                         return (top - aval - 1)
+                 else return b
+
+            (offset, skip) <-
+               if c == 0
+                 then do k <- getExtraArg
+                         return (50*k,1)
+                 else return (50 * (c-1), 0)
+
+            forM_ [1..count] $ \i ->
+              setTableRaw tab (Number (Int (offset+i))) =<< get (plusReg a i)
+
+            resetTop
+
+            jump skip
+
+       OP_CLOSURE tgt i ->
+         do (fid,closureFunc) <- getProto i
+            closureUpvals <- traverse getLValue (funcUpvalues closureFunc)
+            tgt =: (Closure <$> machNewClosure (LuaFunction fid closureFunc)
+                                                                closureUpvals)
+
+       OP_VARARG a b ->
+         do varargs <- getsExecEnv execVarargs
+            setCallResults a b =<< liftIO (readIORef varargs)
+            advance
+
+       OP_EXTRAARG{} -> interpThrow UnexpectedExtraArg
+
+
+-- | Get a list of the `count` values stored from `start`.
+getCallArguments :: Reg {- ^ start -} -> Count {- ^ count -} -> Mach [Value]
+getCallArguments a b =
+  do end <- case b of
+       CountTop   -> getTop
+       CountInt x -> return (plusReg a x)
+     vs <- traverse get [a .. pred end]
+     resetTop
+     return vs
+
+
+-- | Stores a list of results into a given register range.
+-- When expected is 'CountTop', values are stored up to TOP
+setCallResults ::
+  Reg     {- ^ starting register -} ->
+  Count   {- ^ results expected  -} ->
+  [Value] {- ^ results           -} ->
+  Mach ()
+setCallResults a b xs =
+  do end <- case b of
+              CountInt x -> return (plusReg a x)
+              CountTop -> top <$ setTop top
+                 where top = plusReg a (length xs)
+     zipWithM_ set [a .. pred end] (xs ++ repeat Nil)
+
+-- | Allocate fresh references for all registers from the `start` to the
+-- `TOP` of the stack
+closeStack :: Reg {- ^ start -} -> Mach ()
+closeStack (Reg a) =
+  do stack <- getsExecEnv execStack
+     liftIO $
+       do n <- SV.size stack
+          for_ [a .. n-1] $ \i ->
+             SV.set stack i =<< newIORef Nil
+
+-- | Interpret a value as an input to a for-loop. If the value
+-- is not a number an error is raised using the given name.
+forloopAsNumber :: String {- ^ argument name -} -> Value -> Mach Number
+forloopAsNumber label v =
+  case valueNumber v of
+    Just n -> return n
+    Nothing -> luaError ("'for' " ++ label ++ " must be a number")
+
+asLuaFunction :: FunctionValue -> Mach (FunId, Function)
+asLuaFunction run =
+  case run of
+    LuaFunction fid f -> return (fid,f)
+    _ -> interpThrow NonLuaFunction
+------------------------------------------------------------------------
+-- Reference accessors
+------------------------------------------------------------------------
+
+-- | Class for types that are indexes to references
+class LValue a where
+  getLValue :: a -> Mach (IORef Value)
+
+instance LValue UpIx where
+  getLValue (UpIx i) =
+    do upvals <- getsExecEnv execUpvals
+       case upvals Vector.!? i of
+         Nothing -> interpThrow (BadUpval i)
+         Just x -> return x
+
+instance LValue Reg where
+  getLValue (Reg i) =
+    do stack <- getsExecEnv execStack
+       liftIO (SV.get stack i)
+
+instance LValue Upvalue where
+  getLValue (UpUp  x) = getLValue x
+  getLValue (UpReg x) = getLValue x
+
+set :: LValue a => a -> Value -> Mach ()
+set r !x =
+  do ref <- getLValue r
+     liftIO (writeIORef ref x)
+
+-- | Class for types that are indexes to values.
+class    RValue a       where get :: a -> Mach Value
+instance RValue Upvalue where get = lvalToRval
+instance RValue UpIx    where get = lvalToRval
+instance RValue Reg     where get = lvalToRval
+
+lvalToRval :: LValue a => a -> Mach Value
+lvalToRval r = liftIO . readIORef =<< getLValue r
+
+instance RValue RK where
+  get (RK_Reg r) = get r
+  get (RK_Kst k) = get k
+
+instance RValue Kst where
+  get (Kst i) =
+    do (_fid,Function{..}) <- asLuaFunction =<< getsExecEnv execFunction
+       case funcConstants Vector.!? i of
+         Nothing -> interpThrow (BadConstant i)
+         Just x -> liftIO (constantValue x)
+
+getProto :: ProtoIx -> Mach (FunId,Function)
+getProto (ProtoIx i) =
+  do (fid,f) <- asLuaFunction =<< getsExecEnv execFunction
+     case funcProtos f Vector.!? i of
+       Nothing -> interpThrow (BadProto i)
+       Just x  -> return (subFun fid i,x)
+
+------------------------------------------------------------------------
+-- Unary operations
+------------------------------------------------------------------------
+
+type UnOp m = Value -> m Value
+
+opNot :: Monad m => UnOp m
+opNot x = return (Bool (not (valueBool x)))
+
+
+
+------------------------------------------------------------------------
+-- Binary operations
+------------------------------------------------------------------------
+
+
+
+
+type BinOp = Value -> Value -> IO Value
+
+opIDiv :: RK -> RK -> Mach Value
+opIDiv src1 src2 =
+  do x <- get src1
+     y <- get src2
+     case (x,y) of
+       (Number (Int _), Number (Int 0)) -> luaError "atempt to divide by zero"
+       _ -> valueArith2 "__idiv" numberIDiv x y
+
+opMod :: RK -> RK -> Mach Value
+opMod src1 src2 =
+  do x <- get src1
+     y <- get src2
+     case (x,y) of
+       (Number (Int _), Number (Int 0)) -> luaError "atempt to perform n%0"
+       _ -> valueArith2 "__mod" numberMod x y
+
+binArithOp :: String -> (Number -> Number -> Number) -> RK -> RK -> Mach Value
+binArithOp event f src1 src2 =
+  do x1 <- get src1
+     x2 <- get src2
+     valueArith2 event f x1 x2
+
+binIntOp :: String -> (Int -> Int -> Int) -> RK -> RK -> Mach Value
+binIntOp event f src1 src2 =
+  do x1 <- get src1
+     x2 <- get src2
+     valueInt2 event f x1 x2
+
+
+
+------------------------------------------------------------------------
+-- Relational operations
+------------------------------------------------------------------------
+
+relOp ::
+  (Value -> Value -> Mach Bool) ->
+  Bool -> RK -> RK -> Mach Int {- ^ how many instructions to advance -}
+relOp (?) invert op1 op2 =
+  do x1  <- get op1
+     x2  <- get op2
+     -- if ((RK(B) ? RK(C)) ~= A) then pc++
+     res <- x1 ? x2
+     return (if res /= invert then 1 else 0)
+
+
+------------------------------------------------------------------------
+-- Interpreter failures
+------------------------------------------------------------------------
+
+-- | Raise an exception due to a bug in the implementation of either the
+-- interpreter or the bytecode compiler. These exceptions are not accessible
+-- to the executing Lua program and should never occur due to a bug in a
+-- user program.
+interpThrow :: InterpreterFailureType -> Mach b
+interpThrow e = liftIO (throwIO (InterpreterFailure {-loc-} e))
+
+
+-- | Failure type paired with the stack trace at the time of failure
+data InterpreterFailure =
+      InterpreterFailure {-[LocationInfo]-} InterpreterFailureType
+
+instance Exception InterpreterFailure
+
+-- | Types of fatal interpreter failures
+data InterpreterFailureType
+  = BadProto Int
+  | BadPc Int
+  | BadStack Int
+  | BadUpval Int
+  | BadConstant Int
+  | ExpectedExtraArg
+  | UnexpectedExtraArg
+  | SetListNeedsTable
+  | NonLuaFunction
+  deriving (Show)
+
+instance Show InterpreterFailure where
+  show (InterpreterFailure {-loc-} e) = unlines
+    ( "Interpreter failed!"
+    : [("Exception: " ++ show e)]
+    -- : ""
+    -- : map prettyLocationInfo loc
+    )
+
+
+--------------------------------------------------------------------------------
+
+
+
+-- | Get the register that is one beyond the last valid
+-- register. This value is meaningful when dealing with
+-- variable argument function calls and returns.
+getTop :: Mach Reg
+getTop =
+  do stack <- getsExecEnv execStack
+     n     <- liftIO (SV.size stack)
+     return (Reg n)
+
+resetTop :: Mach ()
+resetTop =
+  do (_,fun) <- asLuaFunction =<< getsExecEnv execFunction
+     let n = funcMaxStackSize fun
+     setTop (Reg n)
+
+-- | Update TOP and ensure that the stack is large enough
+-- to index up to (but excluding) TOP.
+setTop :: Reg -> Mach ()
+setTop (Reg newLen) =
+  do stack <- getsExecEnv execStack
+
+     liftIO $
+       do oldLen <- SV.size stack
+
+          if oldLen <= newLen
+
+            -- Grow to new size
+            then replicateM_ (newLen - oldLen) $
+                    SV.push stack =<< newIORef Nil
+
+            -- Release references
+            else SV.shrink stack (oldLen - newLen)

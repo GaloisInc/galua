@@ -1,0 +1,12 @@
+prefix=INSTALL_DIR
+exec_prefix=${prefix}/bin
+includedir=${prefix}/include/galua
+libdir=${prefix}/lib
+
+Name:         libgalua-dbg
+Version:      0.1
+Description:  the `galua-dbg` library, used for debugging Lua.
+Cflags:       -rdynamic -I${includedir}
+Libs:         -L${libdir} -lgalua-dbg -lgmp -lm -lrt -ldl -lz -lpthread -lutil
+
+

@@ -1,0 +1,242 @@
+<!doctype html>
+<html>
+<head>
+<title>Code Viewer</title>
+<script src="jquery.js"></script>
+<script src="uikit/js/uikit.js"></script>
+<link rel="stylesheet" href="uikit/css/uikit.gradient.css"/>
+<link rel="stylesheet" href="code.css">
+<script>
+function drawLine(breakPoints,errors) {
+
+  function opCodeKey(o) { return o.path.join() + ':' + o.opcode }
+
+
+  function setClass(x,y,b) { if (b) x.addClass(y); else x.removeClass(y) }
+
+  function addSpinner(here) {
+    var spinner = $('<i/>').addClass('uk-icon-gear uk-icon-spin uk-hidden')
+    here.prepend(spinner)
+    return spinner
+  }
+
+  function addBrkPoint(here, startOn) {
+    var brkIcon = $('<i/>')
+                  .addClass('uk-icon-arrow-circle-right uk-text-primary')
+    if (startOn !== true) brkIcon.addClass('uk-hidden')
+
+    here.append(brkIcon)
+    var spin = addSpinner(here)
+
+    return { setSpin:  function(on) { setClass(spin,   'uk-hidden', !on) }
+           , setBrk:   function(on) { setClass(brkIcon,'uk-hidden', !on) }
+           }
+  }
+
+
+
+  function lineSkeleton() {
+    var row   = $('<tr/>')
+    var err   = $('<td/>').addClass('uk-block-muted ui-text-middle')
+                          .css('padding-left', '5px')
+    var num1  = $('<td/>')
+                .addClass('uk-block-muted uk-text-muted')
+                .addClass('uk-text-middle uk-text-right')
+                .css('padding-left', '5px')
+
+    var num2 = $('<td/>').addClass('uk-block-muted uk-text-muted')
+                         .addClass('uk-text-middle uk-text-right')
+                         .css('padding-left', '5px')
+
+    var text = $('<td/>').addClass('uk-text-left uk-text-nowrap code_line')
+
+    row.append(err,num1,num2,text)
+
+    return { row: row, err: err, num1: num1, num2: num2, text: text }
+  }
+
+
+  function mkClass(x) { return 'ops_' + x }
+
+
+  return function(ix,line) {
+
+    var subs    = []
+    var here    = $('#theCode')
+    var theLine = null
+
+    // Compute if the source line has errors or break points.
+    // A source line has err/brk if any of its opcodes do.
+    var errorNum = 0
+    var breakNum = 0
+    jQuery.each(line.opcodes, function(i,o) {
+      if (errors[opCodeKey(o)]      === true) ++errorNum
+      if (breakPoints[opCodeKey(o)] === true) ++breakNum
+    })
+
+    if (line.line !== null) drawSrcLine()
+    jQuery.each(line.opcodes,drawOpCode)
+
+
+
+    // Draw the main srouce line
+    function drawSrcLine() {
+      var skel = lineSkeleton()
+      var num  = skel.num1
+      var text = skel.text
+
+      theLine = addBrkPoint(num, breakNum !== 0)
+
+      if (errorNum > 0)
+        skel.err.append( $('<i>')
+                .addClass('uk-icon-times-circle uk-text-danger'))
+
+      num.append($('<span/>')
+                 .addClass('uk-text-small')
+                 .text(' ' + line.line))
+         .click(srcLineClicked)
+
+      if (line.opcodes.length > 0) {
+        num.css('cursor','pointer')
+
+        text
+        .css('cursor','pointer')
+        .attr( 'data-uk-toggle'
+             , JSON.stringify({ target: '.' + mkClass(line.line)
+                              , animation: 'uk-animation-slide-top'
+                             })
+             )
+      }
+
+      jQuery.each(line.text, function(ix,t) {
+        text.append($('<span/>')
+                    .text(t.lexeme)
+                    .addClass(t.token)
+                   )
+      })
+      here.append(skel.row)
+    }
+
+
+    // When we click a source line we either:
+    //  1. Remove all break points (if any), or
+    //  2. Add a break point to the first instruction.
+    function srcLineClicked() {
+      theLine.setSpin(true)
+
+      function done() { theLine.setSpin(false) }
+
+      if (breakNum > 0) {
+        // Click on all op-code lines that have a break point.
+
+        var todo = []
+        jQuery.each(line.opcodes, function(i,o) {
+          if (breakPoints[opCodeKey(o)] === true) todo.push(i)
+        })
+
+        function next(i) {
+          if (i >= todo.length) { done(); return }
+          subLineClicked(todo[i], function() { next(i+1) })
+        }
+        next(0)
+
+
+      } else {
+        // Click on the first op-code if any.
+
+        if (line.opcodes.length > 0) subLineClicked(0,done)
+        else done()
+      }
+    }
+
+
+    // Draw a code-viwere line
+    function drawOpCode(i,op) {
+      var skel = lineSkeleton()
+      var num  = skel.num2
+      num.css('cursor', 'pointer')
+
+
+      if (line.line !== null) skel.row.addClass(mkClass(line.line))
+                                  .addClass('uk-hidden')
+
+      var key    = opCodeKey(op)
+      subs[i]    = addBrkPoint(num,breakPoints[key] === true)
+      subs[i].id = key
+
+      num.append($('<span/>').addClass('uk-text-small').text(' ' + op.opcode))
+         .click(function() { subLineClicked(i, function() {}) })
+
+      skel.text.addClass('uk-text-muted uk-text-small')
+               .css('padding-left', '1em')
+               .text(op.text)
+
+
+      if (errors[key] === true)
+        skel.err.append( $('<i>')
+                .addClass('uk-icon-times-circle uk-text-danger'))
+
+      here.append(skel.row)
+    }
+
+
+    // This is what happens when we click on the given sub-line
+    function subLineClicked(i,k) {
+      var me      = subs[i]
+      var id      = subs[i].id
+      var hasBrk  = breakPoints[id] === true
+
+      me.setSpin(true)
+
+      // Complete interaction.  Also usied when server failed.
+      function done() { me.setSpin(false); k() }
+
+      // Server interaction went OK
+      function ok() {
+        hasBrk          = !hasBrk
+        breakPoints[id] = hasBrk
+        subs[i].setBrk(hasBrk)
+        if (hasBrk) ++breakNum
+        else --breakNum
+
+        if (theLine !== null) theLine.setBrk(breakNum !== 0)
+
+        done()
+      }
+
+      // XXX: JUST TESTING
+      console.log(id, hasBrk ? 'removing' : 'adding')
+      setTimeout(function() { ok() }, 1000 )
+    }
+  }
+}
+
+$(document).ready(function() {
+  var errs = []
+  var brks = []
+  //errs[2] = true
+  //brks[1] = true
+  //brks[5] = true
+
+  jQuery.get('/function/0', {}, function(x) {
+    jQuery.each(x,drawLine(brks,errs))
+  })
+})
+
+</script>
+</head>
+<body>
+<div class="uk-panel uk-overflow-container">
+<ul class="uk-breadcrumb">
+<li><a href="getListOfFunction">My file.lua</a></li>
+<li><a href="getFunctionF1">F1</a></li>
+<li><a href="getFunctionF2">F2</a></li>
+<li>F3</li>
+</ul>
+<table style="border-collapse:collapse">
+<tbody id="theCode" data-uk-observe>
+</tbody>
+</table>
+</div>
+
+</html>

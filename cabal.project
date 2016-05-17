@@ -1,0 +1,9 @@
+packages:
+  lib/lua-bc
+  lib/config-value-getopt
+  lib/wp
+  lib/hashtables-1.2.1.0
+  lib/language-lua
+  galua
+  galua-dbg
+  galua-wp

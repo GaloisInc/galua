@@ -1,0 +1,10 @@
+packages:
+- lib/hashtables
+- lib/language-lua
+- galua
+- galua-dbg
+resolver: lts-5.17
+extra-deps:
+- config-value-0.4.0.1
+- config-value-getopt-0.1.0.0
+- lua-bc-0.1

@@ -1,0 +1,8 @@
+[submodule "lib/language-lua"]
+	path = lib/language-lua
+	url = https://github.com/glguy/language-lua
+	branch = happy
+[submodule "lib/hashtables"]
+	path = lib/hashtables
+	url = https://github.com/glguy/hashtables
+	branch = nextByIndex

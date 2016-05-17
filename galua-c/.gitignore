@@ -1,0 +1,5 @@
+/inplace
+/*.a
+/*.o
+/galua
+/galua-dbg

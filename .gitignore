@@ -1,0 +1,13 @@
+.*.swp
+dist
+dist-newstyle
+.stack-work
+.cabal-sandbox
+cabal.sandbox.config
+cabal.project.local
+*.so
+log
+*.dSYM
+galua-c/*.a.gz
+config.txt
+log

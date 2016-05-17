@@ -1,0 +1,145 @@
+{-# LANGUAGE RecordWildCards #-}
+module Galua.SizedVector
+  ( SizedVector
+  , new
+  , push
+  , pop
+  , size
+  , shrink
+  , set
+  , get
+  , getMaybe
+  , rotateSubset
+  , fromList
+  , toList
+  ) where
+
+import Data.IORef
+import qualified Data.Vector.Mutable as IOVector
+import qualified Data.Vector as Vector
+import Data.Vector.Mutable (IOVector)
+import Data.Foldable (for_)
+import Control.Exception
+import Control.Monad
+
+newtype SizedVector a = SizedVector (IORef (SizedVector' a))
+
+data SizedVector' a = SizedVector'
+  { svCount :: {-# UNPACK #-} !Int
+  , svArray :: {-# UNPACK #-} !(IOVector a)
+  }
+
+data SizedVectorException = SizedVectorException String
+  deriving (Read, Show)
+
+instance Exception SizedVectorException
+
+failure :: String -> IO a
+failure str = throwIO (SizedVectorException str)
+
+initialAllocation :: Int
+initialAllocation = 4
+
+-- Allocate a new, empty, resizable vector
+new :: IO (SizedVector a)
+new =
+  do let svCount = 0
+     svArray <- IOVector.unsafeNew initialAllocation
+     SizedVector <$> newIORef SizedVector'{..}
+
+push :: SizedVector a -> a -> IO ()
+push (SizedVector ref) x =
+  do SizedVector'{..} <- readIORef ref
+
+     v <- if svCount < IOVector.length svArray
+            then return svArray
+            else do let l = IOVector.length svArray
+                    unless (l < maxBound`div`2) (failure "push: vector too big")
+                    let l' = max initialAllocation -- avoid doubling 0 due to fromList
+                           $ 2*IOVector.length svArray
+                    IOVector.unsafeGrow svArray l'
+
+     IOVector.write v svCount x
+     writeIORef ref $! SizedVector' (svCount+1) v
+
+pop :: SizedVector a -> IO ()
+pop v = shrink v 1
+
+shrink :: SizedVector a -> Int -> IO ()
+shrink (SizedVector ref) n =
+  do SizedVector'{..} <- readIORef ref
+     unless (0 <= n && n <= svCount) (failure "shrink: bad argument")
+
+     let svCount' = svCount - n
+
+     for_ [svCount' .. svCount-1] $ \i ->
+       IOVector.unsafeWrite svArray i (error "uninitialized")
+
+     writeIORef ref $! SizedVector' svCount' svArray
+
+size :: SizedVector a -> IO Int
+size (SizedVector ref) = svCount <$> readIORef ref
+
+get :: SizedVector a -> Int -> IO a
+get sv i = maybe (failure "Get: bad index") return =<< getMaybe sv i
+
+getMaybe :: SizedVector a -> Int -> IO (Maybe a)
+getMaybe (SizedVector ref) i =
+  do SizedVector'{..} <- readIORef ref
+     if 0 <= i && i < svCount
+       then Just <$> IOVector.unsafeRead svArray i
+       else return Nothing
+
+set :: SizedVector a -> Int -> a -> IO ()
+set (SizedVector ref) i x =
+  do SizedVector'{..} <- readIORef ref
+     unless (0 <= i && i < svCount) (failure "set: bad index")
+     IOVector.unsafeWrite svArray i x
+
+
+-- | Rotate a subset of a vector by a given offset. Positive rotations advance
+-- elements to the right. Negative rotations advance elements to the left.
+rotateSubset ::
+  SizedVector a ->
+  Int {- ^ initial index -} ->
+  Int {- ^ count         -} ->
+  Int {- ^ offset        -} ->
+  IO ()
+rotateSubset v start count offset
+  | offset < 0 = leftRotateSubset v start count (-offset)
+  | otherwise  = leftRotateSubset v start count (count-offset)
+
+leftRotateSubset ::
+  SizedVector a ->
+  Int {- ^ initial index -} ->
+  Int {- ^ count         -} ->
+  Int {- ^ offset        -} ->
+  IO ()
+leftRotateSubset (SizedVector ref) start count offset =
+  do SizedVector'{..} <- readIORef ref
+
+     unless (0 <= start && 0 <= count && start <= svCount - count)
+            (failure "rotateSubset: bad start/count")
+     unless (0 <= offset && offset <= count)
+            (failure "rotateSubset: bad offset")
+
+     let rev i n = rev' i (i+n-1)
+
+         rev' l r = when (l < r)
+                  $ do IOVector.unsafeSwap svArray l r
+                       rev' (l+1) (r-1) :: IO ()
+
+     rev start offset
+     rev (start+offset) (count - offset)
+     rev start count
+
+fromList :: [a] -> IO (SizedVector a)
+fromList xs =
+  do a <- Vector.thaw (Vector.fromList xs)
+     let sv = SizedVector'{ svArray = a, svCount = IOVector.length a }
+     SizedVector <$> newIORef sv
+
+toList :: SizedVector a -> IO [a]
+toList (SizedVector ref) =
+  do SizedVector'{..} <- readIORef ref
+     Vector.toList <$> Vector.freeze (IOVector.unsafeTake svCount svArray)

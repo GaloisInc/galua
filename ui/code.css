@@ -1,0 +1,58 @@
+.cur-line td {
+  background-color: #fee;
+}
+
+.code_line {
+  white-space: pre;
+  font-size: 12px;
+  font-family: Consolas, monospace, serif;
+}
+
+.gal_code_box {
+  background-color: #eeeeee;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  margin-left: 5px;
+  padding: 3px;
+}
+
+.keyword {
+  color: #2d7091;
+  font-weight: bold;
+}
+
+.operator {
+  color: #2d7091;
+  font-weight: bold;
+}
+
+.identifier {
+}
+
+
+.literal {
+  color: #faa732;
+}
+
+.symbol {
+  color: #0e7c6b;
+  font-weight: bold;
+}
+
+.comment {
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color: #8cc14c;
+}
+
+.white_space {
+  white-space: pre;
+}
+
+.error {
+  background-color: red;
+  color: white;
+}
+
+.min-width-auto {
+  min-width: 0px !important;
+}
