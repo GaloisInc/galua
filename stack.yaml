@@ -3,6 +3,7 @@ packages:
 - lib/language-lua
 - galua
 - galua-dbg
+- galua-analysis
 resolver: lts-5.17
 extra-deps:
 - config-value-0.4.0.1

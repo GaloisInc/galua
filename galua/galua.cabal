@@ -38,21 +38,6 @@ library
                        Galua.CArgs
                        Galua.CObjInfo
 
-                       Galua.Micro.AST
-                       Galua.Micro.Monad
-                       Galua.Micro.Translate
-                       Galua.Micro.AnalyzeRefs
-                       Galua.Micro.ExplicitRefs
-                       Galua.Micro.Eval
-                       Galua.Micro.Type.Value
-                       Galua.Micro.Type.Monad
-                       Galua.Micro.Type.Eval
-                       Galua.Micro.Type.Pretty
-                       Galua.Micro.Type.Primitives
-                       Galua.Micro.Type.Filter
-                       Galua.Micro.Type.Import
-
-
   other-modules:       CMath
                        Process
                        Galua.CApi
@@ -71,7 +56,6 @@ library
                        transformers         >=0.4  && <0.5,
                        numeric-extras       >=0.1  && <0.2,
                        pretty               >=1.1  && <1.2,
-                       monadLib             >=3.7  && <3.8,
                        process              >=1.2  && <1.5,
                        deepseq              >=1.4  && <1.5
 
@@ -121,9 +105,3 @@ library
   cc-options:          -std=c99 -g
   default-language:    Haskell2010
 
-
--- executable GaluaMicroTest
---   buildable: False
---   main-is: MicroOpCode.hs
---   build-depends: base, galua, lua-bc, vector, containers, pretty-show
---   default-language:    Haskell2010

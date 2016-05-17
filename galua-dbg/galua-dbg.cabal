@@ -48,7 +48,9 @@ library
                        transformers,
                        monadLib,
                        filepath,
-                       galua
+                       galua,
+                       galua-analysis
+
 
   hs-source-dirs:      src
 
