@@ -36,5 +36,4 @@ shared_lib.so: shared_lib.c
 	$(CC) $(CFLAGS) $(SHARED_OPTS) -o $@ $^
 
 clean:
-	rm -f main shared_lib.so core core.*
-
+	rm -fr main shared_lib.so core core.* shared_lib.so.dSYM main.dSYM
