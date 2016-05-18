@@ -14,7 +14,7 @@
 #define LUA_COMPAT_5_2
 #define LUA_COMPAT_LOADSTRING
 
-extern size_t galua_writestring(char*, size_t);
+extern size_t galua_writestring(const char*, size_t);
 #define lua_writestring(s,l) galua_writestring(s,l)
 
 /*

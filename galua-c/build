@@ -75,7 +75,7 @@ ARCH=$(arch)
 case $UNAME in
   "Linux" | "FreeBSD" )
       $LD -o $LIBNAME -arch $ARCH --relocatable --whole-archive \
-        newstate.o "${HS_LD_FLAGS[@]}"
+        newstate.o liblualibs.a "${HS_LD_FLAGS[@]}"
 
       # This only seems to work on 64-bit systems
       if [ "$ARCH" = "x86_64" ]; then
@@ -123,6 +123,7 @@ case $UNAME in
        -arch x86_64 \
        -exported_symbols_list lua_api.txt \
        newstate.o \
+       liblualibs.a \
        "${HS_LD_FLAGS[@]}"
 
     # Build executable

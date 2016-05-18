@@ -1,15 +1,27 @@
-.PHONY: all install clean distclean
+.PHONY: all install clean distclean prepare
 
 TOP=..
 
 DIST=inplace
+CC=gcc
+LUALIBS=liblualibs.a
 
-install:
-	mkdir -p $(DIST)
-	mkdir -p $(DIST)/bin
-	mkdir -p $(DIST)/include
-	mkdir -p $(DIST)/lib
-	cp -r $(TOP)/galua/include $(DIST)/include/galua
+LUALIBS_OBJS=\
+     lualibs/objs/lauxlib.o \
+     lualibs/objs/lbaselib.o \
+     lualibs/objs/lbitlib.o \
+     lualibs/objs/lcorolib.o \
+     lualibs/objs/ldblib.o \
+     lualibs/objs/liolib.o \
+     lualibs/objs/lmathlib.o \
+     lualibs/objs/loadlib.o \
+     lualibs/objs/loslib.o \
+     lualibs/objs/lstrlib.o \
+     lualibs/objs/ltablib.o \
+     lualibs/objs/lutf8lib.o \
+     lualibs/objs/linit.o
+
+install: prepare ${LUALIBS}
 	./build galua
 	cp libgalua.a $(DIST)/lib
 	cp galua $(DIST)/bin
@@ -19,13 +31,29 @@ install:
 	gzip -f libgalua.a
 	gzip -f libgalua-dbg.a
 
+prepare:
+	mkdir -p $(DIST)
+	mkdir -p $(DIST)/bin
+	mkdir -p $(DIST)/include/galua
+	mkdir -p $(DIST)/lib
+	cp $(TOP)/galua/include/* $(DIST)/include/galua
+	cp $(TOP)/galua-c/lualibs/include/* $(DIST)/include/galua
+
 all:
 	./build-lib galua
 	./build-lib galua-dbg
 
 
 clean:
-	rm -f galua libgalua.a.gz galua-dbg libgalua-dbg.a.gz newstate.o
+	rm -f galua libgalua.a.gz galua-dbg libgalua-dbg.a.gz newstate.o ${LUALIBS}
+	rm -fr inplace lualibs/objs
 
 distclean: clean
 	rm -rf $(DIST)
+
+lualibs/objs/%.o: lualibs/src/%.c
+	mkdir -p lualibs/objs
+	${CC} -c -Iinplace/include/galua -o $@ $<
+
+${LUALIBS}: ${LUALIBS_OBJS}
+	ar -rcs $@ $^

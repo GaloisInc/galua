@@ -63,24 +63,9 @@ library
   hs-source-dirs:      src
 
   c-sources:           cbits/lua_capi.c
-                       cbits/liolib.c
-                       cbits/loslib.c
-                       cbits/ltablib.c
-                       cbits/lbitlib.c
-                       cbits/lmathlib.c
-                       cbits/lstrlib.c
-                       cbits/lutf8lib.c
-                       cbits/lauxlib.c
-                       cbits/ldblib.c
-                       cbits/lbaselib.c
-                       cbits/loadlib.c
-                       cbits/lcorolib.c
-                       cbits/linit.c
-  includes:            lauxlib.h
-                       lprefix.h
+  includes:            lprefix.h
                        luaconf.h
                        lua.h
-                       lualib.h
 
 
   -- cpp for Haskell CPP, cc for c sources
@@ -92,11 +77,9 @@ library
     cpp-options:       -DLUA_USE_MACOSX
 
   include-dirs:        include
-  install-includes:    lauxlib.h
-                       lprefix.h
+  install-includes:    lprefix.h
                        luaconf.h
                        lua.h
-                       lualib.h
 
 
   cc-options:          -std=c99 -g
