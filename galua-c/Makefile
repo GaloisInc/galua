@@ -6,6 +6,15 @@ DIST=inplace
 CC=gcc
 LUALIBS=liblualibs.a
 
+UNAME:=$(shell uname -s)
+
+ifeq ($(UNAME), Darwin)
+USE_FLAGS=-DLUA_USE_MACOSX
+else
+USE_FLAGS=-DLUA_USE_LINUX
+endif
+
+
 LUALIBS_OBJS=\
      lualibs/objs/lauxlib.o \
      lualibs/objs/lbaselib.o \
@@ -53,7 +62,7 @@ distclean: clean
 
 lualibs/objs/%.o: lualibs/src/%.c
 	mkdir -p lualibs/objs
-	${CC} -c -Iinplace/include/galua -o $@ $<
+	${CC} -c $(USE_FLAGS) -Iinplace/include/galua -o $@ $<
 
 ${LUALIBS}: ${LUALIBS_OBJS}
 	ar -rcs $@ $^
