@@ -283,9 +283,11 @@ function drawCollapsed(dbgState, lab, v) {
     case 'table':
     case 'closure':
     case 'user_data':
-      var orig = drawOrigin(v.origin)
-      icons.push(orig.icon)
-      here.unshift(orig.dom)
+      if (v.origin) {
+        var orig = drawOrigin(v.origin)
+        icons.push(orig.icon)
+        here.unshift(orig.dom)
+      }
   }
 
 
