@@ -113,7 +113,7 @@ case $UNAME in
       C_LD_FLAGS+=("-lpthread")
 
       # Build executable
-      $CC main.c -g -o $TGT -I$TOP/galua/include -std=gnu99 \
+      $CC main.c -g -o $TGT -I$TOP/galua-c/inplace/include/galua -std=gnu99 \
               -rdynamic -L. -l$TGT "${C_LD_FLAGS[@]}"
       strip --strip-unneeded $TGT
 
@@ -131,7 +131,7 @@ case $UNAME in
             -o $TGT \
             -std=gnu99 \
             -Wl,-no_compact_unwind \
-            -I$TOP/galua/include \
+            -I$TOP/galua-c/inplace/include/galua \
             -L. -l$TGT \
             "${C_LD_FLAGS[@]}"
 

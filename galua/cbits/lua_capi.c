@@ -9,7 +9,6 @@
 #include <errno.h>
 
 #include "lua.h"
-#include "lauxlib.h"
 #include "Galua_stub.h"
 #include "Galua/CApi_stub.h"
 #include "Rts.h"
@@ -906,12 +905,3 @@ static inline void lua_pushunsigned_ (lua_State *L, lua_Unsigned n) { lua_pushun
 #undef lua_pushunsigned
 LUA_API
 void lua_pushunsigned (lua_State *L, lua_Unsigned n) { lua_pushunsigned_(L,n); }
-
-
-LUALIB_API lua_Unsigned luaL_checkunsigned_(lua_State *L, int arg) {
-  return (lua_Unsigned)luaL_checkunsigned(L,arg);
-}
-#undef luaL_checkunsigned
-LUALIB_API lua_Unsigned luaL_checkunsigned(lua_State *L, int arg) {
-  return (lua_Unsigned)luaL_checkunsigned_(L,arg);
-}
