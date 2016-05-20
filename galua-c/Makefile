@@ -28,7 +28,8 @@ LUALIBS_OBJS=\
      lualibs/objs/lstrlib.o \
      lualibs/objs/ltablib.o \
      lualibs/objs/lutf8lib.o \
-     lualibs/objs/linit.o
+     lualibs/objs/linit.o \
+     lualibs/objs/lcompat.o
 
 install: prepare ${LUALIBS}
 	./build galua
