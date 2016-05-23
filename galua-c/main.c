@@ -34,9 +34,11 @@ int main(int argc, char**argv) {
   }
 
   luaL_openlibs(L);
+
   res = luaL_loadfile(L, argv[0]);
   if (res != LUA_OK) {
-    fprintf(stderr, "%s: Failed to load file\n", __progname);
+    const char *msg = lua_tostring(L, -1);
+    fprintf(stderr, "%s: Failed to load file\n%s", __progname, msg);
     exit(EXIT_FAILURE);
   }
 
