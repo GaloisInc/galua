@@ -32,7 +32,6 @@ library
                        Galua.Table
                        Galua.Loc
                        Galua.Stepper
-                       Galua.CArgs
                        Galua.CObjInfo
 
   other-modules:       CMath

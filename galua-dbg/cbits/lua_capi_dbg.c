@@ -2,7 +2,6 @@
 #include "Rts.h"
 #include "Galua/Debugger/Server_stub.h"
 
-extern int    galua_argu;
 extern int    galua_argc;
 extern char **galua_argv;
 
@@ -15,11 +14,11 @@ lua_State *lua_newstate_dbg (lua_Alloc f, void *ud) {
 
   if (galua_argc == 0) {
     hs_init_ghc(NULL,NULL,config);
-    return galua_newstate_dbg(&galua_argu, port_offset++);
+    return galua_newstate_dbg(port_offset++);
   }
 
   hs_init_ghc(&galua_argc,&galua_argv,config);
-  res = galua_newstate_dbg(&galua_argu, port_offset++);
+  res = galua_newstate_dbg(port_offset++);
   return res;
 }
 

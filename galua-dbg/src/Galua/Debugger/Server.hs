@@ -3,8 +3,7 @@ module Galua.Debugger.Server () where
 
 import           Language.Lua.Bytecode.FunId
 
-import           Galua.Debugger.Options(Options(optPrintHelp), options,
-                                                              defaultOptions)
+import           Galua.Debugger.Options(Options(..), defaultOptions)
 import           Galua.Debugger
 import           Galua.Debugger.View
                   (exportDebugger,watchExportable,expandExportable,
@@ -12,7 +11,6 @@ import           Galua.Debugger.View
 import           Galua.Debugger.EmbedDirectory (embedDirectory)
 import qualified Galua.Value as G
 import           Galua.Number(parseNumber)
-import           Galua.CArgs(galuaWithArgs)
 import           Galua.LuaString
 
 import           Config
@@ -42,6 +40,8 @@ import           Data.Functor.Constant
 import           Data.Foldable
 import           Data.Text (Text)
 import           Data.Text.Read(decimal)
+import           Data.Map (Map)
+import qualified Data.Map as Map
 import qualified Data.Text as Text
 import qualified Data.Text.IO as Text
 import           Data.Text.Encoding(decodeUtf8With)
@@ -61,31 +61,22 @@ import           Foreign.C(CInt(..))
 
 
 foreign export ccall "galua_newstate_dbg"
-  startServerC :: Ptr CInt -> CInt -> IO (Ptr ())
+  startServerC :: CInt -> IO (Ptr ())
 
-startServerC :: Ptr CInt {- how many command line options we used -} ->
-               CInt      {- offset for port -} ->
-               IO (Ptr ())
-startServerC argu portOffset =
-  galuaWithArgs argu options (Right defaultOptions) nullPtr $ \mbOpts ->
-    case mbOpts of
-      Right opts -> startServer opts (fromIntegral portOffset)
-      Left _errs  -> return nullPtr -- XXX: report errors
+startServerC :: CInt {- offset for port -} -> IO (Ptr ())
+startServerC portOffset = startServer (fromIntegral portOffset)
 
-startServer :: Options -> Int -> IO (Ptr ())
-startServer opts portOffset
-  | optPrintHelp opts = do prog <- getProgName
-                           hPutStrLn stderr (usageInfo prog options)
-                           return nullPtr
-  | otherwise =
-  do (cptr, dbg) <- newEmptyDebugger opts
+startServer :: Int -> IO (Ptr ())
+startServer portOffset =
+  do config      <- getConfig
+     (cptr, dbg) <- newEmptyDebugger (dbgGaluaOptions config)
      st          <- newIORef dbg
-     config0     <- getConfig
-     let config  = incrementPort portOffset config0
 
      let routes = apiRoutes st
+         snapConfig = incrementPort portOffset
+                    $ dbgSnapConfig config
 
-     void $ forkIO $ httpServe (dbgSnapConfig config)
+     void $ forkIO $ httpServe snapConfig
             $ Snap.route routes
           <|> serveDirectory "ui"
           <|> Snap.route [(path, sendFileBytes (B8.unpack path) content)
@@ -312,10 +303,11 @@ maybeReadFile fp =
 
 data DebugConfig = DebugConfig
   { dbgSnapConfig :: Config Snap ()
+  , dbgGaluaOptions :: Options
   }
 
 defaultDebugConfig :: DebugConfig
-defaultDebugConfig = DebugConfig defaultConfig
+defaultDebugConfig = DebugConfig defaultConfig defaultOptions
 
 getConfig :: IO DebugConfig
 getConfig =
@@ -329,9 +321,32 @@ getConfig =
             snapConfig <- case preview (key "http") configValue of
                             Nothing -> return defaultConfig
                             Just v -> valueToSnapConfig v
+            breakpoints <- case getBreakpoints configValue of
+                             Left e -> fail ("config file error: " ++ e)
+                             Right bs -> return bs
+            print breakpoints
             return DebugConfig
               { dbgSnapConfig = snapConfig
+              , dbgGaluaOptions = Options
+                  { optBreakPoints = breakpoints
+                  }
               }
+
+getBreakpoints :: Value -> Either String (Map FilePath [Int])
+getBreakpoints v =
+  case preview (key "breakpoints") v of
+    Nothing -> Right Map.empty
+    Just (List xs) -> Map.fromListWith (++) <$> mapM parseBreakpoint xs
+    Just _ -> Left "Bad breakpoints section"
+
+parseBreakpoint :: Value -> Either String (FilePath, [Int])
+parseBreakpoint (List (Text fp : lineNumVals)) =
+  do lineNums <- mapM getNumber lineNumVals
+     return (Text.unpack fp, lineNums)
+
+getNumber :: Value -> Either String Int
+getNumber (Number _ n) = Right (fromIntegral n)
+getNumber _            = Left "Bad line number"
 
 valueToSnapConfig :: Value -> IO (Config Snap ())
 valueToSnapConfig v =
@@ -351,9 +366,8 @@ preview ::
 preview l x = getFirst (getConstant (l (Constant . First . Just) x))
 {-# INLINE preview #-}
 
-incrementPort :: Int -> DebugConfig -> DebugConfig
-incrementPort n c =
-  c { dbgSnapConfig = setPort (basePort + n) (dbgSnapConfig c) }
+incrementPort :: Int -> Config Snap () -> Config Snap ()
+incrementPort n c = setPort (basePort + n) c
   where
-  basePort = fromMaybe 8000 (getPort (dbgSnapConfig c))
+  basePort = fromMaybe 8000 (getPort c)
 

@@ -8,7 +8,6 @@
 extern char *__progname;
 
 extern int galua_argc;
-extern int galua_argu;
 extern char **galua_argv;
 
 int main(int argc, char**argv) {
@@ -24,7 +23,7 @@ int main(int argc, char**argv) {
     exit(2);
   }
 
-  argv += 1+galua_argu;
+  argv += 1;
   argc = 0;
   while (argv[argc] != NULL) ++argc;
 
