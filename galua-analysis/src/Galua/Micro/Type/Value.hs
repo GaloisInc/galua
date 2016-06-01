@@ -31,28 +31,37 @@ data SingleV      = BasicValue        Type
 data Type         = Nil | Bool | Number | UserData | LightUserData | Thread
                     deriving (Show,Eq,Ord,Bounded,Enum)
 
-data FieldName    = Metatable | Field ByteString
+-- | A field within a table.
+data FieldName    = Metatable           -- ^ The meta-table for a table
+                  | Field ByteString    -- ^ Normal field
                     deriving (Show,Eq,Ord)
 
--- | This is a block name indexed by the current callsite.
--- It exists to allow instantiating a function separately for each
--- callsite.
-data GlobalBlockName = GlobalBlockName CallsiteId QualifiedBlockName
-                        deriving (Eq,Ord,Show)
-
+-- | A block within a function
 data QualifiedBlockName = QualifiedBlockName FunId BlockName
                     deriving (Show,Eq,Ord)
 
+-- | A block name withing an instantiation of a function.
+-- Functions are analyzed once per call site.
+data GlobalBlockName = GlobalBlockName CallsiteId QualifiedBlockName
+                        deriving (Eq,Ord,Show)
+
+-- | An instruction, within a block, within a function.
+-- Should point to a "call" instruction.
 data CallsiteId = CallsiteId QualifiedBlockName Int
                     deriving (Show,Eq,Ord)
 
+-- | A call-site "outside" the program.  It is used for the initial
+-- call in the analysis.
 initialCaller :: CallsiteId
 initialCaller = CallsiteId (QualifiedBlockName noFun EntryBlock) 0
 
-
+-- | An instruction within a specific instantiation of a function.
+-- Should point to an allocation of a reference.
 data RefId        = RefId GlobalBlockName Int
                     deriving (Show,Eq,Ord)
 
+-- | An instruction within a specific instantiation of a function.
+-- Should point to an allocation of a table.
 data TableId      = TableId GlobalBlockName Int
                     deriving (Show,Eq,Ord)
 
@@ -60,71 +69,102 @@ data TableId      = TableId GlobalBlockName Int
 --------------------------------------------------------------------------------
 -- Lattices
 
+-- | An abstract state of the interpreter at a sepcific program point.
+-- This is the part of the state that is independent of
+-- the function that is executing.
 data GlobalState = GlobalState
-  { tables      :: Map TableId TableV
-  , heap        :: Map RefId   Value
+  { tables      :: Map TableId TableV   -- ^ Info about tables
+  , heap        :: Map RefId   Value    -- ^ Info about references
 
-  , basicMetas  :: Type :-> Value
-  , stringMeta  :: Value
-  , funMeta     :: Value
+  , basicMetas  :: Type :-> Value       -- ^ Meta-tables for basic types
+  , stringMeta  :: Value                -- ^ Meta-table for strings
+  , funMeta     :: Value                -- ^ Meta-table for functions
   } deriving (Eq,Show,Generic)
 
+
+-- | An abstract state describing the state of a function call.
 data LocalState = LocalState
-  { env         :: Map Reg Value
-  , argReg      :: List Value
-  , listReg     :: List Value
+  { env         :: Map Reg Value        -- ^ Values of normal registers
+  , argReg      :: List Value           -- ^ Argument register
+  , listReg     :: List Value           -- ^ The "list" register.
+                                        -- This is used when we make function
+                                        -- calls or to return results.
   } deriving (Eq,Show,Generic)
 
+-- | The current abstract state of the interpreter.
 data State = State
   { globaleState :: GlobalState
   , localState   :: LocalState
   } deriving (Eq,Show,Generic)
 
-data Value        = Value { valueBasic    :: Set Type
-                          , valueString   :: Lift ByteString
-                          , valueFunction :: WithTop (Set FunId)
-                          , valueTable    :: WithTop (Set TableId)
-                          , valueRef      :: WithTop (Set RefId)
-                          } deriving (Eq,Generic,Show)
-
-data TableV       = TableV { tableFields  :: FieldName :-> Value
-                           , tableKeys    :: Value
-                           , tableValues  :: Value
-                           } deriving (Generic,Show,Eq)
-
-
+-- | An abstract value. Describes what we know about a value.  Each
+-- of the fields an additional pieces of information.  If a specific
+-- field does not contain infomration relevant to the value, then it
+-- will be set to @bottom@.
+data Value = Value
+  { valueBasic    :: Set Type                 -- ^ Possible basic types
+  , valueString   :: Lift ByteString          -- ^ String aspects of the value
+  , valueFunction :: WithTop (Set FunId)      -- ^ Which function is this
+  , valueTable    :: WithTop (Set TableId)    -- ^ Which table is this
+  , valueRef      :: WithTop (Set RefId)      -- ^ Which reference is this
+  } deriving (Eq,Generic,Show)
 
 
-data FunBehavior  = FunBehavior
-                      { funUpVals :: [Value]
-                      , funArgs   :: List Value
-                      , funPost   :: [Value] -> List Value -> FunPost
-                      }
+-- | Information we keep about tables (i.e., "table types).
+data TableV = TableV
+  { tableFields  :: FieldName :-> Value
+    -- ^ Types of specific fields.  Usefule for tables that are more like
+    -- records or modules (i.e., they contain a fixed set fields, each
+    -- of a potentially different type)
 
-data FunPost      = FunPost
-                      { funReturns    :: List Value
-                      , funRaises     :: Value
-                      , funModTables  :: Set TableId
-                      , funModRefs    :: Set RefId
-                      }
-                    deriving (Eq,Show,Generic)
+  , tableKeys    :: Value
+    -- ^ A general description of the keys of the table.
+    -- Used to type tables used as containers.
 
-data Lift a       = NoValue | OneValue a | MultipleValues
-                    deriving (Eq,Show)
+  , tableValues  :: Value
+    -- ^ A general description of the values in the table.
+    -- Used to type tables used as containers.
+  } deriving (Generic,Show,Eq)
 
-data WithTop a    = NotTop a | Top
-                    deriving (Eq,Show)
 
-instance Functor     WithTop where fmap = liftM
-instance Applicative WithTop where pure = NotTop
-                                   (<*>) = ap
-instance Monad       WithTop where Top      >>= _ = Top
-                                   NotTop x >>= f = f x
+-- | A type for a function.  Similar to a pre- post-condition pair.
+data FunBehavior = FunBehavior
+  { funUpVals :: [Value]                -- ^ Types for up-values, if any
+  , funArgs   :: List Value             -- ^ Types for arguments
+  , funPost   :: [Value] -> List Value -> FunPost
+    -- ^ Type of result, which may depend on the types of the upvalues
+    -- and arguments.
+  }
 
+-- | Information about the return type of a function, and its side-effects.
+data FunPost = FunPost
+  { funReturns    :: List Value     -- ^ Values that are returns
+  , funRaises     :: Value          -- ^ Exceptions that might be throws
+  , funModTables  :: Set TableId    -- ^ Tables that might be modified
+  , funModRefs    :: Set RefId      -- ^ Heap locations that might be modified
+  } deriving (Eq,Show,Generic)
+
+
+-- | A helper type to keep track of a speicific concrete values
+data Lift a = NoValue               -- ^ Unused
+            | OneValue a            -- ^ Always exactly this values
+            | MultipleValues        -- ^ May be more than one value
+              deriving (Eq,Show)
+
+{- | A helper to add an artificail top (i.e., "I don't know") element to types.
+This is useful for values where the universe is potentially very large
+(e.g., table ids, function ids, reference id).  Instead of simply enumerating
+all possible functions/references/tables, we use the `Top` element to
+remember that we don't know the value. -}
+data WithTop a = NotTop a | Top
+                 deriving (Eq,Show)
 
 --------------------------------------------------------------------------------
 
 
+-- | Convert an abstract value, to all its possible individual cases.
+-- This is handly to implement "pattern matching" on a value: we consider
+-- the cases separately, and then union the results together.
 valueCases :: Value -> [SingleV]
 valueCases Value { .. } =
   (BasicValue <$> Set.toList valueBasic) ++
@@ -141,6 +181,9 @@ valueCases Value { .. } =
                 Top      -> [ f Nothing ]
                 NotTop a -> map (f . Just) (Set.toList a)
 
+
+-- | Convert a single value to an abstract value.
+-- This is useful to make values of a specific shape (e.g. Nil)
 fromSingleV :: SingleV -> Value
 fromSingleV val =
   case val of
@@ -159,21 +202,27 @@ fromSingleV val =
 
 --------------------------------------------------------------------------------
 
+-- | Make a value of this type.
 basic :: Type -> Value
 basic = fromSingleV . BasicValue
 
+-- | Make a value that is some string.
 anyString :: Value
 anyString = fromSingleV (StringValue Nothing)
 
+-- | Make a value that is exactly this reference.
 newRef :: RefId -> Value
 newRef = fromSingleV . RefValue . Just
 
+-- | Make a value that is exactly this table.
 newTable :: TableId -> Value
 newTable = fromSingleV . TableValue . Just
 
+-- | Make a value that is exactly this function.
 newFun :: FunId -> Value
 newFun = fromSingleV . FunctionValue . Just
 
+-- | A value that is used but completely unknown.
 topVal :: Value
 topVal = Value { valueBasic    = Set.fromList [ minBound .. maxBound ]
                , valueString   = MultipleValues
@@ -183,10 +232,9 @@ topVal = Value { valueBasic    = Set.fromList [ minBound .. maxBound ]
                }
 
 
-
-
---------------------------------------------------------------------------------
-
+-- | A value that describes the possible arguments to a function,
+-- when we don't know anything else about it.  Basically we pass
+-- `Top` for all arguments, but we do know that the inputs can't be references.
 initLuaArgList :: List Value
 initLuaArgList = listConst initLuaParam
   where
@@ -207,15 +255,23 @@ initLuaArgList = listConst initLuaParam
 --------------------------------------------------------------------------------
 
 
-data a :-> b      = FFun (Map a b) b
-                    deriving (Eq,Show)
+-- | A map with a default element.  Extends a finite map to a potentially
+-- infinite domain, by using a fixed value everywhere where the
+-- map is undefined.
+-- This is useful for representing functions.
+data a :-> b = FFun (Map a b) b
+               deriving (Eq,Show)
 
+-- | The constant funciont, maps everything to the given element.
 fConst :: b -> (a :-> b)
 fConst b = FFun Map.empty b
 
+-- | Apply a function to a given elelement.
 appFun :: Ord a => (a :-> b) -> a -> b
 appFun (FFun mp b) a = Map.findWithDefault b a mp
 
+-- | Apply a function to all its arguments at once.
+-- The result is the union of the possible outputs.
 appAll :: Lattice b => (a :-> b) -> b
 appAll (FFun mp b) = foldr (\/) b (Map.elems mp)
 
@@ -223,41 +279,48 @@ appAll (FFun mp b) = foldr (\/) b (Map.elems mp)
 letFun :: Ord a => a -> b -> (a :-> b) -> (a :-> b)
 letFun x y (FFun mp d) = FFun (Map.insert x y mp) d
 
--- | Add the option that any value might be `b`
+-- | Specify that the given function might return `b`
 letFunAll :: Lattice b => b -> (a :-> b) -> (a :-> b)
 letFunAll y (FFun mp d) = FFun (fmap (y \/) mp) (y \/ d)
 
 --------------------------------------------------------------------------------
 
--- | Having an explicit bottom helps avoid recursive values, when
--- implementing a list of values.
+-- | An infinite list.  This is similar to `Integer :-> a`
 data List a = ListBottom
+              -- ^ Having an explicit bottom helps avoid recursive values, when
+              -- implementing a list of values.
+
             | List
                 Int -- The list contains at least this many elements
                 [a] a -- Neither of the 'a's should be bottom.
                       -- These are strict lists.
               deriving (Show,Eq)
 
+-- | Drop some elements from the front of the list.
 listDrop :: Int -> List a -> List a
 listDrop n list =
   case list of
     ListBottom -> ListBottom
     List count xs d  -> List (max 0 (count-n)) (drop n xs) d
 
+-- | A constant list, containing the same value in all positions.
 listConst :: (Eq a, Lattice a) => a -> List a
 listConst a
   | a == bottom = ListBottom
   | otherwise   = List 0 [] a
 
+-- | Append some elements to the front of the list
 listAppend :: (Eq a, Lattice a) => [a] -> List a -> List a
 listAppend xs list
   | any (== bottom) xs  = ListBottom
   | otherwise =
      case list of
        ListBottom -> ListBottom
+       -- this case is just an optimization to avoid rebuilding `xs`
        List count [] d  -> List (length xs + count) xs d
        List count as d  -> List (length xs + count) (xs ++ as) d
 
+-- | "Apply" the list, (i.e., get the element at the given position.)
 appList :: Lattice a => List a -> Int -> a
 appList list x =
   case list of
@@ -266,14 +329,17 @@ appList list x =
                      v:_ -> v
                      _   -> d
 
+-- | "Apply" a list to all possible indexes, (i.e., get the union of
+-- all values stored in the list).
 appListAll :: Lattice a => List a -> a
 appListAll list =
   case list of
     ListBottom -> bottom
     List _ xs d  -> foldr (\/) d xs
 
---------------------------------------------------------------------------------
 
+-- | Lookup up a value in a map.
+-- Returns `bottom` if the value is not present.
 appFinMap :: (Ord a, Lattice b) => Map a b -> a -> b
 appFinMap mp a = Map.findWithDefault bottom a mp
 
@@ -284,10 +350,16 @@ appFinMap mp a = Map.findWithDefault bottom a mp
 class Lattice a where
   bottom     :: a
   addNewInfo :: a {-^new-} -> a {-^old-} -> Maybe a
+  {- ^ Join two elements in the lattice.
+    @addNewInfo a b == Nothing@ means that the answer is `b`
+    This is useful when we are computing fix-points and we want to
+    know if anything chaged. -}
 
+-- | Symmetric join, when we don't care if the join changed anything.
 (\/) :: Lattice a => a -> a -> a
 (\/) x y = fromMaybe y (addNewInfo x y)
 
+-- | Join together a whole bunch of things.
 joins :: Lattice a => [a] -> a
 joins [x] = x -- just a common speed up case
 joins xs  = foldr (\/) bottom xs
@@ -390,7 +462,7 @@ instance (Eq a, Lattice a) => Lattice (List a) where
         case dflt of
           Nothing
             | all isNothing updates && newcount == oldcount -> Nothing
-          _                         -> Just (List (min newcount oldcount) realFront realD)
+          _ -> Just (List (min newcount oldcount) realFront realD)
 
           where
           dflt    = addNewInfo newD oldD
