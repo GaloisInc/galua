@@ -7,8 +7,12 @@
 
 module Main (main) where
 
-import Distribution.PackageDescription ( PackageDescription(..) )
+import Distribution.Package (PackageName(..), PackageIdentifier(..))
+import Distribution.PackageDescription ( PackageDescription() )
 import Distribution.InstalledPackageInfo
+  (InstalledPackageInfo,
+   libraryDirs, hsLibraries, extraLibraries, sourcePackageId,
+   license, copyright, author)
 import Distribution.Simple ( defaultMainWithHooks, UserHooks(..),
                                 simpleUserHooks )
 import Distribution.Simple.Utils ( rewriteFile,
@@ -19,6 +23,8 @@ import Distribution.Simple.Setup ( ConfigFlags(configVerbosity,configProfLib),
 import Distribution.Simple.LocalBuildInfo
 import Distribution.Simple.PackageIndex
 import Distribution.Verbosity ( Verbosity )
+import Distribution.License (License(..))
+import Data.Version (showVersion)
 import System.FilePath
 
 #if MIN_VERSION_Cabal(1,24,0)
@@ -53,6 +59,13 @@ generateBuildModule verbosity pkgDesc lbi = do
              (configProfLib (configFlags lbi)) = x ++ "_p"
           | otherwise = x
 
+    case filter (not . goodLicense . license) pkgs of
+      []  -> return ()
+      bad -> print bad >> fail "BAD LICENSE"
+
+    rewriteFile (autodir </> "HS_COPYRIGHTS")
+        $ unlines
+        $ map licenseInfoString pkgs
 
     rewriteFile (autodir </> "HS_LIBRARIES_LIST")
         $ unlines
@@ -64,6 +77,24 @@ generateBuildModule verbosity pkgDesc lbi = do
     rewriteFile (autodir </> "EXTRA_LIBRARIES_LIST")
         $ unlines
         $ extraLibraries =<< pkgs
+
+goodLicense :: License -> Bool
+goodLicense BSD3 = True
+goodLicense MIT  = True
+goodLicense _    = False
+
+licenseInfoString :: InstalledPackageInfo -> String
+licenseInfoString pkg = unwords
+  [ unPackageName (pkgName (sourcePackageId pkg)) ++
+    "-" ++
+    showVersion (pkgVersion (sourcePackageId pkg))
+  , "-"
+  , show (license pkg)
+  , "-"
+  , copyright pkg
+  , "-"
+  , author pkg
+  ]
 
 -- We needed the threaded run-time so that SIGINT can be handled
 -- cleanly when C code has called into Haskell
