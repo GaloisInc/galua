@@ -1,4 +1,4 @@
-/*! UIkit 2.24.2 | http://www.getuikit.com | (c) 2014 YOOtheme | MIT License */
+/*! UIkit 2.26.3 | http://www.getuikit.com | (c) 2014 YOOtheme | MIT License */
 (function(addon) {
 
     var component;
@@ -206,9 +206,9 @@
                     }
                 };
 
-                var result = callback(match, index);
+                var result = typeof(callback) === 'string' ? callback : callback(match, index);
 
-                if (!result) {
+                if (!result && result !== '') {
                     return arguments[0];
                 }
 
@@ -443,28 +443,40 @@
             addAction('link', '<a href="http://">$1</a>');
             addAction('image', '<img src="http://" alt="$1">');
 
-            var listfn = function() {
+            var listfn = function(tag) {
                 if (editor.getCursorMode() == 'html') {
 
-                    var cm      = editor.editor,
-                        pos     = cm.getDoc().getCursor(true),
-                        posend  = cm.getDoc().getCursor(false);
+                    tag = tag || 'ul';
+
+                    var cm        = editor.editor,
+                        doc       = cm.getDoc(),
+                        pos       = doc.getCursor(true),
+                        posend    = doc.getCursor(false),
+                        im        = CodeMirror.innerMode(cm.getMode(), cm.getTokenAt(cm.getCursor()).state),
+                        inList    = im && im.state && im.state.context && ['ul','ol'].indexOf(im.state.context.tagName) != -1;
 
                     for (var i=pos.line; i<(posend.line+1);i++) {
                         cm.replaceRange('<li>'+cm.getLine(i)+'</li>', { line: i, ch: 0 }, { line: i, ch: cm.getLine(i).length });
                     }
 
-                    cm.setCursor({ line: posend.line, ch: cm.getLine(posend.line).length });
+                    if (!inList) {
+                        cm.replaceRange('<'+tag+'>'+"\n"+cm.getLine(pos.line), { line: pos.line, ch: 0 }, { line: pos.line, ch: cm.getLine(pos.line).length });
+                        cm.replaceRange(cm.getLine((posend.line+1))+"\n"+'</'+tag+'>', { line: (posend.line+1), ch: 0 }, { line: (posend.line+1), ch: cm.getLine((posend.line+1)).length });
+                        cm.setCursor({ line: posend.line+1, ch: cm.getLine(posend.line+1).length });
+                    } else {
+                        cm.setCursor({ line: posend.line, ch: cm.getLine(posend.line).length });
+                    }
+
                     cm.focus();
                 }
             };
 
             editor.on('action.listUl', function() {
-                listfn();
+                listfn('ul');
             });
 
             editor.on('action.listOl', function() {
-                listfn();
+                listfn('ol');
             });
 
             editor.htmleditor.on('click', 'a[data-htmleditor-button="fullscreen"]', function() {
@@ -510,7 +522,7 @@
 
         init: function(editor) {
 
-            var parser = editor.options.mdparser || marked || null;
+            var parser = editor.options.mdparser || window.marked || null;
 
             if (!parser) return;
 
