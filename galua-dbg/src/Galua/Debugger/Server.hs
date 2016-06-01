@@ -324,7 +324,6 @@ getConfig =
             breakpoints <- case getBreakpoints configValue of
                              Left e -> fail ("config file error: " ++ e)
                              Right bs -> return bs
-            print breakpoints
             return DebugConfig
               { dbgSnapConfig = snapConfig
               , dbgGaluaOptions = Options

@@ -41,6 +41,29 @@ $ ./build.sh
 
 The resulting binaries and include files will be available at `galua-c/inplace`
 
+Breakpoints on load
+===================
+
+To set a breakpoint before loading a file add a section to your configuration file.
+
+Breakpoints go into the `breakpoints` section. This section should be a list. Each
+element of the list starts with a lua chunk name. Lua prefixes filenames with `@`.
+Line numbers can follow the chunk name. The empty chunk name matches the first chunk
+loaded regardless of name. The `0` line number adds a breakpoint on the first instruction
+of a chunk, regardless of line number.
+
+As shown below, the breakpoint `["",0]` will cause the debugger to pause as soon as the
+first loaded chunk starts executing.
+
+Example:
+
+```
+breakpoints:
+  * ["@example.lua", 1, 10, 20]
+  * ["@sample.lua", 0]
+  * ["", 0]
+```
+
 Web interface configuration
 ===========================
 

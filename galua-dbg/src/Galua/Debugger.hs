@@ -444,6 +444,9 @@ addSourceFile brks breakRef sources mbName bytes cid fun =
             modifyIORef' breakRef $ Set.union $ Set.fromList newBrk
 
   where
+  -- Line 0 is special cased to stop on the first instruction of a chunk.
+  findClosest info 0 = Just (0, FunId [cid])
+
   findClosest info ln =
     chooseExactLoc $
     case Map.splitLookup ln info of
