@@ -1,11 +1,11 @@
 packages:
 - lib/hashtables
-- lib/language-lua
 - galua
 - galua-dbg
 - galua-analysis
-resolver: lts-6.0
+resolver: lts-6.1
 extra-deps:
+- language-lua-0.9.0
 - config-value-0.4.0.1
 - config-value-getopt-0.1.0.0
 - lua-bc-0.1

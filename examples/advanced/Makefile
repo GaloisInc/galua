@@ -18,7 +18,7 @@ endif
 ifeq ($(UNAME), Darwin)
 SHARED_OPTS=-fPIC -bundle -undefined dynamic_lookup
 LIBS=-lgalua -liconv -lz
-MAIN_FLAGS=-Wl,-exported_symbols_list,list.darwin
+MAIN_FLAGS=
 endif
 
 
@@ -30,7 +30,7 @@ CFLAGS=-std=c99 -g -Wall -Wextra -I$(INCLUDE_DIR)
 all: main shared_lib.so
 
 main: main.c
-	$(CC) $(CFLAGS) -o $@ $^ -L$(LIB_DR) $(LIBS) $(MAIN_FLAGS)
+	$(CC) $(CFLAGS) -o $@ $^ -L$(LIB_DR) $(LIBS)
 
 shared_lib.so: shared_lib.c
 	$(CC) $(CFLAGS) $(SHARED_OPTS) -o $@ $^
