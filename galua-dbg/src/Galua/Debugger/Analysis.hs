@@ -105,12 +105,6 @@ exportFID = fromString . funIdString
 
 
 
-exportWithTop :: (a -> JS.Value) -> WithTop (Set a) -> JS.Value
-exportWithTop f t =
-  case t of
-    Top       -> tagged "any"  []
-    NotTop xs -> tagged "enum" [ "elems" .= map f (Set.toList xs) ]
-
 
 exportType :: Type -> Text
 exportType t =

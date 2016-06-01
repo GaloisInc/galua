@@ -1,3 +1,5 @@
+-- | Rewrite the staments in a Lua program, to add explicit reference
+-- allocation, reference reads, and writes.
 module Galua.Micro.ExplicitRefs (explicitBlocks) where
 
 import           Data.Set (Set)

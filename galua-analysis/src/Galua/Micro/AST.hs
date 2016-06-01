@@ -1,3 +1,5 @@
+-- | Low-level CFG representation of a Lua program.
+
 {-# LANGUAGE TypeSynonymInstances, OverloadedStrings #-}
 module Galua.Micro.AST
   ( module Galua.Micro.AST

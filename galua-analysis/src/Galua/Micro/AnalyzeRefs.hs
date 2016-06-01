@@ -1,3 +1,5 @@
+-- | Determines what registers are captured into closures.
+-- These registers are represented as references to values in the heap.
 module Galua.Micro.AnalyzeRefs where
 
 import qualified Language.Lua.Bytecode as OP

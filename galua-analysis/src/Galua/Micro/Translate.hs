@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+-- | Translate from Lua op-codes into the CFG representation of a program.
 module Galua.Micro.Translate (translate,translateAll,translateTop) where
 
 import qualified Language.Lua.Bytecode as OP
