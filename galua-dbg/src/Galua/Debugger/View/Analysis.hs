@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings, RecordWildCards #-}
-module Galua.Debugger.Analysis where
+module Galua.Debugger.View.Analysis where
 
 import qualified Data.Aeson as JS
 import qualified Data.Aeson.Types as JS
