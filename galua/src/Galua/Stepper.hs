@@ -115,13 +115,6 @@ bumpCallCounter clo vm =
   where prof = profCallCounters $ machProfiling $ vmMachineEnv vm
 
 
-incrementCounter :: Reference a -> IORef (Map CodeLoc Int) -> IO ()
-incrementCounter i countRef =
-  atomicModifyIORef' countRef $ \counts ->
-    let counts' = inline Map.alter inc (refLocSite (referenceLoc i)) counts
-        inc old = Just $! maybe 1 succ old
-    in (counts', counts' `seq` ())
-
 performThreadExit :: VM -> [Value] -> Alloc VMState
 performThreadExit vm vs =
   case Stack.pop (vmBlocked vm) of

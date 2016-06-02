@@ -39,6 +39,8 @@ import           Galua.LuaString
 import qualified Galua.Stack as Stack
 import qualified Galua.SizedVector as SV
 
+import           GHC.Exts (inline)
+
 import           Process (readProcessWithExitCodeBS)
 
 data VM = VM
@@ -239,7 +241,8 @@ data MachineEnv = MachineEnv
   }
 
 data ProfilingInfo = ProfilingInfo
-  { profCallCounters :: {-# UNPACK #-} !(IORef (Map FunName Int))
+  { profCallCounters  :: {-# UNPACK #-} !(IORef (Map FunName Int))
+  , profAllocCounters :: {-# UNPACK #-} !(IORef (Map CodeLoc Int))
     -- ^ How many times was a particular function called.
   }
 
@@ -430,7 +433,8 @@ newMachineEnv machConfig =
 
 newProfilingInfo :: IO ProfilingInfo
 newProfilingInfo =
-  do profCallCounters <- newIORef Map.empty
+  do profCallCounters  <- newIORef Map.empty
+     profAllocCounters <- newIORef Map.empty
      return ProfilingInfo { .. }
 
 foreign import ccall "galua_allocate_luaState"
@@ -481,7 +485,11 @@ machNewTable ::
   Mach (Reference Table)
 machNewTable aSz hSz =
   do loc <- machRefLoc
-     newTable loc aSz hSz
+     ref <- newTable loc aSz hSz
+     counts <- getsMachEnv (profAllocCounters . machProfiling)
+     liftIO $
+        do incrementCounter ref counts
+           return ref
 
 machNewUserData :: ForeignPtr () -> Int -> Mach (Reference UserData)
 machNewUserData fp n =
@@ -595,3 +603,10 @@ parseLua mbName src =
             return (Left (show e))
        Right (ExitFailure{},_,err) -> return $! Left $! unpackUtf8 $! L.toStrict err
        Right (ExitSuccess,chunk,_) -> return $! parseLuaBytecode mbName chunk
+
+incrementCounter :: Reference a -> IORef (Map CodeLoc Int) -> IO ()
+incrementCounter i countRef =
+  atomicModifyIORef' countRef $ \counts ->
+    let counts' = inline Map.alter inc (refLocSite (referenceLoc i)) counts
+        inc old = Just $! maybe 1 succ old
+    in (counts', counts' `seq` ())
