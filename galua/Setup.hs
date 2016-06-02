@@ -63,7 +63,9 @@ generateBuildModule verbosity pkgDesc lbi = do
       []  -> return ()
       bad -> print bad >> fail "BAD LICENSE"
 
-    rewriteFile (autodir </> "HS_COPYRIGHTS")
+    -- rewriteFile tries to decode the file to check for changes but only supports
+    -- ASCII
+    writeFile (autodir </> "HS_COPYRIGHTS")
         $ unlines
         $ map licenseInfoString pkgs
 
@@ -81,6 +83,7 @@ generateBuildModule verbosity pkgDesc lbi = do
 goodLicense :: License -> Bool
 goodLicense BSD3 = True
 goodLicense MIT  = True
+goodLicense ISC  = True
 goodLicense _    = False
 
 licenseInfoString :: InstalledPackageInfo -> String
