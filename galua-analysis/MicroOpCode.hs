@@ -97,7 +97,7 @@ initalGlobalState chunkId =
            , funMeta    = basic Nil
            , heap       = Map.singleton upRef  (newTable tabRef)
            , tables     = Map.singleton tabRef globT
-           , functions  = Map.singleton cloRef (OneValue chunkFun)
+           , functions  = Map.singleton cloRef chunkFun
            }
   )
 
@@ -111,8 +111,8 @@ initalGlobalState chunkId =
                  , tableValues = bottom
                  }
 
-  chunkFun = FunV { functionUpVals = Map.singleton (OP.UpIx 0) upRef
-                  , functionFID    = rootFun chunkId
+  chunkFun = FunV { functionUpVals = Map.singleton (OP.UpIx 0) (OneValue upRef)
+                  , functionFID    = OneValue (Just (rootFun chunkId))
                   }
 
 

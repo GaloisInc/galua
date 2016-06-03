@@ -539,10 +539,9 @@ newFunId proto refs =
      let ref = ClosureId gb rwCurOpCode
 
      curFun <- getCurFun
-     let clo = OneValue
-                 FunV { functionUpVals = Map.fromList (zipWith up [ 0 .. ] refs)
-                      , functionFID    = subFun curFun proto
-                      }
+     let clo = FunV { functionUpVals = Map.fromList (zipWith up [ 0 .. ] refs)
+                    , functionFID    = OneValue (Just (subFun curFun proto))
+                    }
 
      updGlobal $ \GlobalState { functions, .. } ->
                   GlobalState { functions = Map.insert ref clo functions, .. }
@@ -550,7 +549,7 @@ newFunId proto refs =
      return ref
 
   where
-  up n r = (OP.UpIx n, r)
+  up n r = (OP.UpIx n, OneValue r)
 
 
 anyFunId :: BlockM ClosureId

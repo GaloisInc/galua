@@ -367,28 +367,33 @@ evalFun :: AnalysisM m =>
             CallsiteId -> ClosureId -> List Value -> GlobalState ->
                                     m (Either Value (List Value), GlobalState)
 evalFun caller cid as glob =
-  do let locals = LocalState
-                    { env     = bottom
-                    , argReg  = as
-                    , listReg = bottom
-                    , upvals  = fmap OneValue (functionUpVals funV)
-                    }
+  case functionFID funV of
+    -- XXX: UNSOUND!!!
+    -- For now we just treat C functions as if they don't do anything.
+    OneValue Nothing -> return (Right (listConst topVal), glob)
 
-     (next,s1) <- go EntryBlock State { localState = locals
-                                      , globaleState = glob }
-     return (next, globaleState s1)
+    OneValue (Just fid) ->
+      do let locals = LocalState
+                        { env     = bottom
+                        , argReg  = as
+                        , listReg = bottom
+                        , upvals  = functionUpVals funV
+                        }
+             block b = GlobalBlockName caller (QualifiedBlockName fid b)
+
+             go b s  =
+               do (next,s1) <- evalBlock (block b) s
+                  case next of
+                    Continue      -> error "Continue"
+                    EnterBlock b1 -> go b1 s1
+                    RaiseError v  -> return (Left v, s1)
+                    ReturnWith xs -> return (Right xs, s1)
+
+         (next,s1) <- go EntryBlock State { localState = locals
+                                          , globaleState = glob }
+         return (next, globaleState s1)
   where
-  OneValue funV = functions glob Map.! cid
-  fid           = functionFID funV
-  go b s        =
-    do (next,s1) <- evalBlock
-                      (GlobalBlockName caller (QualifiedBlockName fid b)) s
-       case next of
-         Continue      -> error "Continue"
-         EnterBlock b1 -> go b1 s1
-         RaiseError v  -> return (Left v, s1)
-         ReturnWith xs -> return (Right xs, s1)
-
+  funV    = functions glob Map.! cid
 
 data Result = Result
   { resReturns      :: List Value

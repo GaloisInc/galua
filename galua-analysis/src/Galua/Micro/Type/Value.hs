@@ -89,9 +89,9 @@ data ClosureId    = ClosureId GlobalBlockName Int
 -- This is the part of the state that is independent of
 -- the function that is executing.
 data GlobalState = GlobalState
-  { tables      :: Map TableId   TableV       -- ^ Info about tables
-  , heap        :: Map RefId     Value        -- ^ Info about references
-  , functions   :: Map ClosureId (Lift FunV)  -- ^ Info about functions
+  { tables      :: Map TableId   TableV -- ^ Info about tables
+  , heap        :: Map RefId     Value  -- ^ Info about references
+  , functions   :: Map ClosureId FunV   -- ^ Info about functions
 
   , basicMetas  :: Type :-> Value       -- ^ Meta-tables for basic types
   , stringMeta  :: Value                -- ^ Meta-table for strings
@@ -146,9 +146,9 @@ data TableV = TableV
 
 
 data FunV = FunV
-  { functionUpVals :: Map UpIx RefId   -- ^ UpValues
-  , functionFID    :: FunId            -- ^ Code
-  } deriving (Eq,Show)
+  { functionUpVals :: Map UpIx (Lift RefId) -- ^ UpValues
+  , functionFID    :: Lift (Maybe FunId)    -- ^ Code; `Nothing` means C code
+  } deriving (Generic,Eq,Show)
 
 
 
@@ -176,6 +176,12 @@ data Lift a = NoValue               -- ^ Unused
             | OneValue a            -- ^ Always exactly this values
             | MultipleValues        -- ^ May be more than one value
               deriving (Eq,Show)
+
+instance Functor Lift where
+  fmap f xs = case xs of
+                NoValue -> NoValue
+                OneValue x -> OneValue (f x)
+                MultipleValues -> MultipleValues
 
 {- | A helper to add an artificail top (i.e., "I don't know") element to types.
 This is useful for values where the universe is potentially very large
@@ -563,6 +569,11 @@ instance Lattice TableV where
   addNewInfo  = default_addNewInfo
 
 
+instance Lattice FunV where
+  bottom      = default_bottom
+  addNewInfo  = default_addNewInfo
+
+
 instance Lattice GlobalState where
   bottom      = default_bottom
   addNewInfo  = default_addNewInfo
@@ -578,6 +589,7 @@ instance Lattice State where
 instance Lattice () where
   bottom = default_bottom
   addNewInfo = default_addNewInfo
+
 
 --------------------------------------------------------------------------------
 
