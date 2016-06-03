@@ -210,7 +210,7 @@ exportPC info
 
 -- XXX: Maybe export the Entry block also?
 exportFun :: Info1 -> FunId -> JS.Value
-exportFun info1 fid =
+exportFun info1 fid = undefined {-
   case Map.lookup fid (infoFuns info1) of
     Just fun ->
       let info2 = Info2 { info1      = info1
@@ -220,7 +220,7 @@ exportFun info1 fid =
                         }
       in toJSON (unfoldr exportPC info2)
     Nothing  -> error "Missing function"
-
+-}
 
 
 
