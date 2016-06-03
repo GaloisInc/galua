@@ -17,10 +17,14 @@ instance PP Type where
   pp _ ty = text (show ty)
 
 instance PP RefId where
-  pp i (RefId b n)     = "ref:" <> pp i b <> colon <> int n
+  pp i (RefId b n)      = "ref:" <> pp i b <> colon <> int n
 
 instance PP TableId where
-  pp i (TableId b n)     = "tab:" <> pp i b <> colon <> int n
+  pp i (TableId b n)    = "tab:" <> pp i b <> colon <> int n
+
+instance PP ClosureId where
+  pp i (ClosureId b n)  = "clo:" <> pp i b <> colon <> int n
+
 
 instance PP QualifiedBlockName where
   pp i (QualifiedBlockName fid b) = pp i fid <> colon <> pp i b
@@ -84,6 +88,12 @@ instance (PP a, PP b) => PP (a :-> b) where
 instance (PP a, PP b) => PP (Map a b) where
   pp n mp = vcat [ pp n k <+> "->" <+> pp n v | (k,v) <- Map.toList mp ]
 
+instance PP a => PP (Lift a) where
+  pp n v = case v of
+             NoValue        -> "⊥"
+             OneValue x     -> pp n x
+             MultipleValues -> "⊤"
+
 
 
 instance PP TableV where
@@ -92,10 +102,15 @@ instance PP TableV where
       rest | tableKeys == bottom || tableValues == bottom = []
            | otherwise = [ pp n tableKeys <+> "->" <+> pp n tableValues ]
 
+instance PP FunV where
+  pp n FunV { .. } = braces ( "FID" <+> pp n functionFID <+> "|" <+>
+                              hsep (map (pp n) (Map.elems functionUpVals)) )
+
 
 instance PP LocalState where
   pp n LocalState { .. } =
     vcat [ entry "env" env
+         , "upvals" <> colon <+> hsep (map (pp n) (Map.elems upvals))
          ]
     where
     entry x y
@@ -109,6 +124,8 @@ instance PP GlobalState where
          , entry "string.meta" stringMeta
          , entry "function.meta" funMeta
          , entry "heap" heap
+         , entry "tables" tables
+         , entry "functions" functions
          ]
     where
     entry x y

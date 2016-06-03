@@ -25,8 +25,14 @@ import Galua.Micro.Type.Eval(analyze)
 import Galua.Micro.Type.Pretty()
 import Galua.Micro.Type.Filter
 
-import Galua.Micro.Type.Value(bottom,basic,FunId(..),listConst,initLuaArgList
-                              , GlobalState(..), fConst, Type(..) )
+import Galua.Micro.Type.Value
+  ( bottom,basic,FunId(..),listConst,initLuaArgList
+  , GlobalState(..), fConst, Type(..)
+  , TableV(..), FunV(..)
+  , TableId(..), RefId(..), ClosureId(..)
+  , newTable, externalId
+  , Lift(..)
+  )
 import qualified Galua.Value as Val (Value(Nil))
 
 
@@ -52,12 +58,8 @@ testFile f =
 
             save "out" tr
 
-            let valueAnalysis = analyze tr fid initLuaArgList
-
-                      bottom { basicMetas = fConst (basic Nil)
-                             , stringMeta = basic Nil
-                             , funMeta    = basic Nil
-                             }
+            let (cid,glob)    = initalGlobalState 0
+                valueAnalysis = analyze tr cid initLuaArgList glob
 
             let tr1 = filterFunctions valueAnalysis tr
             save "trim" tr1
@@ -84,6 +86,56 @@ foreign export ccall lua_newstate :: Ptr a -> Ptr b -> IO (Ptr c)
 
 lua_newstate :: Ptr a -> Ptr b -> IO (Ptr c)
 lua_newstate _ _ = fail "can't call lua_newstate in analysis"
+
+
+-- A test global state that has no meta tables, and one empty global table
+initalGlobalState :: Int -> (ClosureId,GlobalState)
+initalGlobalState chunkId =
+  ( cloRef
+  , bottom { basicMetas = fConst (basic Nil)
+           , stringMeta = basic Nil
+           , funMeta    = basic Nil
+           , heap       = Map.singleton upRef  (newTable tabRef)
+           , tables     = Map.singleton tabRef globT
+           , functions  = Map.singleton cloRef (OneValue chunkFun)
+           }
+  )
+
+  where
+  upRef   = externalId RefId     0
+  tabRef  = externalId TableId   0
+  cloRef  = externalId ClosureId 0
+
+  globT = TableV { tableFields = fConst (basic Nil)
+                 , tableKeys   = bottom
+                 , tableValues = bottom
+                 }
+
+  chunkFun = FunV { functionUpVals = Map.singleton (OP.UpIx 0) upRef
+                  , functionFID    = rootFun chunkId
+                  }
+
+
+
+
+
+{-
+  gbn0 = GlobalBlockName initialCaller (QualifiedBlockName fid EntryBlock)
+
+  -- XXX: we hack in an upvalue with an empty table,
+  -- so that we can use globals, when running a chunk. 
+  -- This should be more systematic.
+  allocFuns = Map.singleton fid [upVal]
+  upVal     = RefId gbn0 0
+
+  setupGlob =
+    let tid   = TableId gbn0 0
+        empty = 
+    in glob { tables = Map.insert tid empty (tables glob)
+            , heap   = Map.insert upVal (fromSingleV (TableValue (Just tid)))
+                                        (heap glob)
+            }
+-}
 
 
 

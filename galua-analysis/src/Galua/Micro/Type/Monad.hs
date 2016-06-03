@@ -43,7 +43,7 @@ module Galua.Micro.Type.Monad
     raisesError
 
   , -- * Top values
-    anyTableId, anyRefId, anyAllocatedFunId, anyFunId
+    anyTableId, anyRefId, anyFunId
 
 
 
@@ -101,10 +101,10 @@ data RO = RO
   }
 
 data AnalysisS = AnalysisS
-  { rwFunctions :: !(Map FunId (Map UpIx RefId))
-    -- ^ Up-values for allocated functions.
+  -- rwFunctions :: !(Map FunId (Map UpIx RefId))
+    -- Up-values for allocated functions.
 
-  , rwStates    :: !(Map GlobalBlockName State)
+  { rwStates    :: !(Map GlobalBlockName State)
     -- ^ Known states at the entries of blocks.
 
   , rwRaises    :: !(Map GlobalBlockName Value)
@@ -117,36 +117,28 @@ data AnalysisS = AnalysisS
 impossible :: AnalysisM m => m a
 impossible = options []
 
-mkUpIxes :: [RefId] -> Map UpIx RefId
-mkUpIxes refs = Map.fromList (map OP.UpIx [ 0 .. ] `zip` refs)
-
-
-allPaths :: Map FunId [RefId] ->
-            Map FunId Function -> AllPaths a ->
+allPaths :: Map FunId Function -> AllPaths a ->
                                 [ (a, Map GlobalBlockName State
                                     , Map GlobalBlockName Value) ]
-allPaths aFuns funs (AllPaths m) =
+allPaths funs (AllPaths m) =
   [ (a, rwStates rw, rwRaises rw)
     | (a,rw) <- runStateT initS $ runReaderT ro m ]
   where
-  initS = AnalysisS { rwFunctions = fmap mkUpIxes aFuns
-                    , rwStates    = Map.empty
+  initS = AnalysisS { rwStates    = Map.empty
                     , rwRaises    = Map.empty
                     }
 
   ro    = RO { roCode = funs }
 
 
-singlePath :: Map FunId [RefId] ->
-              Map FunId Function -> SinglePath a ->
+singlePath :: Map FunId Function -> SinglePath a ->
                                 ([a], Map GlobalBlockName State
                                     , Map GlobalBlockName Value)
-singlePath aFuns funs (SinglePath m) = (as, rwStates rw, rwRaises rw)
+singlePath funs (SinglePath m) = (as, rwStates rw, rwRaises rw)
   where
   (as,rw) = runId $ runStateT initS $ findAll $ runReaderT ro m
 
-  initS = AnalysisS { rwFunctions = fmap mkUpIxes aFuns
-                    , rwStates    = Map.empty
+  initS = AnalysisS { rwStates    = Map.empty
                     , rwRaises    = Map.empty
                     }
 
@@ -157,7 +149,7 @@ singlePath aFuns funs (SinglePath m) = (as, rwStates rw, rwRaises rw)
 
 
 
-
+{-
 anyAllocatedFunId :: AnalysisM m => m FunId
 anyAllocatedFunId =
   do AnalysisS { rwFunctions } <- get
@@ -167,7 +159,7 @@ anyFunId :: AnalysisM m => m FunId
 anyFunId =
   do RO { roCode } <- ask
      options (Map.keys roCode)
-
+-}
 
 
 
@@ -254,10 +246,8 @@ data BlockS = BlockS
   , rwCurOpCode   :: !Int
   , rwStatements  :: !(Vector Stmt)
   , rwCurState    :: !State
-  , rwCurFunId    :: !FunId
-    -- ^ Current function that is executed.
-  , rwCurCallsite :: !CallsiteId
-    -- ^ Where we were called from.
+  , rwCurFunId    :: !FunId     -- ^ Current function that is executed.
+  , rwCurCallsite :: !CallsiteId -- ^ Where we were called from.
   }
 
 --------------------------------------------------------------------------------
@@ -396,9 +386,15 @@ setList r vs = updLocal $ \s ->
 
 -- Does not return bottom
 getUpVal :: UpIx -> BlockM Value
-getUpVal u = do r <- getCurUpVal u
-                return (newRef r)
-
+getUpVal u = do LocalState { upvals } <- getLocal
+                return $! case Map.lookup u upvals of
+                            Just r  -> toVal r
+                            Nothing -> error ("Missing up-value: " ++ show u)
+  where
+  toVal r = case r of
+              NoValue        -> bottom
+              MultipleValues -> topVal
+              OneValue v     -> newRef v
 
 
 
@@ -529,29 +525,45 @@ writeRefId mb v =
                        GlobalState { heap = Map.insert r v heap, .. }
 
 
+
+--------------------------------------------------------------------------------
+-- Closures
+
+
+-- | Allocate a new function, given a prototype, and some references.
+newFunId :: Int -> [RefId] -> BlockM ClosureId
+newFunId proto refs =
+  do BlockS { rwCurOpCode } <- BlockM M.get
+     gb                     <- getCurGlobalBlockName
+
+     let ref = ClosureId gb rwCurOpCode
+
+     curFun <- getCurFun
+     let clo = OneValue
+                 FunV { functionUpVals = Map.fromList (zipWith up [ 0 .. ] refs)
+                      , functionFID    = subFun curFun proto
+                      }
+
+     updGlobal $ \GlobalState { functions, .. } ->
+                  GlobalState { functions = Map.insert ref clo functions, .. }
+
+     return ref
+
+  where
+  up n r = (OP.UpIx n, r)
+
+
+anyFunId :: BlockM ClosureId
+anyFunId =
+  do GlobalState { functions } <- getGlobal
+     options $ Map.keys functions
+
+
+
+
 --------------------------------------------------------------------------------
 -- Current function
 
-
-getCurUpVal :: UpIx -> BlockM RefId
-getCurUpVal i =
-  do AnalysisS { rwFunctions } <- get
-     curFun <- getCurFun
-     return $ fromMaybe (error "getCurUpVal: missing upval")
-            $ do ux <- Map.lookup curFun rwFunctions
-                 Map.lookup i ux
-
-
--- | Allocate a new functions, given a prototype, and some references.
-newFunId :: Int -> [RefId] -> BlockM FunId
-newFunId proto refs =
-  do curFun <- getCurFun
-     sets $ \r ->
-              let new = subFun curFun proto
-              in (new, r { rwFunctions = Map.insert new upMap (rwFunctions r) })
-  where
-  upMap  = Map.fromList (zipWith up [ 0 .. ] refs)
-  up n r = (OP.UpIx n, r)
 
 getCurFun :: BlockM FunId
 getCurFun = do BlockS { rwCurFunId } <- BlockM M.get
