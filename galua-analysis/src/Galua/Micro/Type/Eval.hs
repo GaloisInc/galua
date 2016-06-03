@@ -352,32 +352,37 @@ evalBlock bn s = inBlock bn s go
             _        -> return next
 
 
-callFun :: Maybe FunId -> List Value -> BlockM (Either Value (List Value))
+callFun :: Maybe ClosureId -> List Value -> BlockM (Either Value (List Value))
 callFun mb as = doCall =<< maybe anyFunId return mb
   where doCall fid = do (callsite,save) <- getCont
-                        glob        <- getGlobal
-                        (next,newG) <- evalFun callsite fid as glob
+                        glob            <- getGlobal
+                        (next,newG)     <- evalFun callsite fid as glob
                         setGlobal newG
                         setCont save
                         return next
 
 
 
-evalFun :: AnalysisM m => CallsiteId -> FunId -> List Value -> GlobalState ->
+evalFun :: AnalysisM m =>
+            CallsiteId -> ClosureId -> List Value -> GlobalState ->
                                     m (Either Value (List Value), GlobalState)
-evalFun caller fid as glob =
+evalFun caller cid as glob =
   do let locals = LocalState
                     { env     = bottom
                     , argReg  = as
                     , listReg = bottom
+                    , upvals  = fmap OneValue (functionUpVals funV)
                     }
 
      (next,s1) <- go EntryBlock State { localState = locals
                                       , globaleState = glob }
      return (next, globaleState s1)
   where
-  go b s =
-    do (next,s1) <- evalBlock (GlobalBlockName caller (QualifiedBlockName fid b)) s
+  OneValue funV = functions glob Map.! cid
+  fid           = functionFID funV
+  go b s        =
+    do (next,s1) <- evalBlock
+                      (GlobalBlockName caller (QualifiedBlockName fid b)) s
        case next of
          Continue      -> error "Continue"
          EnterBlock b1 -> go b1 s1
@@ -426,8 +431,8 @@ analyze funs fid args glob =
 -}
 
 analyze :: Map FunId Function ->
-           FunId -> List Value -> GlobalState -> Result
-analyze funs fid args glob =
+           ClosureId -> List Value -> GlobalState -> Result
+analyze funs cid args glob =
   Result { resReturns     = joins [ v | Right v <- nexts ]
          , resRaises      = joins [ v | Left  v <- nexts ]
          , resGlobals     = joins gs
@@ -436,31 +441,8 @@ analyze funs fid args glob =
          }
   where
   (nexts,gs)          = unzip rss
-  (rss, states, errs) = singlePath allocFuns funs
-                      $ evalFun initialCaller fid args setupGlob
-
-  gbn0 = GlobalBlockName initialCaller (QualifiedBlockName fid EntryBlock)
-
-  -- XXX: we hack in an upvalue with an empty table,
-  -- so that we can use globals, when running a chunk. 
-  -- This should be more systematic.
-  allocFuns = Map.singleton fid [upVal]
-  upVal     = RefId gbn0 0
-
-  setupGlob =
-    let tid   = TableId gbn0 0
-        empty = TableV { tableFields = fConst (basic Nil)
-                       , tableKeys   = bottom
-                       , tableValues = bottom
-                       }
-
-
-    in glob { tables = Map.insert tid empty (tables glob)
-            , heap   = Map.insert upVal (fromSingleV (TableValue (Just tid)))
-                                        (heap glob)
-            }
-
-
+  (rss, states, errs) = singlePath funs
+                      $ evalFun initialCaller cid args glob
 
 
 

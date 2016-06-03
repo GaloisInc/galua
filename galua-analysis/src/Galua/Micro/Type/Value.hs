@@ -18,13 +18,14 @@ import Language.Lua.Bytecode.Pretty(PP(..),pp)
 import Language.Lua.Bytecode.FunId
 
 import Galua.Micro.AST
+import Galua.LuaString(LuaString)
 
 
 -- | An abstract value.
 data SingleV      = BasicValue        Type
                   | StringValue       (Maybe ByteString) -- ^ Nothing = top
                   | TableValue        (Maybe TableId)
-                  | FunctionValue     (Maybe FunId)
+                  | FunctionValue     (Maybe ClosureId)
                   | RefValue          (Maybe RefId)
                     deriving Eq
 
@@ -55,6 +56,17 @@ data CallsiteId = CallsiteId QualifiedBlockName Int
 initialCaller :: CallsiteId
 initialCaller = CallsiteId (QualifiedBlockName noFun EntryBlock) 0
 
+-- | A fake global name, which will be different from the block names
+-- in a program.
+exteranlBlock :: GlobalBlockName
+exteranlBlock = GlobalBlockName initialCaller
+                                    (QualifiedBlockName noFun EntryBlock)
+
+-- | A convenience function for creating "external" references.
+externalId :: (GlobalBlockName -> Int -> a) -> Int -> a
+externalId ty n = ty exteranlBlock n
+
+
 -- | An instruction within a specific instantiation of a function.
 -- Should point to an allocation of a reference.
 data RefId        = RefId GlobalBlockName Int
@@ -65,6 +77,10 @@ data RefId        = RefId GlobalBlockName Int
 data TableId      = TableId GlobalBlockName Int
                     deriving (Show,Eq,Ord)
 
+-- | An instruction within a specific instantiation of a function.
+-- Should point to an allocation of a closure.
+data ClosureId    = ClosureId GlobalBlockName Int
+                    deriving (Show,Eq,Ord)
 
 --------------------------------------------------------------------------------
 -- Lattices
@@ -73,8 +89,9 @@ data TableId      = TableId GlobalBlockName Int
 -- This is the part of the state that is independent of
 -- the function that is executing.
 data GlobalState = GlobalState
-  { tables      :: Map TableId TableV   -- ^ Info about tables
-  , heap        :: Map RefId   Value    -- ^ Info about references
+  { tables      :: Map TableId   TableV       -- ^ Info about tables
+  , heap        :: Map RefId     Value        -- ^ Info about references
+  , functions   :: Map ClosureId (Lift FunV)  -- ^ Info about functions
 
   , basicMetas  :: Type :-> Value       -- ^ Meta-tables for basic types
   , stringMeta  :: Value                -- ^ Meta-table for strings
@@ -84,11 +101,12 @@ data GlobalState = GlobalState
 
 -- | An abstract state describing the state of a function call.
 data LocalState = LocalState
-  { env         :: Map Reg Value        -- ^ Values of normal registers
-  , argReg      :: List Value           -- ^ Argument register
-  , listReg     :: List Value           -- ^ The "list" register.
-                                        -- This is used when we make function
-                                        -- calls or to return results.
+  { env         :: Map Reg Value -- ^ Values of normal registers
+  , argReg      :: List Value    -- ^ Argument register
+  , listReg     :: List Value    -- ^ The "list" register.
+                                 -- This is used when we make function
+                                 -- calls or to return results.
+  , upvals      :: Map UpIx (Lift RefId)  -- ^ Upvalues for current function
   } deriving (Eq,Show,Generic)
 
 -- | The current abstract state of the interpreter.
@@ -104,7 +122,7 @@ data State = State
 data Value = Value
   { valueBasic    :: Set Type                 -- ^ Possible basic types
   , valueString   :: Lift ByteString          -- ^ String aspects of the value
-  , valueFunction :: WithTop (Set FunId)      -- ^ Which function is this
+  , valueFunction :: WithTop (Set ClosureId)  -- ^ Which function is this
   , valueTable    :: WithTop (Set TableId)    -- ^ Which table is this
   , valueRef      :: WithTop (Set RefId)      -- ^ Which reference is this
   } deriving (Eq,Generic,Show)
@@ -125,6 +143,14 @@ data TableV = TableV
     -- ^ A general description of the values in the table.
     -- Used to type tables used as containers.
   } deriving (Generic,Show,Eq)
+
+
+data FunV = FunV
+  { functionUpVals :: Map UpIx RefId   -- ^ UpValues
+  , functionFID    :: FunId            -- ^ Code
+  } deriving (Eq,Show)
+
+
 
 
 -- | A type for a function.  Similar to a pre- post-condition pair.
@@ -158,6 +184,7 @@ all possible functions/references/tables, we use the `Top` element to
 remember that we don't know the value. -}
 data WithTop a = NotTop a | Top
                  deriving (Eq,Show)
+
 
 --------------------------------------------------------------------------------
 
@@ -206,6 +233,9 @@ fromSingleV val =
 basic :: Type -> Value
 basic = fromSingleV . BasicValue
 
+exactString :: ByteString -> Value
+exactString s = fromSingleV (StringValue (Just s))
+
 -- | Make a value that is some string.
 anyString :: Value
 anyString = fromSingleV (StringValue Nothing)
@@ -219,7 +249,7 @@ newTable :: TableId -> Value
 newTable = fromSingleV . TableValue . Just
 
 -- | Make a value that is exactly this function.
-newFun :: FunId -> Value
+newFun :: ClosureId -> Value
 newFun = fromSingleV . FunctionValue . Just
 
 -- | A value that is used but completely unknown.
@@ -383,10 +413,12 @@ instance Lattice a => Lattice (WithTop a) where
   addNewInfo Top _ = Just Top
   addNewInfo (NotTop x) (NotTop y) = NotTop <$> addNewInfo x y
 
+
 instance Meet a => Meet (WithTop a) where
   Top /\ x = x
   x /\ Top = x
   NotTop x /\ NotTop y = NotTop (x /\ y)
+
 
 instance Ord a => Meet (Set a) where
   (/\) = Set.intersection

@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings, RecordWildCards #-}
-module Galua.Debugger.Analysis where
+module Galua.Debugger.View.Analysis where
 
 import qualified Data.Aeson as JS
 import qualified Data.Aeson.Types as JS
@@ -88,6 +88,9 @@ tableIdString (TableId bn pc) = globalBlockNameString bn ++ "-" ++ show pc
 refIdString :: RefId -> String
 refIdString (RefId bn pc) = globalBlockNameString bn ++ "-" ++ show pc
 
+cloIdString :: ClosureId -> String
+cloIdString (ClosureId bn pc) = globalBlockNameString bn ++ "-" ++ show pc
+
 
 --------------------------------------------------------------------------------
 
@@ -128,7 +131,7 @@ exportSingleV info v =
     TableValue Nothing      -> simp "table"
     TableValue (Just r)     -> val "table" (tableIdString r)
     FunctionValue Nothing   -> simp "function"
-    FunctionValue (Just f)  -> val "function" (funIdString f)
+    FunctionValue (Just f)  -> val "function" (cloIdString f)
     RefValue Nothing        -> simp "reference"
     RefValue (Just r)       -> val "reference" (refIdString r)
 
