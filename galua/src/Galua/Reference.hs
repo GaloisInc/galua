@@ -183,7 +183,7 @@ data RefLoc  = RefLoc { refLocCaller :: !CodeLoc, refLocSite :: !CodeLoc }
 
 data CodeLoc = MachSetup
              | InC CFunName
-             | InLua FunId Int
+             | InLua FunId Int  -- ^ Function, program counter
                deriving (Eq,Ord)
 
 instance Show (Reference a) where
