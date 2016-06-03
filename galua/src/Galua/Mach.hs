@@ -27,6 +27,7 @@ import           System.Exit
 import           System.IO (hPutStrLn, stderr)
 import           System.IO.Error (isDoesNotExistError)
 import           System.Environment (lookupEnv)
+import qualified System.Clock as Clock
 
 import           Language.Lua.Bytecode
 import           Language.Lua.Bytecode.FunId
@@ -243,9 +244,13 @@ data MachineEnv = MachineEnv
 data ProfilingInfo = ProfilingInfo
   { profCallCounters  :: {-# UNPACK #-} !(IORef (Map FunName Int))
   , profAllocCounters :: {-# UNPACK #-} !(IORef (Map CodeLoc Int))
+  , profFunctionTimers :: {-# UNPACK #-} !(IORef (Map FunName FunctionRuntimes))
     -- ^ How many times was a particular function called.
   }
 
+data FunctionRuntimes = FunctionRuntimes
+  { runtimeIndividual, runtimeCumulative :: {-# UNPACK #-} !Clock.TimeSpec
+  }
 
 data MachConfig = MachConfig
   { machOnChunkLoad :: Maybe String -> ByteString -> Int -> Function -> IO ()
@@ -261,6 +266,8 @@ data ExecEnv = ExecEnv
   , execVarargs  :: !(IORef [Value])
   , execApiCall  :: !(IORef ApiCallStatus)
   , execClosure  :: !Value
+  , execCreateTime :: {-# UNPACK #-} !Clock.TimeSpec
+  , execChildTime :: {-# UNPACK #-} !Clock.TimeSpec
   }
 
 data ApiCallStatus
@@ -279,12 +286,15 @@ newThreadExecEnv =
   do stack <- SV.new
      api   <- newIORef NoApiCall
      var   <- newIORef []
+     time  <- Clock.getTime Clock.ProcessCPUTime
      return ExecEnv { execStack    = stack
                     , execUpvals   = Vector.empty
                     , execFunction = CFunction blankCFunName
                     , execVarargs  = var
                     , execApiCall  = api
                     , execClosure  = Nil
+                    , execCreateTime = time
+                    , execChildTime  = 0
                     }
 
 instance Functor Mach where
@@ -435,6 +445,7 @@ newProfilingInfo :: IO ProfilingInfo
 newProfilingInfo =
   do profCallCounters  <- newIORef Map.empty
      profAllocCounters <- newIORef Map.empty
+     profFunctionTimers <- newIORef Map.empty
      return ProfilingInfo { .. }
 
 foreign import ccall "galua_allocate_luaState"
