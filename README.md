@@ -44,7 +44,9 @@ The resulting binaries and include files will be available at `galua-c/inplace`
 Breakpoints on load
 ===================
 
-To set a breakpoint before loading a file add a section to your configuration file.
+To set a breakpoint before loading a file add a section to your
+configuration file.  The configuration file is `config.txt` in the current
+directory.
 
 Breakpoints go into the `breakpoints` section. This section should be a list. Each
 element of the list starts with a lua chunk name. Lua prefixes filenames with `@`.
