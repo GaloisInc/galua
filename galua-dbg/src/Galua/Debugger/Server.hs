@@ -7,6 +7,7 @@ import           Galua.Debugger.Options(Options(..), defaultOptions)
 import           Galua.Debugger
 import           Galua.Debugger.View
                   (exportDebugger,watchExportable,expandExportable,
+                      analyze,
                       exportFun,importBreakLoc,exportBreakLoc)
 import           Galua.Debugger.EmbedDirectory (embedDirectory)
 import qualified Galua.Value as G
@@ -130,7 +131,7 @@ apiRoutes st =
 
      , ("/setValue", cmd snapSetValue)
 
-     -- , ("/analyze", cmd snapAnalyze)
+     , ("/analyze", cmd snapAnalyze)
 
      ]
 
@@ -229,10 +230,13 @@ snapGetFunction st =
        Just fid | Just js <- exportFun sources fid -> sendJSON js
        _ -> notFound
 
-{-
 snapAnalyze :: Debugger -> Snap ()
-snapAnalyze = return () -- XXX
--}
+snapAnalyze dbg =
+  do n  <- natParam "id"
+     mb <- liftIO (analyze dbg n)
+     case mb of
+       Nothing -> notFound
+       Just r  -> sendJSON r
 
 
 --------------------------------------------------------------------------------

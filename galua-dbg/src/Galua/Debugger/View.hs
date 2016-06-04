@@ -3,6 +3,7 @@ module Galua.Debugger.View
   ( exportDebugger, exportFun, expandExportable, watchExportable
   , importBreakLoc
   , exportBreakLoc
+  , analyze
   ) where
 
 import Galua.CObjInfo(CObjInfo(..))
@@ -20,10 +21,17 @@ import Galua.Debugger.Console
 import qualified Galua.Stack as Stack
 import qualified Galua.SizedVector as SV
 
+import qualified Galua.Micro.AST         as Analysis
+import qualified Galua.Micro.Type.Import as Analysis
+import qualified Galua.Micro.Type.Value  as Analysis
+import qualified Galua.Micro.Type.Eval   as Analysis
+import qualified Galua.Micro.Type.Pretty as Analysis
+import qualified Galua.Micro.Translate   as Analysis
+
 import Language.Lua.Bytecode(Reg(..),Function(..),DebugInfo(..),OpCode(..),
                               ProtoIx(..))
 import Language.Lua.Bytecode.FunId
-import Language.Lua.Bytecode.Pretty (ppOpCode)
+import Language.Lua.Bytecode.Pretty (ppOpCode,blankPPInfo,pp)
 import Language.Lua.Bytecode.Debug
                             (lookupLocalName,inferFunctionName,lookupLineNumber)
 import Language.Lua.StringLiteral (constructStringLiteral)
@@ -171,8 +179,36 @@ groupSources getPath = map (collapseTree (</>))
 
 --------------------------------------------------------------------------------
 
+analyze :: Debugger -> Integer -> IO (Maybe JS.Value)
+analyze dbg n =
+  whenStable dbg False $
+    runExportM dbg $
+      do mb <- lookupThing n
+         case mb of
+           Just (ExportableValue _ (Closure r)) ->
+             io $
+             do (cid,glob) <- Analysis.importClosure r
+                srcs <- readIORef (dbgSources dbg)
+                let funs = expandSources (topLevelChunks srcs)
+                    args = Analysis.initLuaArgList
+                    res  = Analysis.analyze funs cid args glob
+                    txt  = show $ pp blankPPInfo res
+                save "out" funs
+                putStrLn txt
+                return $ Just $ JS.toJSON txt
 
+           _ -> return Nothing
 
+  where
+  expandSources     = foldr expandTop Map.empty . Map.toList
+  expandTop (r,f) m = Analysis.translateAll (rootFun r) (chunkFunction f) m
+
+  save pre x = sequence_
+                    [ writeFile (dotFile pre fid)
+                                (show $ Analysis.ppDot $ Analysis.functionCode fu) |
+                                              (fid,fu) <- Map.toList x ]
+
+  dotFile pre x = pre ++ "_" ++ funIdString x ++ ".dot"
 
 
 watchExportable :: Debugger -> Integer -> IO (Maybe JS.Value)

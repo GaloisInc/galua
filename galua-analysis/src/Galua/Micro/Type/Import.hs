@@ -55,17 +55,18 @@ data RW = RW
     -- ^ Used to generate external names
 
     -- References that we've already done
-  , importedUpVals    :: [(IORef C.Value, A.RefId)]
-  , importedTables    :: Map (C.Reference C.Table)   A.TableId
-  , importedClosures  :: Map (C.Reference C.Closure) A.ClosureId
+  , importedUpVals    :: ![(IORef C.Value, A.RefId)]
+  , importedTables    :: !(Map (C.Reference C.Table)   A.TableId)
+  , importedClosures  :: !(Map (C.Reference C.Closure) A.ClosureId)
 
-  , globs             :: A.GlobalState
+  , globs             :: !A.GlobalState
     -- ^ This is the global state the we build up as we import stuff
 
   }
 
 newName :: M Int
-newName = M $ sets $ \RW { .. } -> (nextName, RW { nextName = 1 + nextName })
+newName = M $ sets $ \RW { .. } -> (nextName, RW { nextName = 1 + nextName
+                                                 , .. })
 
 newExternalRef :: (A.GlobalBlockName -> Int -> a) -> M a
 newExternalRef ty = A.externalId ty <$> newName

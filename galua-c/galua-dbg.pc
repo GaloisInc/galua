@@ -1,4 +1,4 @@
-prefix=INSTALL_DIR
+prefix=/home/diatchki/src/galua/galua-c/inplace
 exec_prefix=${prefix}/bin
 includedir=${prefix}/include/galua
 libdir=${prefix}/lib

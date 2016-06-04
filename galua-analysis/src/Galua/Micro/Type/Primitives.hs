@@ -8,7 +8,7 @@ import Data.ByteString (ByteString)
 typePrim :: FunBehavior
 typePrim = FunBehavior
   { funUpVals = []
-  , funArgs   = List 0 [] undefined
+  , funArgs   = List 0 [] (error "typePrim: funArgs")
   , funPost   = typePrimPost
   }
 

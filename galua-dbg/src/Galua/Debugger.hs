@@ -881,14 +881,6 @@ whenStable dbg vis io =
 --------------------------------------------------------------------------------
 
 
-analyze :: Debugger -> IO ()
-analyze dbg = whenIdle dbg $
-  do chunks <- readIORef (dbgSources dbg)
-     undefined
-
-
-
---  { dbgSources   :: !(IORef Chunks)
 
 
 

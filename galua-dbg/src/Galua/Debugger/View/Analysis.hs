@@ -210,7 +210,7 @@ exportPC info
 
 -- XXX: Maybe export the Entry block also?
 exportFun :: Info1 -> FunId -> JS.Value
-exportFun info1 fid = undefined {-
+exportFun info1 fid = error "XXX: exportFun" {-
   case Map.lookup fid (infoFuns info1) of
     Just fun ->
       let info2 = Info2 { info1      = info1
