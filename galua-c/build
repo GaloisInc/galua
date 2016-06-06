@@ -70,7 +70,7 @@ done
 
 # What OS are we running on?
 UNAME=$(uname -s)
-ARCH=$(arch)
+ARCH=$(uname -m)
 
 case $UNAME in
   "Linux" | "FreeBSD" )
