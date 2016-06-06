@@ -24,6 +24,7 @@ import Distribution.Simple.LocalBuildInfo
 import Distribution.Simple.PackageIndex
 import Distribution.Verbosity ( Verbosity )
 import Distribution.License (License(..))
+import Data.Char (isAscii)
 import Data.Version (showVersion)
 import System.FilePath
 
@@ -63,9 +64,10 @@ generateBuildModule verbosity pkgDesc lbi = do
       []  -> return ()
       bad -> print bad >> fail "BAD LICENSE"
 
-    -- rewriteFile tries to decode the file to check for changes but only supports
-    -- ASCII
-    writeFile (autodir </> "HS_COPYRIGHTS")
+    -- rewriteFile tries to decode the file to check for changes but only
+    -- supports ASCII
+    rewriteFile (autodir </> "HS_COPYRIGHTS")
+        $ filter isAscii
         $ unlines
         $ map licenseInfoString pkgs
 
