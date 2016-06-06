@@ -27,6 +27,7 @@ import           System.Exit
 import           System.IO (hPutStrLn, stderr)
 import           System.IO.Error (isDoesNotExistError)
 import           System.Environment (lookupEnv)
+import qualified System.Clock as Clock
 
 import           Language.Lua.Bytecode
 import           Language.Lua.Bytecode.FunId
@@ -38,6 +39,8 @@ import           Galua.Value
 import           Galua.LuaString
 import qualified Galua.Stack as Stack
 import qualified Galua.SizedVector as SV
+
+import           GHC.Exts (inline)
 
 import           Process (readProcessWithExitCodeBS)
 
@@ -239,10 +242,15 @@ data MachineEnv = MachineEnv
   }
 
 data ProfilingInfo = ProfilingInfo
-  { profCallCounters :: {-# UNPACK #-} !(IORef (Map FunName Int))
+  { profCallCounters  :: {-# UNPACK #-} !(IORef (Map FunName Int))
+  , profAllocCounters :: {-# UNPACK #-} !(IORef (Map CodeLoc Int))
+  , profFunctionTimers :: {-# UNPACK #-} !(IORef (Map FunName FunctionRuntimes))
     -- ^ How many times was a particular function called.
   }
 
+data FunctionRuntimes = FunctionRuntimes
+  { runtimeIndividual, runtimeCumulative :: {-# UNPACK #-} !Clock.TimeSpec
+  }
 
 data MachConfig = MachConfig
   { machOnChunkLoad :: Maybe String -> ByteString -> Int -> Function -> IO ()
@@ -258,6 +266,8 @@ data ExecEnv = ExecEnv
   , execVarargs  :: !(IORef [Value])
   , execApiCall  :: !(IORef ApiCallStatus)
   , execClosure  :: !Value
+  , execCreateTime :: {-# UNPACK #-} !Clock.TimeSpec
+  , execChildTime :: {-# UNPACK #-} !Clock.TimeSpec
   }
 
 data ApiCallStatus
@@ -276,12 +286,15 @@ newThreadExecEnv =
   do stack <- SV.new
      api   <- newIORef NoApiCall
      var   <- newIORef []
+     time  <- Clock.getTime Clock.ProcessCPUTime
      return ExecEnv { execStack    = stack
                     , execUpvals   = Vector.empty
                     , execFunction = CFunction blankCFunName
                     , execVarargs  = var
                     , execApiCall  = api
                     , execClosure  = Nil
+                    , execCreateTime = time
+                    , execChildTime  = 0
                     }
 
 instance Functor Mach where
@@ -430,7 +443,9 @@ newMachineEnv machConfig =
 
 newProfilingInfo :: IO ProfilingInfo
 newProfilingInfo =
-  do profCallCounters <- newIORef Map.empty
+  do profCallCounters  <- newIORef Map.empty
+     profAllocCounters <- newIORef Map.empty
+     profFunctionTimers <- newIORef Map.empty
      return ProfilingInfo { .. }
 
 foreign import ccall "galua_allocate_luaState"
@@ -481,7 +496,11 @@ machNewTable ::
   Mach (Reference Table)
 machNewTable aSz hSz =
   do loc <- machRefLoc
-     newTable loc aSz hSz
+     ref <- newTable loc aSz hSz
+     counts <- getsMachEnv (profAllocCounters . machProfiling)
+     liftIO $
+        do incrementCounter ref counts
+           return ref
 
 machNewUserData :: ForeignPtr () -> Int -> Mach (Reference UserData)
 machNewUserData fp n =
@@ -595,3 +614,10 @@ parseLua mbName src =
             return (Left (show e))
        Right (ExitFailure{},_,err) -> return $! Left $! unpackUtf8 $! L.toStrict err
        Right (ExitSuccess,chunk,_) -> return $! parseLuaBytecode mbName chunk
+
+incrementCounter :: Reference a -> IORef (Map CodeLoc Int) -> IO ()
+incrementCounter i countRef =
+  atomicModifyIORef' countRef $ \counts ->
+    let counts' = inline Map.alter inc (refLocSite (referenceLoc i)) counts
+        inc old = Just $! maybe 1 succ old
+    in (counts', counts' `seq` ())

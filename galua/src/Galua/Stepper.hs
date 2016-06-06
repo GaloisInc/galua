@@ -27,6 +27,7 @@ import           Data.IORef
 import           Data.Foldable (traverse_)
 import qualified Data.Map as Map
 import           Data.Map (Map)
+import qualified System.Clock as Clock
 
 import           GHC.Exts (inline)
 
@@ -78,8 +79,20 @@ performTailCall ::
 performTailCall vm f vs =
   do liftIO (bumpCallCounter f vm)
      (newEnv, next) <- enterClosure f vs
-     vmUpdateThread vm $ \th -> th { stExecEnv = newEnv }
+     vmUpdateThread vm $ \th ->
+       let elapsed = execCreateTime newEnv - execCreateTime (stExecEnv th)
+       in th { stStack = addElapsedToTop elapsed (stStack th)
+             , stExecEnv = newEnv
+             }
      return (Running vm (next vm))
+
+addElapsedToTop :: Clock.TimeSpec -> Stack StackFrame -> Stack StackFrame
+addElapsedToTop elapsed stack =
+  case Stack.pop stack of
+    Just (CallFrame pc eenv err k,fs) ->
+      Stack.push (CallFrame pc (addChildTime elapsed eenv) err k) fs
+    Just (f,fs) -> Stack.push f (addElapsedToTop elapsed fs)
+    Nothing     -> stack
 
 
 performFunCall ::
@@ -115,13 +128,6 @@ bumpCallCounter clo vm =
   where prof = profCallCounters $ machProfiling $ vmMachineEnv vm
 
 
-incrementCounter :: Reference a -> IORef (Map CodeLoc Int) -> IO ()
-incrementCounter i countRef =
-  atomicModifyIORef' countRef $ \counts ->
-    let counts' = inline Map.alter inc (refLocSite (referenceLoc i)) counts
-        inc old = Just $! maybe 1 succ old
-    in (counts', counts' `seq` ())
-
 performThreadExit :: VM -> [Value] -> Alloc VMState
 performThreadExit vm vs =
   case Stack.pop (vmBlocked vm) of
@@ -150,8 +156,10 @@ performFunReturn vm vs =
              performErrorReturn vm (trimResult1 vs)
 
            CallFrame pc fenv errK k ->
-             do vmUpdateThread vm $ \MkThread { .. } ->
-                  MkThread { stExecEnv  = fenv
+             do now <- liftIO (Clock.getTime Clock.ProcessCPUTime)
+                let elapsed = now - execCreateTime (stExecEnv th)
+                vmUpdateThread vm $ \MkThread { .. } ->
+                  MkThread { stExecEnv  = addChildTime now fenv
                            , stStack    = fs
                            , stPC       = pc
                            , stHandlers = case errK of
@@ -161,6 +169,10 @@ performFunReturn vm vs =
                            }
 
                 return (Running vm (k vs))
+
+addChildTime :: Clock.TimeSpec -> ExecEnv -> ExecEnv
+addChildTime elapsed e =
+  e { execChildTime = execChildTime e + elapsed }
 
 
 performThreadFail :: VM -> Value -> Alloc VMState
@@ -341,6 +353,7 @@ enterClosure c vs = liftIO $
      traverse_ (SV.push stack <=< newIORef) stackElts
      vasRef   <- newIORef vas
      apiRef   <- newIORef NoApiCall
+     time     <- Clock.getTime Clock.ProcessCPUTime
 
      let newEnv = ExecEnv { execStack    = stack
                           , execUpvals   = cloUpvalues
@@ -348,6 +361,8 @@ enterClosure c vs = liftIO $
                           , execVarargs  = vasRef
                           , execApiCall  = apiRef
                           , execClosure  = Closure c
+                          , execCreateTime = time
+                          , execChildTime  = 0
                           }
 
      return (newEnv, \vm -> runMach vm start)
