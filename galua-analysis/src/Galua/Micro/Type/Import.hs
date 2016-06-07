@@ -142,15 +142,13 @@ importTable t =
   importEntry (x,y) = (,) <$> importValue x <*> importValue y
   addEntry (k,v) t =
     case A.valueString k of
-      A.OneValue s -> addGen k { A.valueString = A.bottom } v
-                        t { A.tableFields =
-                                      A.letFun (A.Field s) v (A.tableFields t) }
+      A.OneValue s
+        | k { A.valueString = A.bottom } == A.bottom ->
+          t { A.tableFields = A.letFun (A.Field s) v (A.tableFields t) }
 
-      _ -> addGen k v t
-
-  addGen k v t = t { A.tableKeys   = k A.\/ A.tableKeys t
-                   , A.tableValues = v A.\/ A.tableValues t
-                   }
+      _ -> t { A.tableKeys   = k A.\/ A.tableKeys t
+             , A.tableValues = v A.\/ A.tableValues t
+             }
 
 
 importFunction :: C.Closure -> M A.FunV

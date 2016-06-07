@@ -18,6 +18,7 @@ import Galua.Value
 import qualified Galua.Table as Tab
 import Galua.Reference
 import Galua.Debugger.Console
+import Galua.Debugger.View.Analysis(exportResult)
 import qualified Galua.Stack as Stack
 import qualified Galua.SizedVector as SV
 
@@ -194,8 +195,9 @@ analyze dbg n =
                     res  = Analysis.analyze funs cid args glob
                     txt  = show $ pp blankPPInfo res
                 save "out" funs
+                writeFile "va.txt" txt
                 putStrLn txt
-                return $ Just $ JS.toJSON txt
+                return $ Just $ exportResult res
 
            _ -> return Nothing
 

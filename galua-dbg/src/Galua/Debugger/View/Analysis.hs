@@ -28,42 +28,51 @@ import           Galua.Micro.Type.Value
 import           Galua.Micro.Type.Eval(Result(..))
 import           Galua.Debugger.View.Utils
 
---------------------------------------------------------------------------------
--- Function Info
 
-data Info1 = Info1
-  { infoFuns     :: Map FunId OP.Function
-  , infoFunNames :: Map FunId String
-  , infoResult   :: Result
+
+
+exportResult :: Result -> JS.Value
+exportResult Result { .. } =
+  JS.object
+    [ "returns" .= exportListVals    maps resReturns
+    , "raises"  .= exportValue       maps resRaises
+    , "post"    .= exportGlobalState maps resGlobals
+    ]
+  where
+  maps = idMaps resGlobals
+
+
+
+exportGlobalState :: IdMaps -> GlobalState -> JS.Value
+exportGlobalState maps GlobalState { .. } =
+  JS.object [ "tables"    .= [ exportTableV maps v | v <- Map.elems tables ]
+            , "heap"      .= [ exportValue  maps v | v <- Map.elems heap ]
+            , "functions" .= [ exportFunV   maps v | v <- Map.elems functions ]
+            ]
+
+data IdMaps = IdMaps
+  { tableIds :: Map TableId   Int
+  , refIds   :: Map RefId     Int
+  , cloIds   :: Map ClosureId Int
   }
 
-data Info2 = Info2
-  { info1       :: Info1
-  , infoCaller  :: CallsiteId
-  , infoCurFID  :: FunId
-  , infoCurFun  :: OP.Function
-  , infoPC      :: Int
-  }
-
-data Info3 = Info3
-  { info2       :: Info2
-  , infoGlobal  :: GlobalState
-  }
+idMaps :: GlobalState -> IdMaps
+idMaps GlobalState { .. } = IdMaps { tableIds = toIds tables
+                                   , refIds   = toIds heap
+                                   , cloIds   = toIds functions
+                                   }
+  where
+  toIds m = Map.fromList (zip (Map.keys m) [ 0 .. ])
 
 
---------------------------------------------------------------------------------
--- Misc/helpers
 
-tag :: String -> JS.Pair
-tag x = "tag" .= x
 
-tagged :: String -> [JS.Pair] -> JS.Value
-tagged x xs = JS.object (tag x : xs)
 
 
 --------------------------------------------------------------------------------
 -- Keys/Ids
 
+{-
 blockIdString :: BlockName -> String
 blockIdString b =
   case b of
@@ -90,24 +99,10 @@ refIdString (RefId bn pc) = globalBlockNameString bn ++ "-" ++ show pc
 
 cloIdString :: ClosureId -> String
 cloIdString (ClosureId bn pc) = globalBlockNameString bn ++ "-" ++ show pc
+-}
 
 
 --------------------------------------------------------------------------------
-
-
-exportReg :: Info2 -> Reg -> Maybe Text
-exportReg Info2 { .. } reg =
-  case reg of
-    Reg r | Just nm <- OP.lookupLocalName infoCurFun infoPC r
-            -> Just (decodeUtf8 nm)
-    Reg r   -> Just (Text.pack ("R[" ++ show r ++ "]"))
-    TMP a b -> Nothing
-
-exportFID :: FunId -> JS.Value
-exportFID = fromString . funIdString
-
-
-
 
 exportType :: Type -> Text
 exportType t =
@@ -119,108 +114,72 @@ exportType t =
     LightUserData   -> "light user data"
     Thread          -> "thread"
 
--- XXX: Add meta-tables to primitives.
--- XXX: Dereference references (?)
-exportSingleV :: Info3 -> SingleV -> JS.Value
-exportSingleV info v =
+exportSingleV :: IdMaps -> SingleV -> JS.Value
+exportSingleV IdMaps { .. } v =
   case v of
-    BasicValue t            -> simp (exportType t)
-    StringValue Nothing     -> simp "string"
-    StringValue (Just x)    -> val "string"
-                                 (constructStringLiteral (BS.fromStrict x))
-    TableValue Nothing      -> simp "table"
-    TableValue (Just r)     -> val "table" (tableIdString r)
-    FunctionValue Nothing   -> simp "function"
-    FunctionValue (Just f)  -> val "function" (cloIdString f)
-    RefValue Nothing        -> simp "reference"
-    RefValue (Just r)       -> val "reference" (refIdString r)
+    BasicValue t    -> ty (exportType t) (Nothing :: Maybe ())
+    StringValue r   -> ty "string"       (fmap shStr r)
+    TableValue r    -> ty "table"        (fmap (tableIds Map.!) r)
+    FunctionValue r -> ty "function"     (fmap (cloIds Map.!)   r)
+    RefValue r      -> ty "reference"    (fmap (refIds Map.!)   r)
 
   where
-  simp x  = tagged "simple" [ "type" .= (x :: Text) ]
-  val x y = tagged x [ "value" .= y ]
+  ty t mbRef = JS.object [ "type" .= (t :: Text), "more" .= mbRef ]
+  shStr x    = constructStringLiteral (BS.fromStrict x)
 
-exportValue :: Info3 -> Value -> JS.Value
-exportValue info = toJSON . map (exportSingleV info) . valueCases
+exportValue :: IdMaps -> Value -> JS.Value
+exportValue maps = toJSON . map (exportSingleV maps) . valueCases
 
-exportListVals :: Info3 -> List Value -> Maybe JS.Value
-exportListVals info xs =
+exportListVals :: IdMaps -> List Value -> Maybe JS.Value
+exportListVals maps xs =
   case xs of
     ListBottom  -> Nothing
     List n xs a -> Just $ JS.object [ "min_len"  .= n
-                                    , "elements" .= map (exportValue info) xs
-                                    , "default"  .= exportValue info a
+                                    , "elements" .= map (exportValue maps) xs
+                                    , "default"  .= exportValue maps a
                                     ]
 
-exportLocalState :: Info3 -> LocalState -> JS.Value
-exportLocalState info LocalState { .. } =
-  JS.object [ "env"  .= JS.object (mapMaybe keyVal (Map.toList env))
-            , "args" .= exportListVals info argReg
-            , "list" .= exportListVals info listReg
-            ]
-  where
-  keyVal (r,v) = do lab <- exportReg (info2 info) r
-                    return (lab .= exportValue info v)
 
-exportTableV :: Info3 -> TableV -> JS.Value
-exportTableV info TableV { .. } =
-  JS.object [ "meta"  .= exportValue info meta
-            , "key"   .= exportValue info tableKeys
-            , "value" .= exportValue info tableValues
-            , "attrs" .= JS.object [ x .= exportValue info v | (x,v) <- attrs ]
+exportTableV :: IdMaps -> TableV -> JS.Value
+exportTableV maps TableV { .. } =
+  JS.object [ "meta"  .= exportValue maps meta
+            , "key"   .= exportValue maps tableKeys
+            , "value" .= exportValue maps tableValues
+            , "attrs" .= JS.object [ x .= exportValue maps v | (x,v) <- attrs ]
             ]
   where
   meta  = appFun tableFields Metatable
   attrs = case tableFields of
             FFun mp _ -> [ (decodeUtf8 f,v) | (Field f, v) <- Map.toList mp ]
 
-
-exportGlobalState :: Info3 -> JS.Value
-exportGlobalState info =
-  JS.object [ "tables" .= JS.object (map expT (Map.toList tables))
-            , "heap"   .= JS.object (map expR (Map.toList heap))
-            ]
+exportFunV :: IdMaps -> FunV -> JS.Value
+exportFunV IdMaps { .. } FunV { .. } =
+  JS.object
+    [ "fid"    .= expFun functionFID
+    , "upvals" .= map expRef (Map.elems functionUpVals)
+    ]
   where
-  GlobalState { .. } = infoGlobal info
-  expT (t,v)         = Text.pack (tableIdString t) .= exportTableV info v
-  expR (r,v)         = Text.pack (refIdString r)   .= exportValue info v
+  expFun x = case x of
+               NoValue            -> "(no function)"
+               MultipleValues     -> "(unknown)"
+               OneValue Nothing   -> "(C function)"
+               OneValue (Just f)  -> exportFID f
+
+  expRef x  = case x of
+                NoValue        -> -1
+                MultipleValues -> -2
+                OneValue r     -> refIds Map.! r
 
 
-exportState :: Info2 -> State -> JS.Value
-exportState info State { .. } =
-  JS.object [ "local"  .= exportLocalState  info3 localState
-            , "global" .= exportGlobalState info3
-            ]
-  where
-  info3 = Info3 { infoGlobal = globaleState, info2 = info }
 
+--------------------------------------------------------------------------------
+-- Misc/helpers
 
-exportPC :: Info2 -> Maybe (JS.Value,Info2)
-exportPC info
-  | pc >= Vector.length (OP.funcCode (infoCurFun info)) = Nothing
-  | otherwise =
-    let i1    = info1 info
-        qual  = QualifiedBlockName (infoCurFID info) (PCBlock pc)
-        glob  = GlobalBlockName (infoCaller info) qual
-    in case Map.lookup glob (resStates (infoResult i1)) of
-         Just s  -> Just (exportState info s, info { infoPC = pc + 1 })
-         Nothing -> error "Missing analysis result"
-                    -- XXX: Maybe this means unreachable code?
-  where pc = infoPC info
+tag :: String -> JS.Pair
+tag x = "tag" .= x
 
-
--- XXX: Maybe export the Entry block also?
-exportFun :: Info1 -> FunId -> JS.Value
-exportFun info1 fid = error "XXX: exportFun" {-
-  case Map.lookup fid (infoFuns info1) of
-    Just fun ->
-      let info2 = Info2 { info1      = info1
-                        , infoCurFID = fid
-                        , infoCurFun = fun
-                        , infoPC     = 0
-                        }
-      in toJSON (unfoldr exportPC info2)
-    Nothing  -> error "Missing function"
--}
+tagged :: String -> [JS.Pair] -> JS.Value
+tagged x xs = JS.object (tag x : xs)
 
 
 
