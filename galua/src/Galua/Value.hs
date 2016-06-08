@@ -29,6 +29,7 @@ module Galua.Value
   , PrimArgument(..)
   , newClosure
   , FunName(..)
+  , funValueName
   , CFun
   , CFunName(..)
   , blankCFunName
@@ -226,6 +227,10 @@ data FunctionValue
 
 data FunName = CFID CFunName | LuaFID FunId
                 deriving (Eq,Ord)
+
+funValueName :: FunctionValue -> FunName
+funValueName (CFunction   name  ) = CFID   name
+funValueName (LuaFunction name _) = LuaFID name
 
 data CFunName = CFunName
   { cfunName :: CObjInfo
