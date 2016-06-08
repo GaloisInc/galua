@@ -28,11 +28,12 @@ import           Galua.Micro.Type.Value
 import           Galua.Micro.Type.Eval(Result(..))
 import           Galua.Debugger.View.Utils
 
+import Debug.Trace
 
 
 
 exportResult :: Result -> JS.Value
-exportResult Result { .. } =
+exportResult r@Result { .. } = trace (show r) $
   JS.object
     [ "returns" .= exportListVals    maps resReturns
     , "raises"  .= exportValue       maps resRaises
@@ -70,39 +71,6 @@ idMaps GlobalState { .. } = IdMaps { tableIds = toIds tables
 
 
 --------------------------------------------------------------------------------
--- Keys/Ids
-
-{-
-blockIdString :: BlockName -> String
-blockIdString b =
-  case b of
-    EntryBlock   -> "entry"
-    PCBlock n    -> "pc_" ++ show n
-    NewBlock x y -> "new_" ++ show x ++ "_" ++ show y
-
-globalBlockNameString :: GlobalBlockName -> String
-globalBlockNameString (GlobalBlockName cid qn) =
-  callSiteIdString cid ++ "-" ++ qualBlockNameIdString qn
-
-callSiteIdString :: CallsiteId -> String
-callSiteIdString (CallsiteId qn n) = qualBlockNameIdString qn ++ "-" ++ show n
-
-qualBlockNameIdString :: QualifiedBlockName -> String
-qualBlockNameIdString (QualifiedBlockName fid bn) =
-  funIdString fid ++ "-" ++ blockIdString bn
-
-tableIdString :: TableId -> String
-tableIdString (TableId bn pc) = globalBlockNameString bn ++ "-" ++ show pc
-
-refIdString :: RefId -> String
-refIdString (RefId bn pc) = globalBlockNameString bn ++ "-" ++ show pc
-
-cloIdString :: ClosureId -> String
-cloIdString (ClosureId bn pc) = globalBlockNameString bn ++ "-" ++ show pc
--}
-
-
---------------------------------------------------------------------------------
 
 exportType :: Type -> Text
 exportType t =
@@ -114,21 +82,35 @@ exportType t =
     LightUserData   -> "light user data"
     Thread          -> "thread"
 
-exportSingleV :: IdMaps -> SingleV -> JS.Value
-exportSingleV IdMaps { .. } v =
-  case v of
-    BasicValue t    -> ty (exportType t) (Nothing :: Maybe ())
-    StringValue r   -> ty "string"       (fmap shStr r)
-    TableValue r    -> ty "table"        (fmap (tableIds Map.!) r)
-    FunctionValue r -> ty "function"     (fmap (cloIds Map.!)   r)
-    RefValue r      -> ty "reference"    (fmap (refIds Map.!)   r)
-
-  where
-  ty t mbRef = JS.object [ "type" .= (t :: Text), "more" .= mbRef ]
-  shStr x    = constructStringLiteral (BS.fromStrict x)
-
 exportValue :: IdMaps -> Value -> JS.Value
-exportValue maps = toJSON . map (exportSingleV maps) . valueCases
+exportValue maps v = JS.object
+                        [ "simple"    .= names
+                        , "table"     .= seeAlso valueTable tableIds
+                        , "function"  .= seeAlso valueFunction cloIds
+                        , "reference" .= seeAlso valueRef refIds
+                        ]
+  where
+  names = Set.unions [ name "table"     valueTable
+                     , name "function"  valueFunction
+                     , name "reference" valueRef
+                     , stringName
+                     , Set.map exportType (valueBasic v)
+                     ]
+
+  stringName = case valueString v of
+                 NoValue         -> Set.empty
+                 OneValue s      -> Set.singleton (shStr s)
+                 MultipleValues  -> Set.singleton "string"
+
+  shStr x  = Text.pack (constructStringLiteral (BS.fromStrict x))
+
+  name x f = case f v of
+               Top      -> Set.singleton x
+               NotTop _ -> Set.empty
+
+  seeAlso f g = case f v of
+                  NotTop xs -> Set.map (g maps Map.!) xs
+                  _         -> Set.empty
 
 exportListVals :: IdMaps -> List Value -> Maybe JS.Value
 exportListVals maps xs =
