@@ -242,14 +242,16 @@ function drawProfiling(dbgState,stats) {
              .append([ $('<th/>').text('Calls')
                      , $('<td/>').attr('colspan',4).text('Function')
                      ]))
-  jQuery.each(stats, function(ix,entry) {
+  jQuery.each(stats.calls, function(ix,entry) {
     var count = $('<td/>').text(entry.calls)
+    var ind   = $('<td/>').text(entry.ind)
+    var cum   = $('<td/>').text(entry.cum)
     var name  = $('<td/>')
     var ty    = $('<td/>').addClass('uk-badge')
     var pc    = $('<td/>')
     var args  = $('<td/>')
     drawFunParts(entry.loc, name, ty, pc, args)
-    var row = $('<tr/>').append([count,ty,name,pc,args])
+    var row = $('<tr/>').append([ty,name,pc,args,count,ind,cum])
     tab.append(row)
 
     if (entry.loc.type === 'Lua') {
