@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -e
 
 GIT=$(command -v git)
 STACK=$(command -v stack)
