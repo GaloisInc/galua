@@ -332,6 +332,9 @@ data List a = ListBottom
                       -- These are strict lists.
               deriving (Show,Eq)
 
+listMaxLen :: Int
+listMaxLen = 16
+
 -- | Drop some elements from the front of the list.
 listDrop :: Int -> List a -> List a
 listDrop n list =
@@ -351,10 +354,10 @@ listAppend xs list
   | any (== bottom) xs  = ListBottom
   | otherwise =
      case list of
-       ListBottom -> ListBottom
-       -- this case is just an optimization to avoid rebuilding `xs`
-       List count [] d  -> List (length xs + count) xs d
-       List count as d  -> List (length xs + count) (xs ++ as) d
+       ListBottom       -> ListBottom
+       List count as d  -> List (min listMaxLen (length xs + count))
+                                front (joins (d : back))
+          where (front,back) = splitAt listMaxLen (xs ++ as)
 
 -- | "Apply" the list, (i.e., get the element at the given position.)
 appList :: Lattice a => List a -> Int -> a

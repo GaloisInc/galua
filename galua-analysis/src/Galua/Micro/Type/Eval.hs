@@ -15,8 +15,10 @@ import           MonadLib hiding (raises)
 import Galua.Micro.AST
 import Galua.Micro.Type.Value
 import Galua.Micro.Type.Pretty()
-import Language.Lua.Bytecode.Pretty(PP(..),pp)
+import Language.Lua.Bytecode.Pretty(PP(..),pp,blankPPInfo)
 import Galua.Micro.Type.Monad
+
+import Debug.Trace(trace)
 
 
 
@@ -59,6 +61,7 @@ raiseError v =
 
 evalStmt :: Stmt -> BlockM Next
 evalStmt stmt =
+  trace ("STMT: " ++ show (pp blankPPInfo stmt)) $
 
   case stmt of
 
@@ -344,7 +347,7 @@ evalStmt stmt =
 
 
 evalBlock :: AnalysisM m => GlobalBlockName -> State -> m (Next, State)
-evalBlock bn s = inBlock bn s go
+evalBlock bn s = trace ("BLOCK: " ++ show (pp blankPPInfo bn)) $ inBlock bn s go
   where
   go = do next <- evalStmt =<< curStmt
           case next of

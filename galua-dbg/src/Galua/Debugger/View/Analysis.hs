@@ -28,12 +28,9 @@ import           Galua.Micro.Type.Value
 import           Galua.Micro.Type.Eval(Result(..))
 import           Galua.Debugger.View.Utils
 
-import Debug.Trace
-
-
 
 exportResult :: Result -> JS.Value
-exportResult r@Result { .. } = trace (show r) $
+exportResult r@Result { .. } =
   JS.object
     [ "returns" .= exportListVals    maps resReturns
     , "raises"  .= exportValue       maps resRaises

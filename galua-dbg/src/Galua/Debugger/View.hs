@@ -188,16 +188,24 @@ analyze dbg n =
          case mb of
            Just (ExportableValue _ (Closure r)) ->
              io $
-             do (cid,glob) <- Analysis.importClosure r
-                srcs <- readIORef (dbgSources dbg)
-                let funs = expandSources (topLevelChunks srcs)
-                    args = Analysis.initLuaArgList
-                    res  = Analysis.analyze funs cid args glob
-                    txt  = show $ pp blankPPInfo res
-                save "out" funs
-                writeFile "va.txt" txt
-                putStrLn txt
-                return $ Just $ exportResult res
+             do vms <- readIORef (dbgStateVM dbg)
+                case vms of
+                  Running vm _ ->
+                    do let metas = machMetatablesRef (vmMachineEnv vm)
+                       (cid,glob) <- Analysis.importClosure metas r
+                       srcs <- readIORef (dbgSources dbg)
+                       let funs = expandSources (topLevelChunks srcs)
+                           args = Analysis.initLuaArgList
+                           res  = Analysis.analyze funs cid args glob
+                           txt  = show $ pp blankPPInfo res
+                       save "out" funs
+                       writeFile "imported.txt" (show glob)
+                       writeFile "va.txt" txt
+                       putStrLn txt
+                       return $ Just $ exportResult res
+
+                  _ -> return Nothing
+
 
            _ -> return Nothing
 
