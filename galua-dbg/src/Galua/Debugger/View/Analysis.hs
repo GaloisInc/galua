@@ -84,12 +84,10 @@ exportValue maps v = JS.object
                         [ "simple"    .= names
                         , "table"     .= seeAlso valueTable tableIds
                         , "function"  .= seeAlso valueFunction cloIds
-                        , "reference" .= seeAlso valueRef refIds
                         ]
   where
   names = Set.unions [ name "table"     valueTable
                      , name "function"  valueFunction
-                     , name "reference" valueRef
                      , stringName
                      , Set.map exportType (valueBasic v)
                      ]

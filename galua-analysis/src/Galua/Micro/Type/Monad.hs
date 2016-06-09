@@ -360,16 +360,20 @@ updLocal f = do l <- getLocal
 --------------------------------------------------------------------------------
 -- Working with local values.
 
-assign :: Reg -> Value -> BlockM ()
+assign :: Reg -> RegVal -> BlockM ()
 assign r v = updLocal $ \LocalState { env, .. } ->
                          LocalState { env = Map.insert r v env, .. }
 
 -- Does not return bottom
-getReg :: Reg -> BlockM Value
+getReg :: Reg -> BlockM RegVal
 getReg r = do LocalState { env } <- getLocal
               case Map.lookup r env of
                 Nothing -> impossible
                 Just v  -> return v
+
+
+
+
 
 getList :: ListReg -> BlockM (List Value)
 getList r =
@@ -385,16 +389,16 @@ setList r vs = updLocal $ \s ->
                    ArgReg  -> s { argReg  = vs }
 
 -- Does not return bottom
-getUpVal :: UpIx -> BlockM Value
+getUpVal :: UpIx -> BlockM RegVal
 getUpVal u = do LocalState { upvals } <- getLocal
                 return $! case Map.lookup u upvals of
                             Just r  -> toVal r
-                            Nothing -> error ("Missing up-value: " ++ show u)
+                            Nothing -> RegBottom
   where
   toVal r = case r of
-              NoValue        -> bottom
-              MultipleValues -> topVal
-              OneValue v     -> newRef v
+              NoValue        -> RegBottom
+              MultipleValues -> RegTop
+              OneValue v     -> RegRef v
 
 
 

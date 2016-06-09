@@ -49,14 +49,21 @@ instance PP a => PP (WithTop a) where
   pp _ Top = "⊤"
   pp n (NotTop p) = pp n p
 
+instance PP RegVal where
+  pp n val =
+    case val of
+      RegBottom -> "⊥"
+      RegTop    -> "⊤"
+      RegVal v  -> pp n v
+      RegRef r  -> pp n r
+
 instance PP Value where
   pp _ t | t == bottom = "⊥"
   pp n Value { .. } =
       ppOpts $ map (pp n) (Set.toList valueBasic) ++
                ppStr ++
                ppSet "fun"   (pp n) valueFunction ++
-               ppSet "table" (pp n) valueTable ++
-               ppSet "ref"   (pp n) valueRef
+               ppSet "table" (pp n) valueTable
 
     where
     ppStr = case valueString of

@@ -2,8 +2,7 @@
 function aIsBottom(v) {
   return v.simple.length === 0 &&
          v.function.length === 0 &&
-         v.table.length === 0 &&
-         v.reference.length === 0
+         v.table.length === 0
 }
 
 function aValue(glob, v) {
@@ -41,7 +40,6 @@ function aValue(glob, v) {
 
   more('table',     aTableV, 'table',  v.table)
   more('function',  aFunV,   'laptop', v.function)
-  more('reference', aRefV,  'share',  v.reference)
 
 
   var me = $('<div/>')

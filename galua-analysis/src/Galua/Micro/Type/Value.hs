@@ -26,7 +26,6 @@ data SingleV      = BasicValue        Type
                   | StringValue       (Maybe ByteString) -- ^ Nothing = top
                   | TableValue        (Maybe TableId)
                   | FunctionValue     (Maybe ClosureId)
-                  | RefValue          (Maybe RefId)
                     deriving Eq
 
 data Type         = Nil | Bool | Number | UserData | LightUserData | Thread
@@ -98,14 +97,19 @@ data GlobalState = GlobalState
   , funMeta     :: Value                -- ^ Meta-table for functions
   } deriving (Eq,Show,Generic)
 
+data RegVal = RegBottom
+            | RegVal Value
+            | RegRef RefId
+            | RegTop
+              deriving (Eq,Show)
 
 -- | An abstract state describing the state of a function call.
 data LocalState = LocalState
-  { env         :: Map Reg Value -- ^ Values of normal registers
-  , argReg      :: List Value    -- ^ Argument register
-  , listReg     :: List Value    -- ^ The "list" register.
-                                 -- This is used when we make function
-                                 -- calls or to return results.
+  { env         :: Map Reg RegVal -- ^ Values of normal registers
+  , argReg      :: List Value     -- ^ Argument register
+  , listReg     :: List Value     -- ^ The "list" register.
+                                  -- This is used when we make function
+                                  -- calls or to return results.
   , upvals      :: Map UpIx (Lift RefId)  -- ^ Upvalues for current function
   } deriving (Eq,Show,Generic)
 
@@ -124,7 +128,6 @@ data Value = Value
   , valueString   :: Lift ByteString          -- ^ String aspects of the value
   , valueFunction :: WithTop (Set ClosureId)  -- ^ Which function is this
   , valueTable    :: WithTop (Set TableId)    -- ^ Which table is this
-  , valueRef      :: WithTop (Set RefId)      -- ^ Which reference is this
   } deriving (Eq,Generic,Show)
 
 
@@ -207,8 +210,7 @@ valueCases Value { .. } =
      MultipleValues -> [StringValue Nothing]
    ) ++
    (ifTop TableValue    valueTable) ++
-   (ifTop FunctionValue valueFunction) ++
-   (ifTop RefValue      valueRef)
+   (ifTop FunctionValue valueFunction)
   where
   ifTop f x = case x of
                 Top      -> [ f Nothing ]
@@ -226,7 +228,6 @@ fromSingleV val =
                                                   Just s  -> OneValue s }
     TableValue t     -> bottom { valueTable    = toTop t }
     FunctionValue f  -> bottom { valueFunction = toTop f }
-    RefValue r       -> bottom { valueRef      = toTop r }
   where
   toTop mb = case mb of
                Nothing -> Top
@@ -247,8 +248,8 @@ anyString :: Value
 anyString = fromSingleV (StringValue Nothing)
 
 -- | Make a value that is exactly this reference.
-newRef :: RefId -> Value
-newRef = fromSingleV . RefValue . Just
+newRef :: RefId -> RegVal
+newRef = RegRef
 
 -- | Make a value that is exactly this table.
 newTable :: TableId -> Value
@@ -264,23 +265,12 @@ topVal = Value { valueBasic    = Set.fromList [ minBound .. maxBound ]
                , valueString   = MultipleValues
                , valueFunction = Top
                , valueTable    = Top
-               , valueRef      = Top
                }
 
-
 -- | A value that describes the possible arguments to a function,
--- when we don't know anything else about it.  Basically we pass
--- `Top` for all arguments, but we do know that the inputs can't be references.
+-- when we don't know anything else about it.
 initLuaArgList :: List Value
-initLuaArgList = listConst initLuaParam
-  where
-  initLuaParam =
-    Value { valueBasic    = Set.fromList [ minBound .. maxBound ]
-          , valueString   = MultipleValues
-          , valueFunction = Top
-          , valueTable    = Top
-          , valueRef      = bottom     -- no refs
-          }
+initLuaArgList = listConst topVal
 
 
 
@@ -413,7 +403,6 @@ instance Meet Value where
           , valueString   = valueString   v1 /\ valueString   v2
           , valueFunction = valueFunction v1 /\ valueFunction v2
           , valueTable    = valueTable    v1 /\ valueTable    v2
-          , valueRef      = valueRef      v1 /\ valueRef      v2
           }
 
 instance Lattice a => Lattice (WithTop a) where
@@ -421,6 +410,20 @@ instance Lattice a => Lattice (WithTop a) where
   addNewInfo _ Top = Nothing
   addNewInfo Top _ = Just Top
   addNewInfo (NotTop x) (NotTop y) = NotTop <$> addNewInfo x y
+
+
+instance Lattice RegVal where
+  bottom = RegBottom
+  addNewInfo RegBottom _ = Nothing
+  addNewInfo _ RegTop    = Nothing
+  addNewInfo (RegRef r1) (RegRef r2)
+    | r1 == r2  = Nothing
+  addNewInfo (RegVal v1) (RegVal v2) =
+    do v3 <- addNewInfo v1 v2
+       return (if v3 == topVal then RegTop else RegVal v3)
+  addNewInfo _ _ = Just RegTop
+
+
 
 
 instance Meet a => Meet (WithTop a) where
