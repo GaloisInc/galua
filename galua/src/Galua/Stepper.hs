@@ -153,6 +153,7 @@ performFunReturn vm vs =
   do th <- readRef (vmCurThread vm)
 
      now <- liftIO (Clock.getTime Clock.ProcessCPUTime)
+     let elapsed = now - execCreateTime (stExecEnv th)
      liftIO (recordProfTime now (vmMachineEnv vm) (stExecEnv th))
 
      case Stack.pop (stStack th) of
@@ -167,7 +168,7 @@ performFunReturn vm vs =
 
            CallFrame pc fenv errK k ->
              do vmUpdateThread vm $ \MkThread { .. } ->
-                  MkThread { stExecEnv  = addChildTime now fenv
+                  MkThread { stExecEnv  = addChildTime elapsed fenv
                            , stStack    = fs
                            , stPC       = pc
                            , stHandlers = case errK of
@@ -202,10 +203,8 @@ recordProfTime now menv eenv =
 
 
 addChildTime :: Clock.TimeSpec -> ExecEnv -> ExecEnv
-addChildTime now e =
+addChildTime elapsed e =
   e { execChildTime = execChildTime e + elapsed }
-  where
-  elapsed = now - execCreateTime e
 
 
 performThreadFail :: VM -> Value -> Alloc VMState
