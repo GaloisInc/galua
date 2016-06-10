@@ -155,8 +155,9 @@ performFunReturn vm vs =
      now <- liftIO (Clock.getTime Clock.ProcessCPUTime)
      let elapsed = now - execCreateTime (stExecEnv th)
      liftIO (recordProfTime now (vmMachineEnv vm) (stExecEnv th))
+     let stack' = addElapsedToTop elapsed (stStack th)
 
-     case Stack.pop (stStack th) of
+     case Stack.pop stack' of
 
        Nothing ->
           return (Running vm (ThreadExit vs))
@@ -168,7 +169,7 @@ performFunReturn vm vs =
 
            CallFrame pc fenv errK k ->
              do vmUpdateThread vm $ \MkThread { .. } ->
-                  MkThread { stExecEnv  = addChildTime elapsed fenv
+                  MkThread { stExecEnv  = fenv
                            , stStack    = fs
                            , stPC       = pc
                            , stHandlers = case errK of
