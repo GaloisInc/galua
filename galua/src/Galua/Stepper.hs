@@ -84,6 +84,7 @@ performTailCall vm f vs =
 
      th <- readRef (vmCurThread vm)
      liftIO (recordProfTime (execCreateTime newEnv) (vmMachineEnv vm) (stExecEnv th))
+     liftIO (recordProfEntry (vmMachineEnv vm) (funValueName (execFunction newEnv)))
 
      vmUpdateThread vm $ \th ->
 
@@ -112,6 +113,8 @@ performFunCall ::
 performFunCall vm f vs mb k =
   do liftIO (bumpCallCounter f vm)
      (newEnv, next) <- enterClosure f vs
+     liftIO (recordProfEntry (vmMachineEnv vm) (funValueName (execFunction newEnv)))
+
      vmUpdateThread vm $ \th ->
        let frame       = CallFrame (stPC th) (stExecEnv th) (fmap handlerK mb) k
        in th { stExecEnv  = newEnv
@@ -165,7 +168,7 @@ performFunReturn vm vs =
        Just (f, fs) ->
          case f of
            ErrorFrame ->
-             performErrorReturn vm (trimResult1 vs)
+                performErrorReturn vm (trimResult1 vs)
 
            CallFrame pc fenv errK k ->
              do vmUpdateThread vm $ \MkThread { .. } ->
@@ -180,6 +183,21 @@ performFunReturn vm vs =
 
                 return (Running vm (k vs))
 
+recordProfEntry :: MachineEnv -> FunName -> IO ()
+recordProfEntry menv funName =
+  do let profRef    = profFunctionTimers (machProfiling menv)
+
+         addCounter Nothing = Just $! FunctionRuntimes
+           { runtimeIndividual = 0
+           , runtimeCumulative = 0
+           , runtimeCounter    = 1
+           }
+
+         addCounter (Just rts) = Just $! rts { runtimeCounter = runtimeCounter rts + 1 }
+
+     atomicModifyIORef' profRef $ \prof ->
+       (Map.alter addCounter funName prof, ())
+
 recordProfTime :: Clock.TimeSpec -> MachineEnv -> ExecEnv -> IO ()
 recordProfTime now menv eenv =
   do let curFunName = funValueName (execFunction eenv)
@@ -188,19 +206,17 @@ recordProfTime now menv eenv =
          child      = execChildTime eenv
 
 
-         addTimes Nothing = FunctionRuntimes
-           { runtimeIndividual = elapsed - child
-           , runtimeCumulative = elapsed
-           }
-
-         addTimes (Just rts) = FunctionRuntimes
+         addTimes rts = Just $! FunctionRuntimes
            { runtimeIndividual = runtimeIndividual rts + (elapsed - child)
-           , runtimeCumulative = runtimeCumulative rts + elapsed
+           , runtimeCumulative = if runtimeCounter rts == 1
+                                   then runtimeCumulative rts + elapsed
+                                   else runtimeCumulative rts
+           , runtimeCounter    = runtimeCounter    rts - 1
            }
 
      assert (0 <= child && child <= elapsed) $
        atomicModifyIORef' profRef $ \prof ->
-         (Map.alter (Just . addTimes) curFunName prof, ())
+         (Map.update addTimes curFunName prof, ())
 
 
 addChildTime :: Clock.TimeSpec -> ExecEnv -> ExecEnv
