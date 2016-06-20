@@ -63,7 +63,7 @@ distclean: clean
 
 lualibs/objs/%.o: lualibs/src/%.c
 	mkdir -p lualibs/objs
-	${CC} -g -c $(USE_FLAGS) -Iinplace/include/galua -o $@ $<
+	${CC} -fPIC -g -c $(USE_FLAGS) -Iinplace/include/galua -o $@ $<
 
 ${LUALIBS}: ${LUALIBS_OBJS}
 	ar -rcs $@ $^
