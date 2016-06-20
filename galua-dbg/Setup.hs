@@ -7,7 +7,8 @@
 
 module Main (main) where
 
-import Distribution.Package (PackageName(..), PackageIdentifier(..))
+import Distribution.Package
+  (PackageName(..), PackageIdentifier(..), PackageInstalled)
 import Distribution.PackageDescription ( PackageDescription() )
 import Distribution.InstalledPackageInfo
   (InstalledPackageInfo,
@@ -25,6 +26,7 @@ import Distribution.Simple.PackageIndex
 import Distribution.Verbosity ( Verbosity )
 import Distribution.License (License(..))
 import Data.Char (isAscii)
+import Data.Graph (topSort)
 import Data.Version (showVersion)
 import System.FilePath
 
@@ -52,7 +54,7 @@ generateBuildModule verbosity pkgDesc lbi = do
 
     let thisLib = libPackageKey libLBI
 
-    let pkgs = allPackages (installedPkgs lbi)
+    let pkgs = orderedPackagesList (installedPkgs lbi)
         libdirs = libdir installDirs : concatMap libraryDirs pkgs
         libNames = thisLib : map threadedVersion (concatMap hsLibraries pkgs)
         mkLibName x
@@ -81,6 +83,11 @@ generateBuildModule verbosity pkgDesc lbi = do
     rewriteFile (autodir </> "EXTRA_LIBRARIES_LIST")
         $ unlines
         $ extraLibraries =<< pkgs
+
+orderedPackagesList :: PackageInstalled a => PackageIndex a -> [a]
+orderedPackagesList pkgs = lookupVertex <$> topSort g
+  where
+  (g, lookupVertex, _findVertex) = dependencyGraph pkgs
 
 goodLicense :: License -> Bool
 goodLicense BSD3 = True
