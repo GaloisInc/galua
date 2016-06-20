@@ -63,6 +63,7 @@ import           Data.IORef(readIORef,writeIORef,modifyIORef')
 import           MonadLib
 import           System.FilePath(splitFileName,splitPath,(</>))
 import           Numeric (showHex)
+import qualified System.Clock as Clock
 
 newtype ExportM a = ExportM (StateT ExportableState IO a)
                     deriving (Functor,Applicative,Monad)
@@ -188,16 +189,24 @@ analyze dbg n =
          case mb of
            Just (ExportableValue _ (Closure r)) ->
              io $
-             do (cid,glob) <- Analysis.importClosure r
-                srcs <- readIORef (dbgSources dbg)
-                let funs = expandSources (topLevelChunks srcs)
-                    args = Analysis.initLuaArgList
-                    res  = Analysis.analyze funs cid args glob
-                    txt  = show $ pp blankPPInfo res
-                save "out" funs
-                writeFile "va.txt" txt
-                putStrLn txt
-                return $ Just $ exportResult res
+             do vms <- readIORef (dbgStateVM dbg)
+                case vms of
+                  Running vm _ ->
+                    do let metas = machMetatablesRef (vmMachineEnv vm)
+                       (cid,glob) <- Analysis.importClosure metas r
+                       srcs <- readIORef (dbgSources dbg)
+                       let funs = expandSources (topLevelChunks srcs)
+                           args = Analysis.initLuaArgList
+                           res  = Analysis.analyze funs cid args glob
+                           txt  = show $ pp blankPPInfo res
+                       save "out" funs
+                       writeFile "imported.txt" (show glob)
+                       writeFile "va.txt" txt
+                       putStrLn txt
+                       return $ Just $ exportResult res
+
+                  _ -> return Nothing
+
 
            _ -> return Nothing
 
@@ -453,12 +462,26 @@ exportVM funs vm next =
 
 exportProfilingStats :: Chunks -> ProfilingInfo -> IO JS.Value
 exportProfilingStats funs info =
-  do calls <- readIORef (profCallCounters info)
-     return $ toJSON $ map exportCalls $ Map.toList calls
-  where
-  exportCalls (f,n) = JS.object [ "loc"   .= exportFunName funs f
-                                , "calls" .= n
-                                ]
+  do calls  <- readIORef (profCallCounters info)
+     allocs <- readIORef (profAllocCounters info)
+     times  <- readIORef (profFunctionTimers info)
+     return $ JS.object
+        [ "calls"  .= [ JS.object
+                          [ "loc"   .= exportFunName funs f
+                          , "calls" .= n
+                          , "cum"   .= exportTimeSpec (runtimeCumulative rts)
+                          , "ind"   .= exportTimeSpec (runtimeIndividual rts) ]
+                      | (f,(n,rts)) <- Map.toList (Map.intersectionWith (,) calls times)]
+        , "allocs" .= [ JS.object
+                          [ "loc"   .= exportCodeLoc funs l
+                          , "calls" .= n ]
+                      | (l,n) <- Map.toList allocs]
+        ]
+
+-- | Export a timespec in seconds
+exportTimeSpec :: Clock.TimeSpec -> Double
+exportTimeSpec t = fromInteger (Clock.toNanoSecs t) / 1e9
+
 
 exportHandler :: Chunks -> HandlerType -> ExportM JS.Value
 exportHandler funs h =

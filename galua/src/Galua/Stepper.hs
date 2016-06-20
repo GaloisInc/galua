@@ -23,6 +23,7 @@ import           Language.Lua.Bytecode (Function(..))
 import           Control.Monad ((<=<))
 import           Control.Monad.IO.Class
 import           Control.Concurrent
+import           Control.Exception (assert)
 import           Data.IORef
 import           Data.Foldable (traverse_)
 import qualified Data.Map as Map
@@ -78,8 +79,15 @@ performTailCall ::
   Alloc VMState
 performTailCall vm f vs =
   do liftIO (bumpCallCounter f vm)
+
      (newEnv, next) <- enterClosure f vs
+
+     th <- readRef (vmCurThread vm)
+     liftIO (recordProfTime (execCreateTime newEnv) (vmMachineEnv vm) (stExecEnv th))
+     liftIO (recordProfEntry (vmMachineEnv vm) (funValueName (execFunction newEnv)))
+
      vmUpdateThread vm $ \th ->
+
        let elapsed = execCreateTime newEnv - execCreateTime (stExecEnv th)
        in th { stStack = addElapsedToTop elapsed (stStack th)
              , stExecEnv = newEnv
@@ -105,6 +113,8 @@ performFunCall ::
 performFunCall vm f vs mb k =
   do liftIO (bumpCallCounter f vm)
      (newEnv, next) <- enterClosure f vs
+     liftIO (recordProfEntry (vmMachineEnv vm) (funValueName (execFunction newEnv)))
+
      vmUpdateThread vm $ \th ->
        let frame       = CallFrame (stPC th) (stExecEnv th) (fmap handlerK mb) k
        in th { stExecEnv  = newEnv
@@ -145,7 +155,12 @@ performFunReturn :: VM -> [Value] -> Alloc VMState
 performFunReturn vm vs =
   do th <- readRef (vmCurThread vm)
 
-     case Stack.pop (stStack th) of
+     now <- liftIO (Clock.getTime Clock.ProcessCPUTime)
+     let elapsed = now - execCreateTime (stExecEnv th)
+     liftIO (recordProfTime now (vmMachineEnv vm) (stExecEnv th))
+     let stack' = addElapsedToTop elapsed (stStack th)
+
+     case Stack.pop stack' of
 
        Nothing ->
           return (Running vm (ThreadExit vs))
@@ -153,13 +168,11 @@ performFunReturn vm vs =
        Just (f, fs) ->
          case f of
            ErrorFrame ->
-             performErrorReturn vm (trimResult1 vs)
+                performErrorReturn vm (trimResult1 vs)
 
            CallFrame pc fenv errK k ->
-             do now <- liftIO (Clock.getTime Clock.ProcessCPUTime)
-                let elapsed = now - execCreateTime (stExecEnv th)
-                vmUpdateThread vm $ \MkThread { .. } ->
-                  MkThread { stExecEnv  = addChildTime now fenv
+             do vmUpdateThread vm $ \MkThread { .. } ->
+                  MkThread { stExecEnv  = fenv
                            , stStack    = fs
                            , stPC       = pc
                            , stHandlers = case errK of
@@ -169,6 +182,42 @@ performFunReturn vm vs =
                            }
 
                 return (Running vm (k vs))
+
+recordProfEntry :: MachineEnv -> FunName -> IO ()
+recordProfEntry menv funName =
+  do let profRef    = profFunctionTimers (machProfiling menv)
+
+         addCounter Nothing = Just $! FunctionRuntimes
+           { runtimeIndividual = 0
+           , runtimeCumulative = 0
+           , runtimeCounter    = 1
+           }
+
+         addCounter (Just rts) = Just $! rts { runtimeCounter = runtimeCounter rts + 1 }
+
+     atomicModifyIORef' profRef $ \prof ->
+       (Map.alter addCounter funName prof, ())
+
+recordProfTime :: Clock.TimeSpec -> MachineEnv -> ExecEnv -> IO ()
+recordProfTime now menv eenv =
+  do let curFunName = funValueName (execFunction eenv)
+         profRef    = profFunctionTimers (machProfiling menv)
+         elapsed    = now - execCreateTime eenv
+         child      = execChildTime eenv
+
+
+         addTimes rts = Just $! FunctionRuntimes
+           { runtimeIndividual = runtimeIndividual rts + (elapsed - child)
+           , runtimeCumulative = if runtimeCounter rts == 1
+                                   then runtimeCumulative rts + elapsed
+                                   else runtimeCumulative rts
+           , runtimeCounter    = runtimeCounter    rts - 1
+           }
+
+     assert (0 <= child && child <= elapsed) $
+       atomicModifyIORef' profRef $ \prof ->
+         (Map.update addTimes curFunName prof, ())
+
 
 addChildTime :: Clock.TimeSpec -> ExecEnv -> ExecEnv
 addChildTime elapsed e =

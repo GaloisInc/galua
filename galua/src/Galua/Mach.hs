@@ -249,7 +249,9 @@ data ProfilingInfo = ProfilingInfo
   }
 
 data FunctionRuntimes = FunctionRuntimes
-  { runtimeIndividual, runtimeCumulative :: {-# UNPACK #-} !Clock.TimeSpec
+  { runtimeIndividual :: {-# UNPACK #-} !Clock.TimeSpec -- ^ Time spent in this fuction directly
+  , runtimeCumulative :: {-# UNPACK #-} !Clock.TimeSpec -- ^ Time spent in this function its calls
+  , runtimeCounter    :: !Int -- ^ Number of active stack frames
   }
 
 data MachConfig = MachConfig

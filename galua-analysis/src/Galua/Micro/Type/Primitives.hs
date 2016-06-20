@@ -29,7 +29,6 @@ typePrimPost _ups args@(List count xs d) = FunPost
       StringValue       _ -> StringValue $ Just $ "string"
       TableValue        _ -> StringValue $ Just $ "table"
       FunctionValue     _ -> StringValue $ Just $ "function"
-      RefValue  {}        -> error "typePrim: reference as argument"
 
 typeToString :: Type -> ByteString
 typeToString t =

@@ -15,8 +15,10 @@ import           MonadLib hiding (raises)
 import Galua.Micro.AST
 import Galua.Micro.Type.Value
 import Galua.Micro.Type.Pretty()
-import Language.Lua.Bytecode.Pretty(PP(..),pp)
+import Language.Lua.Bytecode.Pretty(PP(..),pp,blankPPInfo)
 import Galua.Micro.Type.Monad
+
+import Debug.Trace(trace)
 
 
 
@@ -33,7 +35,7 @@ data Next = EnterBlock BlockName
 
 
 -- Does not return bottom
-evalExpr :: Expr -> BlockM Value
+evalExpr :: Expr -> BlockM RegVal
 evalExpr expr =
   case expr of
     EReg r -> getReg r
@@ -47,7 +49,24 @@ evalExpr expr =
         KString b     -> ret (StringValue (Just b))
         KLongString b -> ret (StringValue (Just b))
   where
-  ret = return . fromSingleV
+  ret = return . RegVal . fromSingleV
+
+
+regValToRef :: RegVal -> BlockM (Maybe RefId)
+regValToRef rv =
+  case rv of
+    RegBottom -> impossible
+    RegVal _  -> impossible
+    RegRef r  -> return (Just r)
+    RegTop    -> return Nothing
+
+regValToVal :: RegVal -> BlockM Value
+regValToVal rv =
+  case rv of
+    RegBottom -> impossible
+    RegVal v  -> return v
+    RegRef _  -> impossible
+    RegTop    -> return topVal
 
 
 raiseError :: Value -> BlockM Next
@@ -59,6 +78,7 @@ raiseError v =
 
 evalStmt :: Stmt -> BlockM Next
 evalStmt stmt =
+  trace ("STMT: " ++ show (pp blankPPInfo stmt)) $
 
   case stmt of
 
@@ -69,19 +89,19 @@ evalStmt stmt =
 
     NewTable r ->
       do here <- newTableId
-         assign r (newTable here)
+         assign r (RegVal (newTable here))
          return Continue
 
     LookupTable r t i ->
-      do TableValue l <- valueCasesM =<< getReg t
-         ti           <- valueCasesM =<< evalExpr i
-         assign r =<< getTable l ti
+      do TableValue l <- valueCasesM =<< regValToVal =<< getReg t
+         ti           <- valueCasesM =<< regValToVal =<< evalExpr i
+         assign r =<< fmap RegVal (getTable l ti)
          return Continue
 
     SetTable t i v ->
-      do val          <- evalExpr v
-         TableValue l <- valueCasesM =<< getReg  t
-         ti           <- valueCasesM =<< evalExpr i
+      do val          <- regValToVal =<< evalExpr v
+         TableValue l <- valueCasesM =<< regValToVal =<< getReg  t
+         ti           <- valueCasesM =<< regValToVal =<< evalExpr i
          setTable l ti val
          return Continue
 
@@ -89,34 +109,33 @@ evalStmt stmt =
     SetTableList t _ ->
       do vs <- getList ListReg
          let vr = appListAll vs
-         TableValue tv <- valueCasesM =<< getReg t
+         TableValue tv <- valueCasesM =<< regValToVal =<< getReg t
          setTable tv (BasicValue Number) vr
          return Continue
 
     GetMeta r e ->
       -- Note: XXX: we don't really need to expand function values completely,
       -- as they all give the same result.
-      do v    <- valueCasesM =<< evalExpr e
+      do v    <- valueCasesM =<< regValToVal =<< evalExpr e
          GlobalState { basicMetas, stringMeta, funMeta } <- getGlobal
          newV <- case v of
                    TableValue l -> getTableMeta l
                    BasicValue t     -> return (appFun basicMetas t)
                    StringValue _    -> return stringMeta
                    FunctionValue _  -> return funMeta
-                   RefValue {}      -> impossible
          when (newV == bottom) impossible
-         assign r newV
+         assign r (RegVal newV)
          return Continue
 
 
     -- End of block
 
-    Raise e -> raiseError =<< evalExpr e
+    Raise e -> raiseError =<< regValToVal =<< evalExpr e
 
     Goto b -> return (EnterBlock b)
 
     Case e alts dflts ->
-      do v <- evalExpr e
+      do v <- regValToVal =<< evalExpr e
          let inDflt = case dflts of
                         Nothing -> impossible
                         Just bn -> upd bn (foldl rmAlt v (map fst alts))
@@ -147,7 +166,7 @@ evalStmt stmt =
       where
       upd bn v' | v' == bottom = impossible
                 | otherwise    = do case e of
-                                      EReg r -> assign r v'
+                                      EReg r -> assign r (RegVal v')
                                       ELit _ -> return ()
                                       EUp _  -> error "up index in case"
                                     return (EnterBlock bn)
@@ -169,12 +188,12 @@ evalStmt stmt =
 
 
     If (Prop p es) t f ->
-      do vs <- mapM evalExpr es
+      do vs <- mapM (regValToVal <=< evalExpr) es
          case (p,vs) of
            (Equals, [v1,v2]) ->
              do let newV  = v1 /\ v2
                     upd e = case e of
-                              EReg r -> assign r newV
+                              EReg r -> assign r (RegVal newV)
                               ELit _ -> return ()
                               EUp _  -> error "UpVal in if?"
 
@@ -195,12 +214,12 @@ evalStmt stmt =
 
 
     NewClosure r proto ups ->
-      do upRs <- mapM evalExpr ups
-         let toRef v = case valueCases v of
-                         [ RefValue (Just ref) ] -> ref
-                         _                -> error "toRef: not a single ref"
-         fid  <- newFunId proto (map toRef upRs)
-         assign r (newFun fid)
+      do upRs' <- mapM (regValToRef <=< evalExpr) ups
+         let upRs = case sequence upRs' of
+                      Just rs -> rs
+                      Nothing -> error "NewClosure: TOP references?"
+         fid  <- newFunId proto upRs
+         assign r (RegVal (newFun fid))
          return Continue
 
 
@@ -212,7 +231,7 @@ evalStmt stmt =
     -- Functions
     Call fun ->
       do vs <- getList ListReg
-         FunctionValue fid <- valueCasesM =<< getReg fun
+         FunctionValue fid <- valueCasesM =<< regValToVal =<< getReg fun
          next <- callFun fid vs
          case next of
            Left v   -> raiseError v
@@ -221,7 +240,7 @@ evalStmt stmt =
 
     TailCall fun ->
       do vs  <- getList ListReg
-         FunctionValue fid <- valueCasesM =<< getReg fun
+         FunctionValue fid <- valueCasesM =<< regValToVal =<< getReg fun
          next <- callFun fid vs
          case next of
            Left v   -> raiseError v
@@ -229,13 +248,13 @@ evalStmt stmt =
 
     -- Lists
     Append xs es ->
-      do ves <- mapM evalExpr es
+      do ves <- mapM (regValToVal <=< evalExpr) es
          oldvs <- getList xs
          setList xs (listAppend ves oldvs)
          return Continue
 
     SetList xs es ->
-      do ves <- mapM evalExpr es
+      do ves <- mapM (regValToVal <=< evalExpr) es
          let nil = listConst (basic Nil)
          setList xs (listAppend ves nil)
          return Continue
@@ -247,13 +266,13 @@ evalStmt stmt =
 
     IndexList r xs n ->
       do vs <- getList xs
-         assign r (appList vs n)
+         assign r (RegVal (appList vs n))
          return Continue
 
     -- Arith
     Arith2 r op e1 e2 ->
-      do ve1 <- evalExpr e1
-         ve2 <- evalExpr e2
+      do ve1 <- regValToVal =<< evalExpr e1
+         ve2 <- regValToVal =<< evalExpr e2
          let vr = case op of
                     NumberAdd   -> basic Number
                     NumberSub   -> basic Number
@@ -276,11 +295,11 @@ evalStmt stmt =
                         (OneValue x, OneValue y) ->
                            bottom { valueString = OneValue (BS.append x y) }
                         _ -> anyString
-         assign r vr
+         assign r (RegVal vr)
          return Continue
 
     Arith1 r op e ->
-      do ve <- evalExpr e
+      do ve <- regValToVal =<< evalExpr e
          let vr = case op of
                     ToNumber ->
                       let veNum    = ve /\ basic Number
@@ -310,28 +329,26 @@ evalStmt stmt =
                     NumberUnaryMinus -> basic Number
                     Complement       -> basic Number
                     BoolNot          -> basic Bool
-         assign r vr
+         assign r (RegVal vr)
          return Continue
 
 
     -- References
     NewRef r e ->
-      do ve   <- evalExpr e
+      do ve   <- regValToVal =<< evalExpr e
          here <- newRefId ve
          assign r (newRef here)
          return Continue
 
     ReadRef r e ->
-      do ve <- evalExpr e
-         RefValue ref <- valueCasesM ve
-         vr           <- readRefId ref
-         assign r vr
+      do ref <- regValToRef =<< evalExpr e
+         vr  <- readRefId ref
+         assign r (RegVal vr)
          return Continue
 
     WriteRef r e ->
-      do vr           <- evalExpr r
-         RefValue ref <- valueCasesM vr
-         ve           <- evalExpr e
+      do ref <- regValToRef =<< evalExpr r
+         ve  <- regValToVal =<< evalExpr e
          writeRefId ref ve
          return Continue
 
@@ -344,7 +361,7 @@ evalStmt stmt =
 
 
 evalBlock :: AnalysisM m => GlobalBlockName -> State -> m (Next, State)
-evalBlock bn s = inBlock bn s go
+evalBlock bn s = trace ("BLOCK: " ++ show (pp blankPPInfo bn)) $ inBlock bn s go
   where
   go = do next <- evalStmt =<< curStmt
           case next of

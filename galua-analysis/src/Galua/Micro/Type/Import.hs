@@ -1,4 +1,5 @@
 {-# LANGUAGE RecordWildCards, OverloadedStrings, NamedFieldPuns #-}
+{-# LANGUAGE TypeOperators #-}
 module Galua.Micro.Type.Import (importClosure) where
 
 import           Data.Text(Text)
@@ -22,15 +23,17 @@ import           Language.Lua.Bytecode(UpIx(..))
 import           Language.Lua.Bytecode.FunId(noFun)
 
 
-importClosure :: C.Reference C.Closure -> IO (A.ClosureId, A.GlobalState)
-importClosure c =
+importClosure :: IORef C.TypeMetatables ->
+                      C.Reference C.Closure -> IO (A.ClosureId, A.GlobalState)
+importClosure metas c =
   do let s0 = RW { nextName         = 0
                  , importedUpVals   = []
                  , importedTables   = Map.empty
                  , importedClosures = Map.empty
                  , globs            = A.bottom
                  }
-     (cid,rw) <- runStateT s0 $ unM $ importFunRef c
+     (cid,rw) <- runStateT s0 $ unM $ do importMetas metas
+                                         importFunRef c
      return (cid, globs rw)
 
 
@@ -59,6 +62,7 @@ data RW = RW
   , importedTables    :: !(Map (C.Reference C.Table)   A.TableId)
   , importedClosures  :: !(Map (C.Reference C.Closure) A.ClosureId)
 
+  
   , globs             :: !A.GlobalState
     -- ^ This is the global state the we build up as we import stuff
 
@@ -76,6 +80,40 @@ newExternalRef ty = A.externalId ty <$> newName
 -- micro code, which goes at finer granurality than the op-code PCs.
 importNewRef :: (A.GlobalBlockName -> Int -> a) -> C.Reference b -> M a
 importNewRef ty _r = newExternalRef ty
+
+importMetas :: IORef C.TypeMetatables -> M ()
+importMetas ref =
+  do mp <- liftIO (readIORef ref)
+
+     let lkp t = case Map.lookup t mp of
+                   Nothing -> return (A.basic A.Nil)
+                   Just r  -> do tid <- importTableRef r
+                                 return (A.newTable tid)
+
+
+         setRef tab (t,t') =
+           do a <- lkp t
+              return (A.letFun t' a tab)
+
+     basicMetas <-
+       foldM setRef A.bottom
+         [ (C.NilType, A.Nil)
+         , (C.BoolType, A.Bool)
+         , (C.NumberType, A.Number)
+         , (C.UserDataType, A.UserData)
+         , (C.LightUserDataType, A.LightUserData)
+         , (C.ThreadType, A.Thread)
+         ]
+
+     str <- lkp C.StringType
+     fun <- lkp C.FunctionType
+
+     M $ sets_ $ \RW { .. } ->
+                  RW { globs = globs { A.basicMetas = basicMetas
+                                     , A.funMeta    = fun
+                                     , A.stringMeta = str
+                                     }, .. }
+
 
 
 importUpVal :: IORef C.Value -> M A.RefId

@@ -259,6 +259,32 @@ function drawSetValueIcon(dbgState,v) {
   return me
 }
 
+function drawAnalyzeIcon(dbgState, v) {
+  var me = $('<i/>')
+           .addClass('uk-icon-cubes uk-icon-small uk-icon-hover')
+           .attr('style','padding: 0.1em')
+           .css('cursor', 'pointer')
+           .attr('title', 'Analyze')
+           .attr('data-uk-tooltip','')
+
+  var dom = $('<div/>').addClass('uk-panel uk-panel-box').hide()
+
+  var closeBtn = $('<i>')
+                 .addClass('uk-icon-close uk-icon-hover')
+                 .click(function() { dom.empty().hide() })
+
+  me.click( function () {
+    jQuery.post('/analyze', { id: v.ref }, function(res) {
+      console.log(res)
+      dom.empty().append([closeBtn,aResult(res)]).show()
+    })
+    .fail(disconnected)
+  })
+
+
+  return { icon: me, dom: dom }
+}
+
 
 // A thing with a little down arrow, to get more info
 function drawCollapsed(dbgState, lab, v) {
@@ -308,6 +334,16 @@ function drawCollapsed(dbgState, lab, v) {
 
   // Watch icon
   icons.push(drawAddWatchIcon(v))
+
+  // Analyze icon
+  switch(v.tag) {
+    case 'closure':
+      var res = drawAnalyzeIcon(dbgState,v)
+      icons.push(res.icon)
+      here.unshift(res.dom)
+  }
+
+
 
   // Alternative representation icon
   switch(v.tag) {
