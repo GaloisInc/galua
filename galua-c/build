@@ -24,7 +24,7 @@ esac
 
 
 # Make the entry point for "newstate".
-$CC -DNEWSTATE=${NEWSTATE} -DWRITESTRING=${WRITESTRING} -c newstate.c
+$CC -fPIC -DNEWSTATE=${NEWSTATE} -DWRITESTRING=${WRITESTRING} -c newstate.c
 
 
 # Build library
