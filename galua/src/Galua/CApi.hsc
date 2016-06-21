@@ -156,8 +156,17 @@ instance CPtrArg a => CArg (Ptr a) where cArg = cPtrArg
 class    CPtrArg a       where cPtrArg :: Ptr a -> PrimArgument
 instance CPtrArg ()      where cPtrArg = PrimPtrArg
 instance CPtrArg CInt    where cPtrArg = PrimCIntArg
-instance CPtrArg CChar   where cPtrArg = PrimCStringArg
 instance CPtrArg CSize   where cPtrArg = PrimCSizeArg
+
+-- | Null-terminated C String. This method is outside of the CArg
+-- class to require it to be explicitly chosen.
+cstringArg0 :: CString -> PrimArgument
+cstringArg0 = PrimCStringArg
+
+-- | Null-terminated C String. This method is outside of the CArg
+-- class to require it to be explicitly chosen.
+cstringArg :: CStringLen -> PrimArgument
+cstringArg = PrimCStringLenArg
 
 --------------------------------------------------------------------------------
 
@@ -217,7 +226,7 @@ foreign export ccall lua_pushstring_hs :: Ptr () -> CString -> Ptr CString -> IO
 -- | [-0, +1, e]
 lua_pushstring_hs :: Ptr () -> CString -> Ptr CString -> IO CInt
 lua_pushstring_hs l ptr out =
-  reentryIO "lua_pushstring" [cArg ptr] l $ \args ->
+  reentryIO "lua_pushstring" [cstringArg0 ptr] l $ \args ->
   do str <- peekLuaString0 ptr
      poke out =<< luaStringPtr str
      push args (String str)
@@ -228,7 +237,7 @@ foreign export ccall lua_pushlstring_hs
 -- | [-0, +1, e]
 lua_pushlstring_hs :: Ptr () -> CString -> CSize -> Ptr CString -> IO CInt
 lua_pushlstring_hs l ptr sz out =
-  reentryIO "lua_pushlstring" [cArg ptr, cArg sz] l $ \args ->
+  reentryIO "lua_pushlstring" [cstringArg (ptr, fromIntegral sz)] l $ \args ->
   do str <- peekLuaString (ptr, fromIntegral sz)
      poke out =<< luaStringPtr str
      -- Note that the output string must be null terminated!!
@@ -472,7 +481,7 @@ foreign export ccall lua_stringtonumber_hs
 
 lua_stringtonumber_hs :: Ptr () -> CString -> Ptr CSize -> IO CInt
 lua_stringtonumber_hs l p out =
-  reentryIO "lua_stringtonumber" [cArg p] l $ \args ->
+  reentryIO "lua_stringtonumber" [cstringArg0 p] l $ \args ->
     do str <- peekCAString p
        case parseNumber str of
          Nothing -> do poke out 0
@@ -568,7 +577,7 @@ foreign export ccall lua_getfield_hs
 -- [-0, +1, e]
 lua_getfield_hs :: Ptr () -> CInt -> CString -> Ptr CInt -> IO CInt
 lua_getfield_hs l ix k out =
-  reentry "lua_getfield" [cArg ix, cArg k] l $ \args ->
+  reentry "lua_getfield" [cArg ix, cstringArg0 k] l $ \args ->
   do t <- valueArgument (fromIntegral ix) args
      key <- liftIO (peekLuaString0 k)
      v <- indexValue t (String key)
@@ -582,7 +591,7 @@ foreign export ccall lua_setfield_hs
 -- | [-1, +0, e]
 lua_setfield_hs :: Ptr () -> CInt -> CString -> IO CInt
 lua_setfield_hs l ix k =
-  reentry "lua_setfield" [cArg ix, cArg k] l $ \args ->
+  reentry "lua_setfield" [cArg ix, cstringArg0 k] l $ \args ->
   do t <- valueArgument (fromIntegral ix) args
      v <- pop args
      key <- liftIO (peekLuaString0 k)
@@ -953,7 +962,8 @@ foreign export ccall lua_load_hs ::
 
 lua_load_hs :: Ptr () -> CString -> CSize -> CString -> CString -> Ptr CInt -> IO CInt
 lua_load_hs l chunk chunksize chunkname mode out =
-  reentry "lua_load" [cArg chunk, cArg chunksize, cArg chunkname, cArg mode] l
+  -- Note: this is an internal entry point, the C api handles the Reader
+  reentry "lua_load" [cstringArg0 chunkname, cstringArg0 mode] l
      $ \args ->
     do chunk1<- liftIO (B.packCStringLen (chunk, fromIntegral chunksize))
        name  <- if nullPtr == chunkname
@@ -976,7 +986,7 @@ foreign export ccall lua_setglobal_hs :: Ptr () -> CString -> IO CInt
 
 lua_setglobal_hs :: Ptr () -> CString -> IO CInt
 lua_setglobal_hs l cname =
-  reentry "lua_setglobal" [cArg cname] l $ \args ->
+  reentry "lua_setglobal" [cstringArg0 cname] l $ \args ->
   do v <- pop args
      t <- getsMachEnv machGlobals
      liftIO $
@@ -987,7 +997,7 @@ foreign export ccall lua_getglobal_hs :: Ptr () -> CString -> Ptr CInt -> IO CIn
 
 lua_getglobal_hs :: Ptr () -> CString -> Ptr CInt -> IO CInt
 lua_getglobal_hs l cname out =
-  reentry "lua_getglobal" [cArg cname] l $ \args ->
+  reentry "lua_getglobal" [cstringArg0 cname] l $ \args ->
   do t <- getsMachEnv machGlobals
      liftIO $
        do k <- peekLuaString0 cname
@@ -1268,7 +1278,7 @@ foreign export ccall
 
 lua_getinfo_hs :: Ptr () -> CString -> Ptr LuaDebug -> Ptr CInt -> IO CInt
 lua_getinfo_hs l whatPtr ar out =
-  reentry "lua_getinfo" [cArg whatPtr, cArg (castPtr ar :: Ptr ())] l $ \args ->
+  reentry "lua_getinfo" [cstringArg0 whatPtr, cArg (castPtr ar :: Ptr ())] l $ \args ->
   do (pc,execEnv) <- liftIO (importExecEnv =<< peekLuaDebugCallInfo ar)
      what          <- liftIO (peekCString whatPtr)
 

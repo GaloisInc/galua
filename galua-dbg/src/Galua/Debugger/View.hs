@@ -15,6 +15,7 @@ import Galua.Mach
 import Galua.Number
 import Galua.LuaString
 import Galua.Value
+import Galua.DlInfo
 import qualified Galua.Table as Tab
 import Galua.Reference
 import Galua.Debugger.Console
@@ -58,12 +59,14 @@ import           Data.Traversable(for)
 import           Data.Word(Word8)
 import           Data.Text(Text)
 import qualified Data.Text as Text
+import qualified Data.Text.Encoding as Text
 import           Text.Read(readMaybe)
 import           Data.IORef(readIORef,writeIORef,modifyIORef')
 import           MonadLib
 import           System.FilePath(splitFileName,splitPath,(</>))
 import           Numeric (showHex)
 import qualified System.Clock as Clock
+import           Foreign.C.String
 
 newtype ExportM a = ExportM (StateT ExportableState IO a)
                     deriving (Functor,Applicative,Monad)
@@ -505,33 +508,58 @@ exportCallStackFrameShort :: Chunks -> Int -> ExecEnv -> ExportM JS.Value
 exportCallStackFrameShort funs pc env =
   do ref <- newThing (ExportableStackFrame pc env)
      st  <- io (readIORef (execApiCall env))
-     let apiInfo = case st of
-                     NoApiCall -> []
-                     ApiCallAborted api  -> exportApiCall api
-                     ApiCallActive api _ -> exportApiCall api
+     apiInfo <- case st of
+                  NoApiCall -> pure []
+                  ApiCallAborted api  -> exportApiCall api
+                  ApiCallActive api _ -> exportApiCall api
      return (JS.object ( apiInfo ++
                          tag "call"
                        : "ref" .= ref
                        : exportFunctionValue funs pc (execFunction env)))
 
-exportApiCall :: ApiCall -> [ JS.Pair ]
+exportApiCall :: ApiCall -> ExportM [ JS.Pair ]
 exportApiCall api =
-  [ "method" .= apiCallMethod api
-  , "args"   .= map exportPrimArg (apiCallArgs api)
-  ]
+  do args <- traverse exportPrimArg (apiCallArgs api)
+     pure [ "method" .= apiCallMethod api
+          , "args"   .= args
+          ]
 
 
 
-exportPrimArg :: PrimArgument -> JS.Value
+exportPrimArg :: PrimArgument -> ExportM JS.Value
 exportPrimArg a =
   case a of
-    PrimIntArg i     -> JS.object [ tag "int", "text" .= show i]
-    PrimDoubleArg d  -> JS.object [ tag "double", "text" .= show d]
-    PrimCIntArg p    -> JS.object [ tag "ptr", "text" .= show p]
-    PrimCSizeArg p   -> JS.object [ tag "ptr", "text" .= show p]
-    PrimCStringArg p -> JS.object [ tag "ptr", "text" .= show p]
-    PrimPtrArg p     -> JS.object [ tag "ptr", "text" .= show p]
-    PrimFunPtrArg p  -> JS.object [ tag "ptr", "text" .= show p]
+    PrimIntArg i     -> pure $ JS.object [ tag "int", "text" .= show i]
+    PrimDoubleArg d  -> pure $ JS.object [ tag "double", "text" .= show d]
+    PrimCIntArg p    -> pure $ JS.object [ tag "ptr", "text" .= show p]
+    PrimCSizeArg p   -> pure $ JS.object [ tag "ptr", "text" .= show p]
+    PrimPtrArg p     -> pure $ JS.object [ tag "ptr", "text" .= show p]
+
+    PrimFunPtrArg p  ->
+      do mb <- io (funPtrInfo p)
+         let txt = fromMaybe (show p)
+                 $ do info <- mb
+                      name <- dlinfoSymName info
+                      let o = dlinfoSymOffset info
+                      return $ if o == 0
+                             then name
+                             else name++'+':show o
+         pure $ JS.object [ tag "funptr", "text" .= txt]
+
+    PrimCStringArg p ->
+      do txt <- io (peekCString p)
+         pure $ JS.object [ tag "string", "text" .= exportString txt]
+
+    PrimCStringLenArg p ->
+      do txt <- io (peekCStringLen p)
+         pure $ JS.object [ tag "string", "text" .= exportString txt]
+
+  where
+    exportString
+      = constructStringLiteral
+      . L.fromStrict
+      . Text.encodeUtf8
+      . Text.pack
 
 exportChunkFuns :: Int -> Function -> [JS.Value]
 exportChunkFuns chunkId fun0 =

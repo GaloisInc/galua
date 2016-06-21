@@ -65,7 +65,7 @@ import           GHC.Generics (Generic)
 import           Foreign.Ptr (FunPtr, Ptr,nullFunPtr,ptrToIntPtr)
 import           Foreign.ForeignPtr (ForeignPtr)
 import           Foreign.C.Types (CInt, CSize)
-import           Foreign.C.String (CString)
+import           Foreign.C.String (CString, CStringLen)
 import           Text.PrettyPrint(text)
 import           Data.Hashable(Hashable(..))
 
@@ -261,6 +261,7 @@ data PrimArgument
   | PrimCIntArg (Ptr CInt)
   | PrimCSizeArg (Ptr CSize)
   | PrimCStringArg CString
+  | PrimCStringLenArg CStringLen
   | PrimPtrArg (Ptr ())
   | PrimFunPtrArg (FunPtr ())
 

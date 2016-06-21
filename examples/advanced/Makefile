@@ -11,13 +11,13 @@ UNAME:=$(shell uname)
 
 ifeq ($(UNAME), Linux)
 SHARED_OPTS=-fPIC -shared
-LIBS=-lgalua -lgmp -lm -lrt -ldl -lpthread -lutil
+LIBS=-lgalua-dbg -lgmp -lm -lrt -ldl -lpthread -lutil
 MAIN_FLAGS=-Wl,-dynamic-list=list
 endif
 
 ifeq ($(UNAME), Darwin)
 SHARED_OPTS=-fPIC -bundle -undefined dynamic_lookup
-LIBS=-lgalua -liconv
+LIBS=-lgalua-dbg -liconv -lz
 MAIN_FLAGS=
 endif
 

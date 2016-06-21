@@ -406,6 +406,7 @@ function drawHsClosure(dbgState,x) {
 
 function drawPrimArg(x) {
   return $('<span/>')
+         .addClass('literal')
          .css('padding-left', '0.5em')
          .attr('title', x.tag)
          .attr('data-uk-tooltip','')
