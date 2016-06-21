@@ -1,4 +1,4 @@
-INCLUDE_DIR=../../galua/include
+INCLUDE_DIR=../../galua-c/inplace/include/galua
 LIB_DR=../../galua-c/inplace/lib
 
 CC=gcc
@@ -17,12 +17,12 @@ endif
 
 ifeq ($(UNAME), Darwin)
 SHARED_OPTS=-fPIC -bundle -undefined dynamic_lookup
-LIBS=-lgalua -liconv -lz
+LIBS=-lgalua -liconv
 MAIN_FLAGS=
 endif
 
 
-CFLAGS=-std=c99 -g -Wall -Wextra -I$(INCLUDE_DIR)
+CFLAGS=-rdynamic -std=c99 -g -Wall -Wextra -I$(INCLUDE_DIR)
 
 
 .PHONY: all, clean

@@ -6,7 +6,7 @@ module CMath
 
 import           Foreign.C.Types (CDouble(..))
 import           Foreign.C.String (CString, withCString)
-import           Foreign.Ptr
+import           Foreign.Ptr (Ptr(..), nullPtr)
 import           System.IO.Unsafe (unsafeDupablePerformIO)
 
 foreign import ccall unsafe "stdlib.h strtod" c_strtod

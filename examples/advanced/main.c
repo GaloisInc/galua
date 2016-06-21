@@ -27,7 +27,7 @@ int main(int argc, char* argv[]) {
         (void)argv;
 
         lua_State *L = luaL_newstate();
-        luaL_dostring(L, "");
+        res = luaL_dostring(L, "");
         luaL_openlibs(L);
 
         lua_pushinteger(L, 0);
