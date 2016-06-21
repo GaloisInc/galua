@@ -67,6 +67,7 @@ import           System.FilePath(splitFileName,splitPath,(</>))
 import           Numeric (showHex)
 import qualified System.Clock as Clock
 import           Foreign.C.String
+import           Foreign.Ptr (nullPtr, nullFunPtr)
 
 newtype ExportM a = ExportM (StateT ExportableState IO a)
                     deriving (Functor,Applicative,Monad)
@@ -533,8 +534,14 @@ exportPrimArg a =
     PrimDoubleArg d  -> pure $ JS.object [ tag "double", "text" .= show d]
     PrimCIntArg p    -> pure $ JS.object [ tag "ptr", "text" .= show p]
     PrimCSizeArg p   -> pure $ JS.object [ tag "ptr", "text" .= show p]
+
+    PrimPtrArg p | p == nullPtr ->
+      pure $ JS.object [ tag "ptr", "text" .= ("NULL"::Text)]
     PrimPtrArg p     -> pure $ JS.object [ tag "ptr", "text" .= show p]
 
+    PrimFunPtrArg p
+      | p == nullFunPtr ->
+         pure $ JS.object [ tag "funptr", "text" .= ("NULL"::Text)]
     PrimFunPtrArg p  ->
       do mb <- io (funPtrInfo p)
          let txt = fromMaybe (show p)
@@ -546,9 +553,15 @@ exportPrimArg a =
                              else name++'+':show o
          pure $ JS.object [ tag "funptr", "text" .= txt]
 
+    PrimCStringArg p | p == nullPtr ->
+         pure $ JS.object [ tag "string", "text" .= ("NULL"::Text)]
+
     PrimCStringArg p ->
       do txt <- io (peekCString p)
          pure $ JS.object [ tag "string", "text" .= exportString txt]
+
+    PrimCStringLenArg (p,_) | p == nullPtr ->
+         pure $ JS.object [ tag "string", "text" .= ("NULL"::Text)]
 
     PrimCStringLenArg p ->
       do txt <- io (peekCStringLen p)
