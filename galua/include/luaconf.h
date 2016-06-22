@@ -13,6 +13,7 @@
 
 #define LUA_COMPAT_5_2
 #define LUA_COMPAT_LOADSTRING
+#define LUA_COMPAT_MODULE
 
 extern size_t galua_writestring(const char*, size_t);
 #define lua_writestring(s,l) galua_writestring(s,l)

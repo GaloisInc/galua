@@ -31,11 +31,13 @@ _luaL_loadfilex
 _luaL_loadstring
 _luaL_newmetatable
 _luaL_newstate
+_luaL_openlib
 _luaL_openlibs
 _luaL_optinteger
 _luaL_optlstring
 _luaL_optnumber
 _luaL_prepbuffsize
+_luaL_pushmodule
 _luaL_pushresult
 _luaL_pushresultsize
 _luaL_ref
