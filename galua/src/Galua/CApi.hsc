@@ -151,12 +151,7 @@ instance CArg Double     where cArg = PrimDoubleArg
 instance CArg Int32      where cArg = PrimIntArg . fromIntegral
 instance CArg Int64      where cArg = PrimIntArg . fromIntegral
 instance CArg (FunPtr a) where cArg = PrimFunPtrArg . castFunPtr
-instance CPtrArg a => CArg (Ptr a) where cArg = cPtrArg
-
-class    CPtrArg a       where cPtrArg :: Ptr a -> PrimArgument
-instance CPtrArg ()      where cPtrArg = PrimPtrArg
-instance CPtrArg CInt    where cPtrArg = PrimCIntArg
-instance CPtrArg CSize   where cPtrArg = PrimCSizeArg
+instance CArg (Ptr a)    where cArg = PrimPtrArg . castPtr
 
 -- | Null-terminated C String. This method is outside of the CArg
 -- class to require it to be explicitly chosen.
