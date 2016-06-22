@@ -3,16 +3,33 @@ function drawFunctionInNewTab(dbgState, f) {
   var code = $('<table/>').addClass('code_box')
   drawFunction(dbgState, code, f)
 
+  var parentBtn = $('<span/>')
+                 .addClass('uk-icon-reply')
+                 .css('margin-left', '0.5em')
+
   var closeBtn = $('<span/>')
                  .addClass('uk-close')
                  .css('margin-left', '0.5em')
 
   var newLink = $('<li/>')
                 .append($('<a/>')
-                        .append([ $('<span/>').text(f.name), closeBtn ])
+                        .append([ $('<span/>').text(f.name), parentBtn, closeBtn ])
                        )
 
   var newPane = $('<li/>').append(code)
+
+  if (f.parent === "") {
+      parentBtn.remove()
+  } else {
+      parentBtn.click(function() {
+        var path = '/function'
+        jQuery.post(path, { fid: f.parent }, function(code) {
+          drawFunctionInNewTab(dbgState,code)
+        })
+        .fail(disconnected)
+        return false
+      })
+  }
 
   closeBtn.click(function() {
     newLink.remove()

@@ -731,6 +731,9 @@ lookupFun funs fid =
   go [] f       = return f
   go (x : xs) f = go xs =<< funcProtos f Vector.!? x
 
+funIdParent :: FunId -> Maybe FunId
+funIdParent (FunId []) = Nothing
+funIdParent (FunId (_:xs)) = Just (FunId xs)
 
 -- | Merge together the source lines of a function with their corresponding
 -- opcodes.
@@ -743,6 +746,7 @@ exportFun funs fid0 =
      return $ JS.object
        [ "chunk" .= getRoot fid0
        , "name"  .= getFunctionName funs fid0
+       , "parent" .= fmap exportFID (funIdParent fid0)
        , "lines" .=
            [ JS.object
               [ "line"    .= lNum
