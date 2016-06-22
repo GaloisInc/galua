@@ -1,5 +1,5 @@
 name:                galua
-version:             0.1
+version:             0.2
 synopsis:            Lua bytecode interpreter
 description:         Lua bytecode interpreter
 license:             MIT

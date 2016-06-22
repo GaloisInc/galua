@@ -1,5 +1,5 @@
 name:                galua-dbg
-version:             0.1
+version:             0.2
 synopsis:            Lua bytecode debugger
 description:         Lua bytecode debugger
 license:             MIT
