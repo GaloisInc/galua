@@ -1,6 +1,6 @@
 {-# LANGUAGE RecordWildCards, OverloadedStrings, NamedFieldPuns #-}
 {-# LANGUAGE TypeOperators #-}
-module Galua.Micro.Type.Import (importClosure) where
+module Galua.Micro.Type.Import (importMainClosure) where
 
 import           Data.Text(Text)
 import qualified Data.Vector as Vector
@@ -22,6 +22,10 @@ import qualified Galua.Micro.AST        as A
 import           Language.Lua.Bytecode(UpIx(..))
 import           Language.Lua.Bytecode.FunId(noFun)
 
+
+importMainClosure :: IORef C.TypeMetatables ->
+                      C.Reference C.Closure -> IO (A.ClosureId, A.GlobalState)
+importMainClosure = importClosure
 
 importClosure :: IORef C.TypeMetatables ->
                       C.Reference C.Closure -> IO (A.ClosureId, A.GlobalState)

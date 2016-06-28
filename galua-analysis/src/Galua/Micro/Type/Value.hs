@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveGeneric, TypeOperators, FlexibleContexts, RecordWildCards #-}
 module Galua.Micro.Type.Value
-  (module Galua.Micro.Type.Value, FunId, subFun, noFun)
+  (module Galua.Micro.Type.Value, FunId, subFun, noFun, topVal)
   where
 
 import Data.Map(Map)
@@ -115,7 +115,7 @@ data LocalState = LocalState
 
 -- | The current abstract state of the interpreter.
 data State = State
-  { globaleState :: GlobalState
+  { globalState :: GlobalState
   , localState   :: LocalState
   } deriving (Eq,Show,Generic)
 

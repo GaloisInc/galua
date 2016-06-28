@@ -21,6 +21,7 @@ library
                        Galua.Micro.Translate
                        Galua.Micro.AnalyzeRefs
                        Galua.Micro.ExplicitRefs
+                       Galua.Micro.Primitives
                        Galua.Micro.Eval
                        Galua.Micro.Type.Value
                        Galua.Micro.Type.Monad

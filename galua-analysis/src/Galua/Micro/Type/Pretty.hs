@@ -143,7 +143,7 @@ instance PP GlobalState where
       | otherwise   = x <> colon $$ nest 2 (pp n y)
 
 instance PP State where
-  pp n State { .. } = pp n localState $$ pp n globaleState
+  pp n State { .. } = pp n localState $$ pp n globalState
 
 
 

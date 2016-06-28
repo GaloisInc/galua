@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Galua.Micro.Type.Eval
   ( analyze, Result(..), GlobalBlockName(..), QualifiedBlockName(..)
+  , valueCasesM
   ) where
 
 import           Data.Map ( Map )
@@ -407,8 +408,8 @@ evalFun caller cid as glob =
                     ReturnWith xs -> return (Right xs, s1)
 
          (next,s1) <- go EntryBlock State { localState = locals
-                                          , globaleState = glob }
-         return (next, globaleState s1)
+                                          , globalState = glob }
+         return (next, globalState s1)
   where
   funV    = functions glob Map.! cid
 

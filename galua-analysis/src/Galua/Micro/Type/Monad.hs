@@ -336,10 +336,10 @@ updState f = do s <- getState
                 setState (f s)
 
 getGlobal :: BlockM GlobalState
-getGlobal = globaleState <$> getState
+getGlobal = globalState <$> getState
 
 setGlobal :: GlobalState -> BlockM ()
-setGlobal g = updState $ \State { .. } -> State { globaleState = g, .. }
+setGlobal g = updState $ \State { .. } -> State { globalState = g, .. }
 
 updGlobal :: (GlobalState -> GlobalState) -> BlockM ()
 updGlobal f = do g <- getGlobal

@@ -197,7 +197,7 @@ analyze dbg n =
                 case vms of
                   Running vm _ ->
                     do let metas = machMetatablesRef (vmMachineEnv vm)
-                       (cid,glob) <- Analysis.importClosure metas r
+                       (cid,glob) <- Analysis.importMainClosure metas r
                        srcs <- readIORef (dbgSources dbg)
                        let funs = expandSources (topLevelChunks srcs)
                            args = Analysis.initLuaArgList

@@ -4,38 +4,29 @@ module Galua.Micro.Primitives where
 
 import Galua.Micro.Type.Value
 import Galua.Micro.Type.Eval
+import Galua.Micro.Type.Monad
 import qualified Data.Set as Set
 import Control.Monad
 import Data.ByteString(ByteString)
 
-typeToString :: Type -> EvalM ByteString
+typeToString :: Type -> ByteString
 typeToString t =
   case t of
-    None -> error "raise error"
-    Nil           -> return "nil"
-    Bool          -> return "boolean"
-    Number        -> return "number"
-    UserData      -> return "userdata"
-    LightUserData -> return "userdata"
-    Thread        -> return "thread"
+    Nil           -> "nil"
+    Bool          -> "boolean"
+    Number        -> "number"
+    UserData      -> "userdata"
+    LightUserData -> "userdata"
+    Thread        -> "thread"
 
-primType :: List Value -> EvalM (List Value)
+primType :: AnalysisM m => List Value -> m (List Value)
 primType args =
   do val <- go =<< valueCasesM (appList args 0)
-     let none = bottom { valueBasic = Set.singleton None }
-     return (listAppend [fromSingleV val] (listConst none))
+     return (listAppend [fromSingleV val] (listConst topVal))
   where
   go val =
     case val of
-      BasicValue        t -> StringLitValue <$> typeToString t
-      StringValue         -> return (StringLitValue "string")
-      StringLitValue    _ -> return (StringLitValue "string")
-      TableValue        _ -> return (StringLitValue "table")
-      FunctionValue     _ -> return (StringLitValue "function")
-      RefValue  ref -> do
-        GlobalState { heap } <- getGlobal
-        let vr = appFinMap heap ref
-        when (vr == bottom) impossible
-        go =<< valueCasesM vr
-
-      ListValue {} -> impossible
+      BasicValue        t -> return (StringValue (Just (typeToString t)))
+      StringValue _       -> return (StringValue (Just "string"))
+      TableValue        _ -> return (StringValue (Just "table"))
+      FunctionValue     _ -> return (StringValue (Just "function"))
