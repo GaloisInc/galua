@@ -86,7 +86,7 @@ data ClosureId    = ClosureId GlobalBlockName Int
 --------------------------------------------------------------------------------
 -- Lattices
 
--- | An abstract state of the interpreter at a sepcific program point.
+-- | An abstract state of the interpreter at a specific program point.
 -- This is the part of the state that is independent of
 -- the function that is executing.
 data GlobalState = GlobalState
@@ -123,7 +123,7 @@ data State = State
 
 -- | An abstract value. Describes what we know about a value.  Each
 -- of the fields an additional pieces of information.  If a specific
--- field does not contain infomration relevant to the value, then it
+-- field does not contain information relevant to the value, then it
 -- will be set to @bottom@.
 data Value = Value
   { valueBasic    :: Set Type                 -- ^ Possible basic types
@@ -136,7 +136,7 @@ data Value = Value
 -- | Information we keep about tables (i.e., "table types).
 data TableV = TableV
   { tableFields  :: !(FieldName :-> Value)
-    -- ^ Types of specific fields.  Usefule for tables that are more like
+    -- ^ Types of specific fields.  Useful for tables that are more like
     -- records or modules (i.e., they contain a fixed set fields, each
     -- of a potentially different type)
 
@@ -178,7 +178,7 @@ data FunPost = FunPost
   } deriving (Eq,Show,Generic)
 
 
--- | A helper type to keep track of a speicific concrete values
+-- | A helper type to keep track of a specific concrete values
 data Lift a = NoValue               -- ^ Unused
             | OneValue a            -- ^ Always exactly this values
             | MultipleValues        -- ^ May be more than one value
@@ -190,7 +190,7 @@ instance Functor Lift where
                 OneValue x -> OneValue (f x)
                 MultipleValues -> MultipleValues
 
-{- | A helper to add an artificail top (i.e., "I don't know") element to types.
+{- | A helper to add an artificial top (i.e., "I don't know") element to types.
 This is useful for values where the universe is potentially very large
 (e.g., table ids, function ids, reference id).  Instead of simply enumerating
 all possible functions/references/tables, we use the `Top` element to
@@ -203,7 +203,7 @@ data WithTop a = NotTop a | Top
 
 
 -- | Convert an abstract value, to all its possible individual cases.
--- This is handly to implement "pattern matching" on a value: we consider
+-- This is handy to implement "pattern matching" on a value: we consider
 -- the cases separately, and then union the results together.
 valueCases :: Value -> [SingleV]
 valueCases Value { .. } =
@@ -292,11 +292,11 @@ initLuaArgList = listConst topVal
 data a :-> b = FFun !(Map a b) !b
                deriving (Eq,Show)
 
--- | The constant funciont, maps everything to the given element.
+-- | The constant function, maps everything to the given element.
 fConst :: b -> (a :-> b)
 fConst b = FFun Map.empty b
 
--- | Apply a function to a given elelement.
+-- | Apply a function to a given element.
 appFun :: Ord a => (a :-> b) -> a -> b
 appFun (FFun mp b) a = Map.findWithDefault b a mp
 
@@ -386,7 +386,7 @@ class Lattice a where
   {- ^ Join two elements in the lattice.
     @addNewInfo a b == Nothing@ means that the answer is `b`
     This is useful when we are computing fix-points and we want to
-    know if anything chaged. -}
+    know if anything changed. -}
 
 -- | Symmetric join, when we don't care if the join changed anything.
 (\/) :: Lattice a => a -> a -> a

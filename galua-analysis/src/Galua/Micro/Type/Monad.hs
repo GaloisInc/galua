@@ -322,7 +322,7 @@ continue = BlockM $ M.sets_ $ \s -> s { rwCurOpCode = 1 + rwCurOpCode s }
 
 
 --------------------------------------------------------------------------------
--- Manipulatin the state
+-- Manipulating the state
 
 getState :: BlockM State
 getState = BlockM $ do BlockS { rwCurState } <- M.get

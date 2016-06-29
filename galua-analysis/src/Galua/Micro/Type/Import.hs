@@ -23,10 +23,6 @@ import           Language.Lua.Bytecode(UpIx(..))
 import           Language.Lua.Bytecode.FunId(noFun)
 
 
-importMainClosure :: IORef C.TypeMetatables ->
-                      C.Reference C.Closure -> IO (A.ClosureId, A.GlobalState)
-importMainClosure = importClosure
-
 importClosure :: IORef C.TypeMetatables ->
                       C.Reference C.Closure -> IO (A.ClosureId, A.GlobalState)
 importClosure metas c =

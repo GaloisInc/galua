@@ -139,8 +139,8 @@ exportFunV IdMaps { .. } FunV { .. } =
   expFun x = case x of
                NoValue            -> "(no function)"
                MultipleValues     -> "(unknown)"
-               OneValue Nothing   -> "(C function)"
-               OneValue (Just f)  -> exportFID f
+               OneValue (CFunImpl _) -> "(C function)"
+               OneValue (LuaFunImpl f)  -> exportFID f
 
   expRef x  = case x of
                 NoValue        -> -1
