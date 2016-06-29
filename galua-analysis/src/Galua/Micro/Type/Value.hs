@@ -57,13 +57,13 @@ initialCaller = CallsiteId (QualifiedBlockName noFun EntryBlock) 0
 
 -- | A fake global name, which will be different from the block names
 -- in a program.
-exteranlBlock :: GlobalBlockName
-exteranlBlock = GlobalBlockName initialCaller
+externalBlock :: GlobalBlockName
+externalBlock = GlobalBlockName initialCaller
                                     (QualifiedBlockName noFun EntryBlock)
 
 -- | A convenience function for creating "external" references.
 externalId :: (GlobalBlockName -> Int -> a) -> Int -> a
-externalId ty n = ty exteranlBlock n
+externalId ty n = ty externalBlock n
 
 
 -- | An instruction within a specific instantiation of a function.
