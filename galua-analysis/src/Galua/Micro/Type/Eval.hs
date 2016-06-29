@@ -388,9 +388,9 @@ evalFun caller cid as glob =
   case functionFID funV of
     -- XXX: UNSOUND!!!
     -- For now we just treat C functions as if they don't do anything.
-    OneValue Nothing -> return (Right (listConst topVal), glob)
+    OneValue (CFunImpl _ptr) -> return (Right (listConst topVal), glob)
 
-    OneValue (Just fid) ->
+    OneValue (LuaFunImpl fid) ->
       do let locals = LocalState
                         { env     = bottom
                         , argReg  = as

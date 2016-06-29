@@ -13,6 +13,8 @@ import Data.ByteString(ByteString)
 import GHC.Generics
 import Control.Monad (liftM3, liftM, ap)
 import Text.PrettyPrint(text)
+import Foreign.Ptr (FunPtr, Ptr)
+import Foreign.C.Types (CInt)
 
 import Language.Lua.Bytecode.Pretty(PP(..),pp)
 import Language.Lua.Bytecode.FunId
@@ -133,16 +135,16 @@ data Value = Value
 
 -- | Information we keep about tables (i.e., "table types).
 data TableV = TableV
-  { tableFields  :: FieldName :-> Value
+  { tableFields  :: !(FieldName :-> Value)
     -- ^ Types of specific fields.  Usefule for tables that are more like
     -- records or modules (i.e., they contain a fixed set fields, each
     -- of a potentially different type)
 
-  , tableKeys    :: Value
+  , tableKeys    :: !Value
     -- ^ A general description of the keys of the table.
     -- Used to type tables used as containers.
 
-  , tableValues  :: Value
+  , tableValues  :: !Value
     -- ^ A general description of the values in the table.
     -- Used to type tables used as containers.
   } deriving (Generic,Show,Eq)
@@ -150,11 +152,13 @@ data TableV = TableV
 
 data FunV = FunV
   { functionUpVals :: Map UpIx (Lift RefId) -- ^ UpValues
-  , functionFID    :: Lift (Maybe FunId)    -- ^ Code; `Nothing` means C code
+  , functionFID    :: Lift FunImpl    -- ^ Code
   } deriving (Generic,Eq,Show)
 
-
-
+data FunImpl
+  = CFunImpl (FunPtr (Ptr () -> IO CInt))
+  | LuaFunImpl FunId
+  deriving (Generic,Eq,Show)
 
 -- | A type for a function.  Similar to a pre- post-condition pair.
 data FunBehavior = FunBehavior
@@ -285,7 +289,7 @@ initLuaArgList = listConst topVal
 -- infinite domain, by using a fixed value everywhere where the
 -- map is undefined.
 -- This is useful for representing functions.
-data a :-> b = FFun (Map a b) b
+data a :-> b = FFun !(Map a b) !b
                deriving (Eq,Show)
 
 -- | The constant funciont, maps everything to the given element.

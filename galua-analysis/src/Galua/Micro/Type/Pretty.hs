@@ -113,8 +113,8 @@ instance PP FunV where
   pp n FunV { .. } = braces ( pp n (lab <$> functionFID) <+> "|" <+>
                               hsep (map (pp n) (Map.elems functionUpVals)) )
     where lab mb = case mb of
-                     Nothing  -> "C"
-                     Just fid -> "LUA" <+> pp n fid
+                     CFunImpl ptr -> "C:" <> text (show ptr)
+                     LuaFunImpl fid -> "LUA" <+> pp n fid
 
 
 instance PP LocalState where

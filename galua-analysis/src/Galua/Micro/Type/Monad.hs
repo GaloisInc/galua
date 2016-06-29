@@ -544,7 +544,7 @@ newFunId proto refs =
 
      curFun <- getCurFun
      let clo = FunV { functionUpVals = Map.fromList (zipWith up [ 0 .. ] refs)
-                    , functionFID    = OneValue (Just (subFun curFun proto))
+                    , functionFID    = OneValue (LuaFunImpl (subFun curFun proto))
                     }
 
      updGlobal $ \GlobalState { functions, .. } ->

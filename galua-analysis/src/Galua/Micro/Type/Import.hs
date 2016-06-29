@@ -1,6 +1,6 @@
 {-# LANGUAGE RecordWildCards, OverloadedStrings, NamedFieldPuns #-}
 {-# LANGUAGE TypeOperators #-}
-module Galua.Micro.Type.Import (importMainClosure) where
+module Galua.Micro.Type.Import (importClosure) where
 
 import           Data.Text(Text)
 import qualified Data.Vector as Vector
@@ -36,8 +36,9 @@ importClosure metas c =
                  , importedClosures = Map.empty
                  , globs            = A.bottom
                  }
-     (cid,rw) <- runStateT s0 $ unM $ do importMetas metas
-                                         importFunRef c
+     (cid,rw) <- runStateT s0 $ unM $
+                        do importMetas metas
+                           importFunRef c
      return (cid, globs rw)
 
 
@@ -197,8 +198,8 @@ importFunction :: C.Closure -> M A.FunV
 importFunction C.MkClosure { .. } =
   do rs <- mapM importUpVal (Vector.toList cloUpvalues)
      let nm = case cloFun of
-                C.LuaFunction fid _ -> A.OneValue (Just fid)
-                C.CFunction _       -> A.OneValue Nothing
+                C.LuaFunction fid _ -> A.OneValue (A.LuaFunImpl fid)
+                C.CFunction ptr     -> A.OneValue (A.CFunImpl (C.cfunAddr ptr))
      return A.FunV { functionUpVals = Map.fromList (zipWith mkRef [ 0 .. ] rs)
                    , functionFID    = nm
                    }

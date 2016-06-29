@@ -31,7 +31,7 @@ import Galua.Micro.Type.Value
   , TableV(..), FunV(..)
   , TableId(..), RefId(..), ClosureId(..)
   , newTable, externalId
-  , Lift(..)
+  , Lift(..), FunImpl(..)
   )
 import qualified Galua.Value as Val (Value(Nil))
 
@@ -112,7 +112,7 @@ initalGlobalState chunkId =
                  }
 
   chunkFun = FunV { functionUpVals = Map.singleton (OP.UpIx 0) (OneValue upRef)
-                  , functionFID    = OneValue (Just (rootFun chunkId))
+                  , functionFID    = OneValue (LuaFunImpl (rootFun chunkId))
                   }
 
 
