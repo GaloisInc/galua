@@ -207,7 +207,6 @@ analyze dbg n =
                            prims = Analysis.buildPrimMap gid glob
                            res  = Analysis.analyze funs prims cid args glob
                            txt  = show $ pp blankPPInfo res
-                       writeFile "primmap.txt" (show (Map.keys prims))
                        save "out" funs
                        writeFile "imported.txt" (show glob)
                        writeFile "va.txt" txt
