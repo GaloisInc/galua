@@ -9,6 +9,7 @@ import           MonadLib
 import           Control.Monad.IO.Class(MonadIO(..))
 import           Data.Map ( Map )
 import qualified Data.Map as Map
+import           Data.List
 
 
 
@@ -23,19 +24,24 @@ import           Language.Lua.Bytecode(UpIx(..))
 import           Language.Lua.Bytecode.FunId(noFun)
 
 
-importClosure :: IORef C.TypeMetatables ->
-                      C.Reference C.Closure -> IO (A.ClosureId, A.GlobalState)
-importClosure metas c =
+importClosure ::
+  IORef C.TypeMetatables {- ^ Type metatables      -} ->
+  C.Reference C.Table    {- ^ Global environment   -} ->
+  C.Reference C.Closure  {- ^ Analysis entry point -} ->
+  IO (A.ClosureId, A.TableId, A.GlobalState)
+importClosure metas envTable c =
   do let s0 = RW { nextName         = 0
                  , importedUpVals   = []
                  , importedTables   = Map.empty
                  , importedClosures = Map.empty
                  , globs            = A.bottom
                  }
-     (cid,rw) <- runStateT s0 $ unM $
+     ((cid,gid), rw) <- runStateT s0 $ unM $
                         do importMetas metas
-                           importFunRef c
-     return (cid, globs rw)
+                           cid <- importFunRef c
+                           gid <- importTableRef envTable
+                           return (cid,gid)
+     return (cid, gid, globs rw)
 
 
 newtype M a = M { unM :: StateT RW IO a }

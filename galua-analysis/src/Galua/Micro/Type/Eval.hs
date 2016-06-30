@@ -386,9 +386,14 @@ evalFun :: AnalysisM m =>
                                     m (Either Value (List Value), GlobalState)
 evalFun caller cid as glob =
   case functionFID funV of
-    -- XXX: UNSOUND!!!
-    -- For now we just treat C functions as if they don't do anything.
-    OneValue (CFunImpl _ptr) -> return (Right (listConst topVal), glob)
+    OneValue (CFunImpl ptr) ->
+      do mbPrim  <- getPrim ptr
+         case mbPrim of
+           -- XXX: UNSOUND!!!
+           -- For now we just treat C functions as if they don't do anything.
+           Nothing -> return (Right (listConst topVal), glob)
+           Just (PrimImpl prim) -> do res <- prim as
+                                      return (Right res, glob)
 
     OneValue (LuaFunImpl fid) ->
       do let locals = LocalState
@@ -454,8 +459,9 @@ analyze funs fid args glob =
 -}
 
 analyze :: Map FunId Function ->
+           Map CFun PrimImpl ->
            ClosureId -> List Value -> GlobalState -> Result
-analyze funs cid args glob =
+analyze funs prims cid args glob =
   Result { resReturns     = joins [ v | Right v <- nexts ]
          , resRaises      = joins [ v | Left  v <- nexts ]
          , resGlobals     = joins gs
@@ -464,7 +470,7 @@ analyze funs cid args glob =
          }
   where
   (nexts,gs)          = unzip rss
-  (rss, states, errs) = singlePath funs
+  (rss, states, errs) = singlePath funs prims
                       $ evalFun initialCaller cid args glob
 
 

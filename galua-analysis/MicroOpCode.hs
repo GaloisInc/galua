@@ -59,7 +59,7 @@ testFile f =
             save "out" tr
 
             let (cid,glob)    = initalGlobalState 0
-                valueAnalysis = analyze tr cid initLuaArgList glob
+                valueAnalysis = analyze tr Map.empty cid initLuaArgList glob
 
             let tr1 = filterFunctions valueAnalysis tr
             save "trim" tr1

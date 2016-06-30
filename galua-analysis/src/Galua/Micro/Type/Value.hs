@@ -1,9 +1,10 @@
 {-# LANGUAGE DeriveGeneric, TypeOperators, FlexibleContexts, RecordWildCards #-}
 module Galua.Micro.Type.Value
-  (module Galua.Micro.Type.Value, FunId, subFun, noFun, topVal)
+  (module Galua.Micro.Type.Value, FunId, subFun, noFun)
   where
 
 import Data.Map(Map)
+import Control.Monad (foldM)
 import qualified Data.Map as Map
 import Data.Set(Set)
 import qualified Data.Set as Set
@@ -155,8 +156,10 @@ data FunV = FunV
   , functionFID    :: Lift FunImpl    -- ^ Code
   } deriving (Generic,Eq,Show)
 
+type CFun = FunPtr (Ptr () -> IO CInt)
+
 data FunImpl
-  = CFunImpl (FunPtr (Ptr () -> IO CInt))
+  = CFunImpl CFun
   | LuaFunImpl FunId
   deriving (Generic,Eq,Show)
 
@@ -603,7 +606,26 @@ instance Lattice () where
 
 --------------------------------------------------------------------------------
 
+findCFunName :: SingleV -> GlobalState -> [ByteString] -> Maybe CFun
+findCFunName globalTable gs path =
+  do FunctionValue (Just cid) <- foldM (resolvePath1 gs) globalTable path
+     funv <- Map.lookup cid (functions gs)
+     CFunImpl ptr <- liftSingleton (functionFID funv)
+     return ptr
 
+resolvePath1 :: GlobalState -> SingleV -> ByteString -> Maybe SingleV
+resolvePath1 gs (TableValue (Just tid)) label =
+  do tab <- Map.lookup tid (tables gs)
+     let field = appFun (tableFields tab) (Field label)
+     maybeSingleton (valueCases field)
 
+resolvePath1 _ _ _ = Nothing
 
+maybeSingleton :: [a] -> Maybe a
+maybeSingleton [x] = Just x
+maybeSingleton _   = Nothing
 
+liftSingleton :: Lift a -> Maybe a
+liftSingleton (OneValue x)   = Just x
+liftSingleton NoValue        = Nothing
+liftSingleton MultipleValues = Nothing

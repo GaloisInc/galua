@@ -22,6 +22,9 @@ module Galua.Micro.Type.Monad
     -- ** Functions
   , newFunId, setCurFun
 
+  , PrimImpl(..)
+  , getPrim
+
 
     -- * Single block
   , curStmt, continue
@@ -98,7 +101,10 @@ sets_ f = sets $ \s -> ((),f s)
 
 data RO = RO
   { roCode     :: Map FunId Function
+  , roPrims    :: Map CFun PrimImpl
   }
+
+newtype PrimImpl = PrimImpl (forall m. AnalysisM m => List Value -> m (List Value))
 
 data AnalysisS = AnalysisS
   -- rwFunctions :: !(Map FunId (Map UpIx RefId))
@@ -117,10 +123,12 @@ data AnalysisS = AnalysisS
 impossible :: AnalysisM m => m a
 impossible = options []
 
-allPaths :: Map FunId Function -> AllPaths a ->
-                                [ (a, Map GlobalBlockName State
-                                    , Map GlobalBlockName Value) ]
-allPaths funs (AllPaths m) =
+allPaths ::
+  Map FunId Function ->
+  Map CFun PrimImpl ->
+  AllPaths a ->
+  [ (a, Map GlobalBlockName State , Map GlobalBlockName Value) ]
+allPaths funs prims (AllPaths m) =
   [ (a, rwStates rw, rwRaises rw)
     | (a,rw) <- runStateT initS $ runReaderT ro m ]
   where
@@ -128,13 +136,15 @@ allPaths funs (AllPaths m) =
                     , rwRaises    = Map.empty
                     }
 
-  ro    = RO { roCode = funs }
+  ro    = RO { roCode = funs, roPrims = prims }
 
 
-singlePath :: Map FunId Function -> SinglePath a ->
-                                ([a], Map GlobalBlockName State
-                                    , Map GlobalBlockName Value)
-singlePath funs (SinglePath m) = (as, rwStates rw, rwRaises rw)
+singlePath ::
+  Map FunId Function ->
+  Map CFun PrimImpl ->
+  SinglePath a ->
+  ([a], Map GlobalBlockName State, Map GlobalBlockName Value)
+singlePath funs prims (SinglePath m) = (as, rwStates rw, rwRaises rw)
   where
   (as,rw) = runId $ runStateT initS $ findAll $ runReaderT ro m
 
@@ -142,7 +152,7 @@ singlePath funs (SinglePath m) = (as, rwStates rw, rwRaises rw)
                     , rwRaises    = Map.empty
                     }
 
-  ro = RO { roCode = funs }
+  ro = RO { roCode = funs, roPrims = prims }
 
 
 
@@ -238,7 +248,10 @@ instance AnalysisM BlockM where
   sets f      = BlockM (lift (sets f))
   options os  = BlockM (lift (options os))
 
-
+getPrim :: AnalysisM m => CFun -> m (Maybe PrimImpl)
+getPrim ptr =
+  do RO { roPrims } <- ask
+     return (Map.lookup ptr roPrims)
 
 
 data BlockS = BlockS

@@ -23,6 +23,7 @@ import Galua.Debugger.View.Analysis(exportResult)
 import qualified Galua.Stack as Stack
 import qualified Galua.SizedVector as SV
 
+import qualified Galua.Micro.Primitives  as Analysis
 import qualified Galua.Micro.AST         as Analysis
 import qualified Galua.Micro.Type.Import as Analysis
 import qualified Galua.Micro.Type.Value  as Analysis
@@ -198,12 +199,15 @@ analyze dbg n =
                   Running vm _ ->
                     do let menv = vmMachineEnv vm
                            metas = machMetatablesRef menv
-                       (cid,glob) <- Analysis.importClosure metas r
+                           globalTable = machGlobals menv
+                       (cid,gid,glob) <- Analysis.importClosure metas globalTable r
                        srcs <- readIORef (dbgSources dbg)
                        let funs = expandSources (topLevelChunks srcs)
                            args = Analysis.initLuaArgList
-                           res  = Analysis.analyze funs cid args glob
+                           prims = Analysis.buildPrimMap gid glob
+                           res  = Analysis.analyze funs prims cid args glob
                            txt  = show $ pp blankPPInfo res
+                       writeFile "primmap.txt" (show (Map.keys prims))
                        save "out" funs
                        writeFile "imported.txt" (show glob)
                        writeFile "va.txt" txt
