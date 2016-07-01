@@ -392,8 +392,7 @@ evalFun caller cid as glob =
            -- XXX: UNSOUND!!!
            -- For now we just treat C functions as if they don't do anything.
            Nothing -> return (Right (listConst topVal), glob)
-           Just (PrimImpl prim) -> do res <- prim as
-                                      return (Right res, glob)
+           Just (PrimImpl prim) -> prim glob as
 
     OneValue (LuaFunImpl fid) ->
       do let locals = LocalState

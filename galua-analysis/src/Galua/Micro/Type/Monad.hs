@@ -104,7 +104,8 @@ data RO = RO
   , roPrims    :: Map CFun PrimImpl
   }
 
-newtype PrimImpl = PrimImpl (forall m. AnalysisM m => List Value -> m (List Value))
+newtype PrimImpl = PrimImpl
+  (forall m. AnalysisM m => GlobalState -> List Value -> m (Either Value (List Value), GlobalState))
 
 data AnalysisS = AnalysisS
   -- rwFunctions :: !(Map FunId (Map UpIx RefId))

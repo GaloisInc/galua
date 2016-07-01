@@ -13,7 +13,9 @@ import           Data.Map (Map)
 import qualified Data.Map as Map
 
 primitives :: [([ByteString], PrimImpl)]
-primitives = [(["type"], PrimImpl primType)]
+primitives = [ (["type"], PrimImpl primType)
+             , (["assert"], PrimImpl primAssert)
+             ]
 
 typeToString :: Type -> ByteString
 typeToString t =
@@ -33,11 +35,24 @@ valueToTypeString val =
     TableValue        _ -> "table"
     FunctionValue     _ -> "function"
 
-primType :: AnalysisM m => List Value -> m (List Value)
-primType args =
+primType :: AnalysisM m => GlobalState -> List Value -> m (Either Value (List Value), GlobalState)
+primType glob args =
   do val <- valueCasesM (appList args 0)
      let tyString = StringValue (Just (valueToTypeString val))
-     return (listAppend [fromSingleV tyString] (listConst topVal))
+     return (Right (singleton (fromSingleV tyString)), glob)
+
+primAssert :: AnalysisM m => GlobalState -> List Value -> m (Either Value (List Value), GlobalState)
+primAssert glob args =
+  do val <- valueCasesM (appList args 0)
+     let bad  = Left (fromSingleV (StringValue (Just "assertion failed")))
+         good = Right (singleton (fromSingleV val))
+     case val of
+       BasicValue Nil  -> return (bad, glob)
+       BasicValue Bool -> options [(bad, glob), (good,glob)]
+       _               -> return (good, glob)
+
+singleton :: Value -> List Value
+singleton x = listAppend [x] (listConst (basic Nil))
 
 buildPrimMap :: TableId -> GlobalState -> Map CFun PrimImpl
 buildPrimMap globalTableId gs = Map.fromList $ catMaybes [ aux path impl | (path,impl) <- primitives ]
