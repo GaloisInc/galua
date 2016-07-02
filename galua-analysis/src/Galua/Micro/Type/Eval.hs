@@ -331,8 +331,8 @@ evalStmt stmt =
                     NumberUnaryMinus -> basic Number
                     Complement       -> basic Number
 
-                    ToBoolean        -> undefined
-                    BoolNot          -> undefined
+                    ToBoolean        -> anyBoolean -- TODO: Implement logic
+                    BoolNot          -> anyBoolean
          assign r (RegVal vr)
          return Continue
 

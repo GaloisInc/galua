@@ -260,6 +260,10 @@ exactBool b = fromSingleV (BooleanValue (Just b))
 anyString :: Value
 anyString = fromSingleV (StringValue Nothing)
 
+-- | Make a value that is some boolean.
+anyBoolean :: Value
+anyBoolean = fromSingleV (BooleanValue Nothing)
+
 -- | Make a value that is exactly this reference.
 newRef :: RefId -> RegVal
 newRef = RegRef
