@@ -105,7 +105,6 @@ importMetas ref =
      basicMetas <-
        foldM setRef A.bottom
          [ (C.NilType, A.Nil)
-         , (C.BoolType, A.Bool)
          , (C.NumberType, A.Number)
          , (C.UserDataType, A.UserData)
          , (C.LightUserDataType, A.LightUserData)
@@ -114,10 +113,12 @@ importMetas ref =
 
      str <- lkp C.StringType
      fun <- lkp C.FunctionType
+     boolean <- lkp C.BoolType
 
      M $ sets_ $ \RW { .. } ->
                   RW { globs = globs { A.basicMetas = basicMetas
                                      , A.funMeta    = fun
+                                     , A.booleanMeta = boolean
                                      , A.stringMeta = str
                                      }, .. }
 
@@ -213,7 +214,7 @@ importFunction C.MkClosure { .. } =
 importValue :: C.Value -> M A.Value
 importValue val =
   case val of
-    C.Bool _          -> return (A.basic A.Bool)
+    C.Bool b          -> return (A.exactBool b)
     C.Number _        -> return (A.basic A.Number)
     C.String s        -> return (A.exactString (toByteString s))
     C.Nil             -> return (A.basic A.Nil)

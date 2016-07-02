@@ -73,7 +73,6 @@ exportType :: Type -> Text
 exportType t =
   case t of
     Nil             -> "nil"
-    Bool            -> "bool"
     Number          -> "number"
     UserData        -> "user data"
     LightUserData   -> "light user data"
@@ -88,6 +87,7 @@ exportValue maps v = JS.object
   where
   names = Set.unions [ name "table"     valueTable
                      , name "function"  valueFunction
+                     , booleanName
                      , stringName
                      , Set.map exportType (valueBasic v)
                      ]
@@ -96,6 +96,12 @@ exportValue maps v = JS.object
                  NoValue         -> Set.empty
                  OneValue s      -> Set.singleton (shStr s)
                  MultipleValues  -> Set.singleton "string"
+
+  booleanName = case valueBoolean v of
+                 NoValue         -> Set.empty
+                 OneValue True   -> Set.singleton "true"
+                 OneValue False  -> Set.singleton "false"
+                 MultipleValues  -> Set.singleton "boolean"
 
   shStr x  = Text.pack (constructStringLiteral (BS.fromStrict x))
 

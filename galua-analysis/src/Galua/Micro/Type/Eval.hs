@@ -44,7 +44,7 @@ evalExpr expr =
     ELit l ->
       case l of
         KNil          -> ret (BasicValue Nil)
-        KBool _       -> ret (BasicValue Bool)
+        KBool b       -> ret (BooleanValue (Just b))
         KNum _        -> ret (BasicValue Number)
         KInt _        -> ret (BasicValue Number)
         KString b     -> ret (StringValue (Just b))
@@ -146,11 +146,13 @@ evalStmt stmt =
                let check v' = upd bn (v /\ v')
                in case vt of
                     NumberType        -> check (basic Number)
-                    BoolType          -> check (basic Bool)
                     NilType           -> check (basic Nil)
                     UserDataType      -> check (basic UserData)
                     LightUserDataType -> check (basic LightUserData)
                     ThreadType        -> check (basic Thread)
+
+                    BoolType ->
+                      check bottom { valueBoolean = valueBoolean v }
 
                     StringType ->
                       check bottom { valueString = valueString v }
@@ -176,12 +178,12 @@ evalStmt stmt =
         let rmBasic t = v' { valueBasic = Set.delete t (valueBasic v') }
         in case ty of
              NumberType        -> rmBasic Number
-             BoolType          -> rmBasic Bool
              NilType           -> rmBasic Nil
              UserDataType      -> rmBasic UserData
              LightUserDataType -> rmBasic LightUserData
              ThreadType        -> rmBasic Thread
 
+             BoolType          -> v' { valueBoolean  = bottom }
              StringType        -> v' { valueString   = bottom }
              FunctionType      -> v' { valueFunction = bottom }
              TableType         -> v' { valueTable    = bottom }
@@ -323,13 +325,14 @@ evalStmt stmt =
                           , if veNum    /= bottom then anyString else bottom
                           ]
 
-                    ToBoolean        -> basic Bool
                     IntToDouble      -> basic Number
                     StringLen        -> basic Number
                     TableLen         -> basic Number
                     NumberUnaryMinus -> basic Number
                     Complement       -> basic Number
-                    BoolNot          -> basic Bool
+
+                    ToBoolean        -> undefined
+                    BoolNot          -> undefined
          assign r (RegVal vr)
          return Continue
 

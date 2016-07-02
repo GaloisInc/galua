@@ -21,7 +21,6 @@ typeToString :: Type -> ByteString
 typeToString t =
   case t of
     Nil           -> "nil"
-    Bool          -> "boolean"
     Number        -> "number"
     UserData      -> "userdata"
     LightUserData -> "userdata"
@@ -32,6 +31,7 @@ valueToTypeString val =
   case val of
     BasicValue        t -> typeToString t
     StringValue _       -> "string"
+    BooleanValue _      -> "boolean"
     TableValue        _ -> "table"
     FunctionValue     _ -> "function"
 
@@ -47,9 +47,10 @@ primAssert glob args =
      let bad  = Left (fromSingleV (StringValue (Just "assertion failed")))
          good = Right (singleton (fromSingleV val))
      case val of
-       BasicValue Nil  -> return (bad, glob)
-       BasicValue Bool -> options [(bad, glob), (good,glob)]
-       _               -> return (good, glob)
+       BasicValue Nil            -> return (bad, glob)
+       BooleanValue (Just False) -> return (bad, glob)
+       BooleanValue Nothing      -> options [(bad, glob), (good,glob)]
+       _                         -> return (good, glob)
 
 singleton :: Value -> List Value
 singleton x = listAppend [x] (listConst (basic Nil))

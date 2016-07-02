@@ -26,12 +26,13 @@ import Galua.LuaString(LuaString)
 
 -- | An abstract value.
 data SingleV      = BasicValue        Type
+                  | BooleanValue      (Maybe Bool)
                   | StringValue       (Maybe ByteString) -- ^ Nothing = top
                   | TableValue        (Maybe TableId)
                   | FunctionValue     (Maybe ClosureId)
                     deriving Eq
 
-data Type         = Nil | Bool | Number | UserData | LightUserData | Thread
+data Type         = Nil | Number | UserData | LightUserData | Thread
                     deriving (Show,Eq,Ord,Bounded,Enum)
 
 -- | A field within a table.
@@ -97,6 +98,7 @@ data GlobalState = GlobalState
 
   , basicMetas  :: Type :-> Value       -- ^ Meta-tables for basic types
   , stringMeta  :: Value                -- ^ Meta-table for strings
+  , booleanMeta :: Value                -- ^ Meta-table for booleans
   , funMeta     :: Value                -- ^ Meta-table for functions
   } deriving (Eq,Show,Generic)
 
@@ -129,6 +131,7 @@ data State = State
 data Value = Value
   { valueBasic    :: Set Type                 -- ^ Possible basic types
   , valueString   :: Lift ByteString          -- ^ String aspects of the value
+  , valueBoolean  :: Lift Bool
   , valueFunction :: WithTop (Set ClosureId)  -- ^ Which function is this
   , valueTable    :: WithTop (Set TableId)    -- ^ Which table is this
   } deriving (Eq,Generic,Show)
@@ -249,6 +252,9 @@ basic = fromSingleV . BasicValue
 
 exactString :: ByteString -> Value
 exactString s = fromSingleV (StringValue (Just s))
+
+exactBool :: Bool -> Value
+exactBool b = fromSingleV (BooleanValue (Just b))
 
 -- | Make a value that is some string.
 anyString :: Value

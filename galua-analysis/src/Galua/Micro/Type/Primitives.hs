@@ -5,6 +5,7 @@ import Galua.Micro.Type.Value
 import qualified Data.Set as Set
 import Data.ByteString (ByteString)
 
+{-
 typePrim :: FunBehavior
 typePrim = FunBehavior
   { funUpVals = []
@@ -39,3 +40,4 @@ typeToString t =
     UserData      -> "userdata"
     LightUserData -> "userdata"
     Thread        -> "thread"
+-}
