@@ -1,6 +1,5 @@
-_galua_argc
-_galua_argu
-_galua_argv
+_galua_argc_p
+_galua_argv_p
 _luaL_addlstring
 _luaL_addstring
 _luaL_addvalue

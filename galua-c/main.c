@@ -7,15 +7,15 @@
 
 extern char *__progname;
 
-extern int galua_argc;
-extern char **galua_argv;
+extern int *galua_argc_p;
+extern char ***galua_argv_p;
 
 int main(int argc, char**argv) {
   int res;
   int i;
 
-  galua_argc = argc;
-  galua_argv = argv;
+  galua_argc_p = &argc;
+  galua_argv_p = &argv;
 
   lua_State *L = luaL_newstate();
   if (L == NULL) {
@@ -23,25 +23,27 @@ int main(int argc, char**argv) {
     exit(2);
   }
 
-  argv += 1;
-  argc = 0;
-  while (argv[argc] != NULL) ++argc;
+  printf("<arguments>\n");
+  for (int i = 0; i < argc; i++) {
+          printf("%s\n", argv[i]);
+  }
+  printf("</arguments>\n");
 
-  if (argc < 1) {
+  if (argc < 2) {
     fprintf(stderr, "%s: No Lua script.\n", __progname);
     exit(EXIT_FAILURE);
   }
 
   luaL_openlibs(L);
 
-  res = luaL_loadfile(L, argv[0]);
+  res = luaL_loadfile(L, argv[1]);
   if (res != LUA_OK) {
     const char *msg = lua_tostring(L, -1);
     fprintf(stderr, "%s: Failed to load file\n%s", __progname, msg);
     exit(EXIT_FAILURE);
   }
 
-  for (int i = 1; i < argc; i++) {
+  for (int i = 2; i < argc; i++) {
     lua_pushstring(L, argv[i]);
   }
 

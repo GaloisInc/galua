@@ -685,9 +685,9 @@ void lua_setallocf (lua_State *L, lua_Alloc f, void *ud) {
         API_ENTRY(lua_setallocf, L, (HsFunPtr)f, ud);
 }
 
-int    galua_argc = 0;    // Means: "use defaults for hs_init"
-int    galua_argu = 0;
-char **galua_argv = NULL;
+// When these pointers are NULL, the arguments will be ignored.
+int    *galua_argc_p = NULL;
+char ***galua_argv_p = NULL;
 
 LUA_API
 lua_State *lua_newstate_nondbg (lua_Alloc f, void *ud) {
@@ -696,13 +696,9 @@ lua_State *lua_newstate_nondbg (lua_Alloc f, void *ud) {
 
   config.rts_opts = "--install-signal-handlers=no";
 
-  if (galua_argc == 0) {
-    hs_init_ghc(NULL, NULL, config);
-  } else {
-    hs_init_ghc(&galua_argc, &galua_argv, config);
-  }
+  hs_init_ghc(galua_argc_p, galua_argv_p, config);
 
-  res = galua_newstate(&galua_argu);
+  res = galua_newstate();
   memset(lua_getextraspace(res), 0, LUA_EXTRASPACE);
   return res;
 }
