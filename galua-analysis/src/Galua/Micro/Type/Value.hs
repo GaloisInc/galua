@@ -129,11 +129,11 @@ data State = State
 -- field does not contain information relevant to the value, then it
 -- will be set to @bottom@.
 data Value = Value
-  { valueBasic    :: Set Type                 -- ^ Possible basic types
-  , valueString   :: Lift ByteString          -- ^ String aspects of the value
-  , valueBoolean  :: Lift Bool
-  , valueFunction :: WithTop (Set ClosureId)  -- ^ Which function is this
-  , valueTable    :: WithTop (Set TableId)    -- ^ Which table is this
+  { valueBasic    :: !(Set Type)                 -- ^ Possible basic types
+  , valueString   :: !(Lift ByteString)         -- ^ String aspects of the value
+  , valueBoolean  :: !(Lift Bool)
+  , valueFunction :: !(WithTop (Set ClosureId)) -- ^ Which function is this
+  , valueTable    :: !(WithTop (Set TableId))   -- ^ Which table is this
   } deriving (Eq,Generic,Show)
 
 
@@ -282,6 +282,7 @@ topVal = Value { valueBasic    = Set.fromList [ minBound .. maxBound ]
                , valueString   = MultipleValues
                , valueFunction = Top
                , valueTable    = Top
+               , valueBoolean  = MultipleValues
                }
 
 -- | A value that describes the possible arguments to a function,
@@ -289,6 +290,8 @@ topVal = Value { valueBasic    = Set.fromList [ minBound .. maxBound ]
 initLuaArgList :: List Value
 initLuaArgList = listConst topVal
 
+listFromList :: [Value] -> List Value
+listFromList xs = listAppend xs (listConst (basic Nil))
 
 
 
@@ -420,6 +423,7 @@ instance Meet Value where
           , valueString   = valueString   v1 /\ valueString   v2
           , valueFunction = valueFunction v1 /\ valueFunction v2
           , valueTable    = valueTable    v1 /\ valueTable    v2
+          , valueBoolean  = valueBoolean  v1 /\ valueBoolean  v2
           }
 
 instance Lattice a => Lattice (WithTop a) where

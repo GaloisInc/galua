@@ -96,7 +96,8 @@ staticContent =
         p fp = any (`isSuffixOf` fp)
                    [".woff", ".woff2", ".ttf", ".otf",
                     ".png", ".min.js", ".min.css", ".html",
-                    "thread.js", "values.js", "debugger.js", "code.js", "code.css"]
+                    "thread.js", "values.js", "debugger.js", "code.js",
+                    "analysis.js", "code.css"]
     in embedDirectory p (takeDirectory __FILE__ </>
                             ".." </> ".." </>
                             ".." </> ".." </> "ui"))

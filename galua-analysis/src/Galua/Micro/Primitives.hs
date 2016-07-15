@@ -15,6 +15,7 @@ import qualified Data.Map as Map
 primitives :: [([ByteString], PrimImpl)]
 primitives = [ (["type"], PrimImpl primType)
              , (["assert"], PrimImpl primAssert)
+             , (["setmetatable"], PrimImpl primSetmetatable)
              ]
 
 typeToString :: Type -> ByteString
@@ -51,6 +52,21 @@ primAssert glob args =
        BooleanValue (Just False) -> return (bad, glob)
        BooleanValue Nothing      -> options [(bad, glob), (good,glob)]
        _                         -> return (good, glob)
+
+primSetmetatable :: AnalysisM m => GlobalState -> List Value -> m (Either Value (List Value), GlobalState)
+primSetmetatable glob args =
+  do let arg0 = appList args 0
+         arg1 = appList args 1
+     val <- valueCasesM arg0
+     case val of
+       TableValue (Just tid) ->
+         do let setmeta table = Just $! table
+                                  { tableFields = letFun Metatable arg1
+                                                      (tableFields table) }
+                glob' = glob { tables = Map.update setmeta tid (tables glob) }
+            return (Right (listFromList [arg0]), glob')
+       TableValue Nothing  -> fail "Attempted to set metatable on top table"
+       _ -> return (Left (exactString "setmetatable: bad argument"), glob)
 
 singleton :: Value -> List Value
 singleton x = listAppend [x] (listConst (basic Nil))
