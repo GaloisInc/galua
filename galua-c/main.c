@@ -23,12 +23,6 @@ int main(int argc, char**argv) {
     exit(2);
   }
 
-  printf("<arguments>\n");
-  for (int i = 0; i < argc; i++) {
-          printf("%s\n", argv[i]);
-  }
-  printf("</arguments>\n");
-
   if (argc < 2) {
     fprintf(stderr, "%s: No Lua script.\n", __progname);
     exit(EXIT_FAILURE);
