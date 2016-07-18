@@ -78,44 +78,30 @@ case $UNAME in
         newstate.o liblualibs.a "${HS_LD_FLAGS[@]}"
 
       # This only seems to work on 64-bit systems
-      if [ "$ARCH" = "x86_64" ]; then
-          # First, we make all symbols local
-          SYM_FILE=$(mktemp SYMBOLS.XXXXXX)
-          nm $LIBNAME | awk '{ print $3 }' | grep -v '^$' > $SYM_FILE
-          objcopy --localize-symbols=$SYM_FILE $LIBNAME
+      # if [ "$ARCH" = "x86_64" ]; then
+      #     # First, we make all symbols local
+      #     SYM_FILE=$(mktemp SYMBOLS.XXXXXX)
+      #     nm $LIBNAME | awk '{ print $3 }' | grep -v '^$' > $SYM_FILE
+      #     objcopy --localize-symbols=$SYM_FILE $LIBNAME
 
-          # Next, we make the API global
-          # Our API has an extra `_` at the start of each name (for Mac) so drop it
-          sed 's/^.//' lua_api.txt > $SYM_FILE
-          objcopy --globalize-symbols=$SYM_FILE $LIBNAME
-          rm $SYM_FILE
+      #     # Next, we make the API global
+      #     # Our API has an extra `_` at the start of each name (for Mac) so drop it
+      #     sed 's/^.//' lua_api.txt > $SYM_FILE
+      #     objcopy --globalize-symbols=$SYM_FILE $LIBNAME
+      #     rm $SYM_FILE
 
-          strip --strip-unneeded $LIBNAME
+      #     strip --strip-unneeded $LIBNAME
 
-          # Now, clean up unneeded stuff
-          objcopy --strip-unneeded $LIBNAME
-      fi
+      #     # Now, clean up unneeded stuff
+      #     objcopy --strip-unneeded $LIBNAME
+      # fi
 
-      # XXX: Unfortunately, --strip-unneeded does not strip as much as we'd like
-      # because a bunch of the local symbols are still mentioned in relocation records.
-      #
-      # It would appear that at the moment there is no way for `ld` to resolve and
-      # eliminate these relocations, which is unfortunate.
-      # reference:
-      #     https://www.sourceware.org/ml/binutils/2008-02/msg00053.html
-      #     https://www.sourceware.org/ml/binutils/2008-02/msg00057.html
-      #
-      # As a result, we the library is quite large.  Fortunately, when linked in an
-      # executable, the redundant symbols may be safely stripped, and we get
-      # a reasonabley sized executable.
-
-      # The pthread dependency isn't captured in the GHC package configuration files.
       C_LD_FLAGS+=("-lpthread")
 
       # Build executable
       $CC main.c -g -o $TGT -I$TOP/galua-c/inplace/include/galua -std=gnu99 \
               -rdynamic -L. -l$TGT "${C_LD_FLAGS[@]}"
-      strip --strip-unneeded $TGT
+      # strip --strip-unneeded $TGT
 
   ;;
   "Darwin")
