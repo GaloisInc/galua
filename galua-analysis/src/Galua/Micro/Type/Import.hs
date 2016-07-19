@@ -181,20 +181,14 @@ importTable :: C.Table -> M A.TableV
 importTable t =
   do ents <- mapM importEntry =<< liftIO (C.tableToList t)
      meta <- importValue      =<< liftIO (C.getTableMeta t)
-     let initTab = A.bottom { A.tableFields = A.letFun A.Metatable meta
-                                                                    A.bottom }
-     return $ foldr addEntry initTab ents
+     let initTab = A.bottom { A.tableFields = A.fConst (A.basic A.Nil)
+                            , A.tableValues = A.basic A.Nil
+                            , A.tableMeta   = meta
+                            }
+     return $ foldr A.setTableEntry initTab ents
   where
   importEntry (x,y) = (,) <$> importValue x <*> importValue y
-  addEntry (k,v) t =
-    case A.valueString k of
-      A.OneValue s
-        | k { A.valueString = A.bottom } == A.bottom ->
-          t { A.tableFields = A.letFun (A.Field s) v (A.tableFields t) }
 
-      _ -> t { A.tableKeys   = k A.\/ A.tableKeys t
-             , A.tableValues = v A.\/ A.tableValues t
-             }
 
 
 importFunction :: C.Closure -> M A.FunV

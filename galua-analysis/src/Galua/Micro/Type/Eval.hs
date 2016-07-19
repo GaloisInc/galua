@@ -102,7 +102,7 @@ evalStmt stmt =
     SetTable t i v ->
       do val          <- regValToVal =<< evalExpr v
          TableValue l <- valueCasesM =<< regValToVal =<< getReg  t
-         ti           <- valueCasesM =<< regValToVal =<< evalExpr i
+         ti           <- regValToVal =<< evalExpr i
          setTable l ti val
          return Continue
 
@@ -111,7 +111,7 @@ evalStmt stmt =
       do vs <- getList ListReg
          let vr = appListAll vs
          TableValue tv <- valueCasesM =<< regValToVal =<< getReg t
-         setTable tv (BasicValue Number) vr
+         setTable tv (basic Number) vr
          return Continue
 
     GetMeta r e ->

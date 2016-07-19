@@ -208,9 +208,8 @@ analyze dbg n =
                            res  = Analysis.analyze funs prims cid args glob
                            txt  = show $ pp blankPPInfo res
                        save "out" funs
-                       writeFile "imported.txt" (show glob)
+                       writeFile "imported.txt" (show (cid, gid, glob))
                        writeFile "va.txt" txt
-                       putStrLn txt
                        return $ Just $ exportResult res
 
                   _ -> return Nothing

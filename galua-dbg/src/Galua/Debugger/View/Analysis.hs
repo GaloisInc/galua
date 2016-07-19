@@ -125,15 +125,14 @@ exportListVals maps xs =
 
 exportTableV :: IdMaps -> TableV -> JS.Value
 exportTableV maps TableV { .. } =
-  JS.object [ "meta"  .= exportValue maps meta
+  JS.object [ "meta"  .= exportValue maps tableMeta
             , "key"   .= exportValue maps tableKeys
             , "value" .= exportValue maps tableValues
             , "attrs" .= JS.object [ x .= exportValue maps v | (x,v) <- attrs ]
             ]
   where
-  meta  = appFun tableFields Metatable
   attrs = case tableFields of
-            FFun mp _ -> [ (decodeUtf8 f,v) | (Field f, v) <- Map.toList mp ]
+            FFun mp _ -> [ (decodeUtf8 f,v) | (f, v) <- Map.toList mp ]
 
 exportFunV :: IdMaps -> FunV -> JS.Value
 exportFunV IdMaps { .. } FunV { .. } =

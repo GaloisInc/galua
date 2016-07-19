@@ -108,7 +108,8 @@ initalGlobalState chunkId =
 
   globT = TableV { tableFields = fConst (basic Nil)
                  , tableKeys   = bottom
-                 , tableValues = bottom
+                 , tableValues = basic Nil
+                 , tableMeta   = basic Nil
                  }
 
   chunkFun = FunV { functionUpVals = Map.singleton (OP.UpIx 0) (OneValue upRef)

@@ -407,7 +407,7 @@ getUpVal :: UpIx -> BlockM RegVal
 getUpVal u = do LocalState { upvals } <- getLocal
                 return $! case Map.lookup u upvals of
                             Just r  -> toVal r
-                            Nothing -> RegBottom
+                            Nothing -> error ("getUpVal: Unknown upvalue " ++ show u)
   where
   toVal r = case r of
               NoValue        -> RegBottom
@@ -437,7 +437,8 @@ newTableId =
   where
   emptyTable = TableV { tableFields = fConst (basic Nil)
                       , tableKeys   = bottom
-                      , tableValues = bottom
+                      , tableValues = basic Nil
+                      , tableMeta   = basic Nil
                       }
 
 
@@ -463,39 +464,24 @@ writeTableId t v = updGlobal $ \GlobalState { tables, .. } ->
 
 
 -- See: Modifying "Top" values
-setTable :: Maybe TableId -> SingleV -> Value -> BlockM ()
+setTable :: Maybe TableId -> Value -> Value -> BlockM ()
 setTable mb vi v =
   case mb of
     Just l  -> doSetTable l
     Nothing -> join $ options [ doSetTable =<< anyTableId, return () ]
   where
   doSetTable l =
-    do TableV { .. } <- readTableId l
-       writeTableId l $
-         case vi of
-
-           StringValue mb ->
-             case mb of
-               Nothing -> TableV { tableFields = letFunAll v tableFields
-                                 , .. }
-               Just ss -> TableV { tableFields = letFun (Field ss) v tableFields
-                                 , .. }
-
-           BasicValue Nil -> error "doSetTable: Nil key"
-
-           _ -> TableV { tableKeys   = fromSingleV vi \/ tableKeys
-                       , tableValues = v              \/ tableValues
-                       , .. }
-
+    do t <- readTableId l
+       writeTableId l (setTableEntry (vi,v) t)
 
 getTable :: Maybe TableId -> SingleV -> BlockM Value
 getTable Nothing _ = return topVal
 getTable (Just l) ti =
   do TableV { .. } <- readTableId l
      return $ case ti of
-                StringValue (Just xx) -> appFun tableFields (Field xx)
+                StringValue (Just xx) -> appFun tableFields xx
                 StringValue Nothing   -> appAll tableFields
-                _ | ti `elem` valueCases tableKeys -> basic Nil \/ tableValues
+                _ | ti `elem` valueCases tableKeys -> tableValues
                   | otherwise -> basic Nil
 
 
@@ -503,7 +489,7 @@ getTableMeta :: Maybe TableId -> BlockM Value
 getTableMeta Nothing = return (basic Nil \/ fromSingleV (TableValue Nothing))
 getTableMeta (Just l) =
   do TableV { .. } <- readTableId l
-     return (appFun tableFields Metatable)
+     return tableMeta
 
 
 
