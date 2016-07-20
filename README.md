@@ -160,9 +160,9 @@ Example:
 
 ```
 breakpoints:
-  * ["@example.lua", 1, 10, 20]
-  * ["@sample.lua", 0]
-  * ["", 0]
+  * ["", 0]                       -- Pause when 1st chunk runs
+  * ["@sample.lua", 0]            -- Pause when `sample.lua` runs
+  * ["@example.lua", 1, 10, 20]   -- Pause on lines 1, 10, and 20 of `example.lua`
 ```
 
 Web interface configuration
