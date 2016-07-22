@@ -217,7 +217,3 @@ importValue val =
     C.UserData _      -> return (A.basic A.UserData)
     C.LightUserData _ -> return (A.basic A.UserData)
     C.Thread _        -> return (A.basic A.Thread)
-
-
-
-

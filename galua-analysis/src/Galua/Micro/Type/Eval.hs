@@ -5,6 +5,7 @@ module Galua.Micro.Type.Eval
   , valueCasesM
   ) where
 
+import           Control.Monad
 import           Data.Map ( Map )
 import qualified Data.Map as Map
 import qualified Data.Set as Set
@@ -21,7 +22,15 @@ import Galua.Micro.Type.Monad
 
 import Debug.Trace(trace)
 
+regCasesM :: Reg -> BlockM SingleV
+regCasesM reg =
+  do regVal <- getReg reg
+     value  <- regValCasesM regVal
+     assign reg (RegVal (fromSingleV value))
+     return value
 
+regValCasesM :: RegVal -> BlockM SingleV
+regValCasesM = valueCasesM <=< regValToVal
 
 valueCasesM :: AnalysisM m => Value -> m SingleV
 valueCasesM v = options (valueCases v)
@@ -94,14 +103,14 @@ evalStmt stmt =
          return Continue
 
     LookupTable r t i ->
-      do TableValue l <- valueCasesM =<< regValToVal =<< getReg t
-         ti           <- valueCasesM =<< regValToVal =<< evalExpr i
+      do TableValue l <- regCasesM t
+         ti           <- regValCasesM =<< evalExpr i
          assign r =<< fmap RegVal (getTable l ti)
          return Continue
 
     SetTable t i v ->
       do val          <- regValToVal =<< evalExpr v
-         TableValue l <- valueCasesM =<< regValToVal =<< getReg  t
+         TableValue l <- regCasesM t
          ti           <- regValToVal =<< evalExpr i
          setTable l ti val
          return Continue
@@ -110,14 +119,14 @@ evalStmt stmt =
     SetTableList t _ ->
       do vs <- getList ListReg
          let vr = appListAll vs
-         TableValue tv <- valueCasesM =<< regValToVal =<< getReg t
+         TableValue tv <- regCasesM t
          setTable tv (basic Number) vr
          return Continue
 
     GetMeta r e ->
       -- Note: XXX: we don't really need to expand function values completely,
       -- as they all give the same result.
-      do v    <- valueCasesM =<< regValToVal =<< evalExpr e
+      do v    <- regValCasesM =<< evalExpr e
          GlobalState { basicMetas, stringMeta, funMeta } <- getGlobal
          newV <- case v of
                    TableValue l -> getTableMeta l
@@ -234,7 +243,7 @@ evalStmt stmt =
     -- Functions
     Call fun ->
       do vs <- getList ListReg
-         FunctionValue fid <- valueCasesM =<< regValToVal =<< getReg fun
+         FunctionValue fid <- regCasesM fun
          next <- callFun fid vs
          case next of
            Left v   -> raiseError v
@@ -243,7 +252,7 @@ evalStmt stmt =
 
     TailCall fun ->
       do vs  <- getList ListReg
-         FunctionValue fid <- valueCasesM =<< regValToVal =<< getReg fun
+         FunctionValue fid <- regCasesM fun
          next <- callFun fid vs
          case next of
            Left v   -> raiseError v
@@ -442,9 +451,13 @@ instance PP Result where
       | otherwise   = x <> colon $$ nest 2 (pp n y)
 
 {-
-analyze :: Map [Int] Function ->
-           FunId -> List Value -> GlobalState -> Result
-analyze funs fid args glob =
+analyze ::
+  Map FunId Function ->
+  Map CFun PrimImpl ->
+  ClosureId ->
+  List Value ->
+  GlobalState -> Result
+analyze funs prims cid args glob =
   Result { resReturns     = joins [ v | Right v <- nexts ]
          , resRaises      = joins [ v | Left  v <- nexts ]
          , resGlobals     = joins gs
@@ -453,16 +466,18 @@ analyze funs fid args glob =
          }
   where
   (nexts,gs)         = unzip rss
-  (rss, states,errs) = unzip3
-                     $ runAnalysisM code (FunId [])
-                     $ evalFun fid args glob
-
-  code   = Map.fromList [ (FunId x, y) | (x,y) <- Map.toList funs ]
+  (rss, states,errs)
+                     = unzip3
+                     $ allPaths funs prims
+                     $ evalFun initialCaller cid args glob
 -}
 
-analyze :: Map FunId Function ->
-           Map CFun PrimImpl ->
-           ClosureId -> List Value -> GlobalState -> Result
+analyze ::
+  Map FunId Function ->
+  Map CFun PrimImpl ->
+  ClosureId ->
+  List Value ->
+  GlobalState -> Result
 analyze funs prims cid args glob =
   Result { resReturns     = joins [ v | Right v <- nexts ]
          , resRaises      = joins [ v | Left  v <- nexts ]
@@ -474,6 +489,3 @@ analyze funs prims cid args glob =
   (nexts,gs)          = unzip rss
   (rss, states, errs) = singlePath funs prims
                       $ evalFun initialCaller cid args glob
-
-
-
