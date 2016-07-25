@@ -12,7 +12,7 @@ build-type:          Custom
 cabal-version:       >=1.10
 
 custom-setup
-  setup-depends: base, Cabal >= 1.24, filepath, template-haskell
+  setup-depends: base, containers, Cabal, filepath, template-haskell
 
 library
   ghc-prof-options: -fprof-auto-top
