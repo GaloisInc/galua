@@ -324,7 +324,6 @@ instance Monad Mach where
   fail e   = Mach $ \_ _   -> error e
   (>>)     = (*>)
   {-# INLINE (>>=) #-}
-  {-# INLINE return #-}
   {-# INLINE (>>) #-}
 
 instance MonadIO Mach where

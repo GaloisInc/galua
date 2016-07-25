@@ -72,7 +72,6 @@ instance Applicative Alloc where
 instance Monad Alloc where
   Alloc m >>= f = Alloc (\e -> m e >>= \x -> unAlloc (f x) e)
   {-# INLINE (>>=) #-}
-  {-# INLINE return #-}
 
 class ReferenceType a where
   referenceTypeLoc :: Functor f => MonoLoc f (WeakMap a) AllocState
