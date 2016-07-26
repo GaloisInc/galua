@@ -123,10 +123,12 @@ libPackageKey x = $(
 
      case (mbSUI, mbCI, mbCUI, mbLN, mbCL) of
 
+       -- Cabal-1.24
        (Just sui, Just ci, Just cui, _, _) ->
             [| case $(varE cui) x of
-                $(conP sui [conP ci [varP y]]) -> $(varE y) |]
+                $(conP sui [conP ci [varP y]]) -> "HS" ++ $(varE y) |]
 
+       -- Cabal-1.22
        (_,_,_,Just ln, Just cl) ->
             [| case $(varE cl) x of
                 [$(conP ln [varP y])] -> $(varE y)
