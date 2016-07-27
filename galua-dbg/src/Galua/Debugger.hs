@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -fno-warn-deprecations #-}
 {-# LANGUAGE NamedFieldPuns, RecordWildCards, BangPatterns, OverloadedStrings #-}
 module Galua.Debugger
   ( Debugger(..)
@@ -40,7 +41,6 @@ import           Galua.Mach
 import           Galua.Stepper
 import           Galua.Reference
 import           Galua.Value
-import qualified Galua.Stack as Stack
 import qualified Galua.SizedVector as SV
 
 import           Language.Lua.Bytecode(Function(..))
@@ -48,7 +48,6 @@ import           Language.Lua.Bytecode.Debug
                     (lookupLineNumber,inferSubFunctionNames,deepLineNumberMap)
 import           Language.Lua.Bytecode.FunId
 
-import           Data.Foldable (traverse_)
 import           Data.Maybe (catMaybes)
 import           Data.Map (Map)
 import qualified Data.Map as Map
@@ -77,12 +76,11 @@ import           Data.IORef(IORef,readIORef,writeIORef,
 
 import            Control.Concurrent
                     ( MVar, newEmptyMVar, putMVar, takeMVar
-                    , modifyMVar,modifyMVar_,withMVar
                     , forkIO, forkFinally
                     , threadDelay, killThread
                     )
 import           Control.Concurrent(Chan,newChan,isEmptyChan,readChan,writeChan)
-import           Control.Monad(when,join,unless,void,forever)
+import           Control.Monad(when,forever)
 import           MonadLib(ExceptionT,runExceptionT,raise,lift)
 
 
@@ -257,10 +255,10 @@ getValue vp0 = do res <- runExceptionT (getVal vp0)
 setValue :: ValuePath -> Value -> IO ()
 setValue vp v =
   case vp of
-    VP_Field vp' key   -> mb (getValue vp') (setField key)
-    VP_Key   vp' key   -> mb (getValue vp') (setKey   key)
-    VP_CUpvalue vp' n  -> mb (getValue vp') (setCUpval n)
-    VP_MetaTable vp'   -> mb (getValue vp') setMeta
+    VP_Field vp' key   -> getValue vp' `andThen` setField key
+    VP_Key   vp' key   -> getValue vp' `andThen` setKey   key
+    VP_CUpvalue vp' n  -> getValue vp' `andThen` setCUpval n
+    VP_MetaTable vp'   -> getValue vp' `andThen` setMeta
     VP_Register env n  -> setReg n env
     VP_Upvalue  env n  -> setUVal n env
     VP_Varargs env n   -> setVArg n env
@@ -269,11 +267,12 @@ setValue vp v =
 
 
   where
-  mb :: IO (Maybe a) -> (a -> IO ()) -> IO ()
-  mb thing k = do res <- thing
-                  case res of
-                    Nothing -> return ()
-                    Just a  -> k a
+  andThen :: IO (Maybe a) -> (a -> IO ()) -> IO ()
+  andThen thing k =
+    do res <- thing
+       case res of
+         Nothing -> return ()
+         Just a  -> k a
 
   setField key val =
     case val of
@@ -445,7 +444,7 @@ addSourceFile brks breakRef sources mbName bytes cid fun =
 
   where
   -- Line 0 is special cased to stop on the first instruction of a chunk.
-  findClosest info 0 = Just (0, FunId [cid])
+  findClosest _ 0 = Just (0, FunId [cid])
 
   findClosest info ln =
     chooseExactLoc $
@@ -484,7 +483,6 @@ newEmptyDebugger opts =
      dbgBrkAddOnLoad <- newIORef (optBreakPoints opts)
      dbgBreaks       <- newIORef Set.empty
 
-     let maxBuf = 50 -- XXX: Make a parameter
      let cfg = MachConfig
                  { machOnChunkLoad = addSourceFile dbgBrkAddOnLoad
                                                    dbgBreaks
@@ -556,7 +554,7 @@ setIdleReason Debugger { .. } x = writeIORef dbgIdleReason x
 
 setPathValue :: Debugger -> Integer -> Value -> IO ()
 setPathValue dbg vid newVal =
-  whenStable dbg True $ whenNotFinishied dbg $ \vm next ->
+  whenStable dbg True $ whenNotFinishied dbg $ \_ _ ->
     do ExportableState { expClosed } <- readIORef dbgExportable
        case Map.lookup vid expClosed of
          Just (ExportableValue path _) -> setValue path newVal
@@ -605,16 +603,16 @@ stepOutOf dbg = startExec dbg True (StepOut Stop)
 goto :: Int -> Debugger -> IO ()
 goto pc dbg =
   whenIdle dbg $
-  whenNotFinishied dbg $ \vm next ->
+  whenNotFinishied dbg $ \vm _ ->
   writeIORef (dbgStateVM dbg) (Running vm (Goto pc))
 
 
 poll :: Debugger -> Word64 -> Int {- ^ Timeout in seconds -} -> IO Word64
-poll dbg oldTime timeout =
+poll dbg _ timeout =
   do mvar <- newEmptyMVar
      sendCommand dbg (AddClient mvar) False
      tid <- -- we are forking here
-            do threadDelay (timeout * 10^6)
+            do threadDelay (timeout * 10^(6::Int))
                putMVar mvar ()
              `forkFinally` \_ -> return ()
 
@@ -706,7 +704,7 @@ doStepMode dbg vm next mode firstStep =
     (StepOutYield{}, Resume{})      -> proceed (StepOutYield mode)
     (StepOutYield{}, _)             -> proceed mode
 
-    (StepOut m, Resume{})           -> proceed (StepOutYield mode)
+    (StepOut{}, Resume{})           -> proceed (StepOutYield mode)
     (StepOut m, ErrorReturn{})      -> proceed m
     (StepOut{}, FunCall  {})        -> proceed (StepOut mode)
     (StepOut m, FunReturn{})        -> proceed m

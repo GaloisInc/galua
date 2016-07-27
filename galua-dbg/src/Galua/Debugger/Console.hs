@@ -7,7 +7,6 @@ module Galua.Debugger.Console
 import qualified Data.Sequence as Seq
 import Data.Sequence (Seq)
 import System.IO.Unsafe
-import System.IO
 import Data.IORef
 import Data.List
 import Data.Text (Text)
@@ -27,6 +26,7 @@ data Console = Console
   , consoleBuffer :: !Text
   }
 
+emptyConsole :: Console
 emptyConsole = Console
   { consoleLines = Seq.empty
   , consoleBuffer = Text.empty

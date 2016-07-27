@@ -1,10 +1,8 @@
 {-# LANGUAGE NamedFieldPuns #-}
 module Galua.Debugger.Options where
 
-import System.Console.GetOpt
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Text.Read(readMaybe)
 
 data Options = Options
   { optBreakPoints  :: CommandLineBreakPoints

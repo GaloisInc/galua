@@ -6,7 +6,7 @@ module Galua.CApi where
 
 import Control.Concurrent (MVar, putMVar, takeMVar)
 import Control.Exception
-import Control.Monad (replicateM_,when,unless,(<=<))
+import Control.Monad (replicateM_,when,unless)
 import Control.Monad.IO.Class
 import Data.Int
 import Data.Bits
@@ -15,7 +15,6 @@ import Data.Foldable (toList, for_, traverse_)
 import Data.Functor (void)
 import Data.Traversable (for)
 import Data.Maybe (fromMaybe)
-import qualified Data.Text.Foreign as Text
 import qualified Data.Vector as Vector
 import           Data.Vector (Vector)
 import Foreign.C.String

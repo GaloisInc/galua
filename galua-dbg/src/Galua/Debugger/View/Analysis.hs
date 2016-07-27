@@ -3,34 +3,24 @@ module Galua.Debugger.View.Analysis where
 
 import qualified Data.Aeson as JS
 import qualified Data.Aeson.Types as JS
-import           Data.Aeson (toJSON, (.=))
+import           Data.Aeson ((.=))
 import           Data.Text(Text)
 import qualified Data.Text as Text
 import           Data.Text.Encoding(decodeUtf8)
-import           Data.String(fromString)
-import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Map (Map)
 import qualified Data.Map as Map
-import           Data.ByteString(ByteString)
 import qualified Data.ByteString.Lazy as BS (fromStrict)
-import           Data.Maybe(mapMaybe)
-import           Data.List(unfoldr)
-import qualified Data.Vector as Vector
 
-import qualified Language.Lua.Bytecode.Debug as OP
-import qualified Language.Lua.Bytecode       as OP
-import           Language.Lua.Bytecode.FunId
 import           Language.Lua.StringLiteral (constructStringLiteral)
 
-import           Galua.Micro.AST
 import           Galua.Micro.Type.Value
 import           Galua.Micro.Type.Eval(Result(..))
 import           Galua.Debugger.View.Utils
 
 
 exportResult :: Result -> JS.Value
-exportResult r@Result { .. } =
+exportResult Result { .. } =
   JS.object
     [ "returns" .= exportListVals    maps resReturns
     , "raises"  .= exportValue       maps resRaises
@@ -114,8 +104,8 @@ exportValue maps v = JS.object
                   _         -> Set.empty
 
 exportListVals :: IdMaps -> List Value -> Maybe JS.Value
-exportListVals maps xs =
-  case xs of
+exportListVals maps lv =
+  case lv of
     ListBottom  -> Nothing
     List n xs a -> Just $ JS.object [ "min_len"  .= n
                                     , "elements" .= map (exportValue maps) xs

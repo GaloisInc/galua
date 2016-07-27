@@ -146,6 +146,11 @@ getProp f (Prop pre es) =
                            _ -> typeError "exactly 2 parameters"
 
      case pre of
+       IsNone -> case vs of
+                   [VVal (Bool b)] -> return b
+                   [VVal Nil]    -> return False
+                   [_]      -> return True
+                   _        -> typeError "exactly 1 parameter"
        IsInteger -> unary isNumber $ \n -> case n of
                                              Int _ -> True
                                              _     -> False
@@ -327,6 +332,10 @@ runStmt f@Frame { .. } pc stmt =
 
     Drop ArgReg n ->
       do liftIO (modifyIORef' argRegRef (drop n))
+         return Continue
+
+    Drop ListReg n ->
+      do liftIO (modifyIORef' listRegRef (drop n))
          return Continue
 
     SetList res es ->

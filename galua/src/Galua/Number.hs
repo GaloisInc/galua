@@ -42,7 +42,7 @@ instance Hashable Number where
     case n of
       Int x    -> con 1 x
       Double x -> con 2 x
-    where con n a = hashWithSalt (hashWithSalt s (n::Int)) a
+    where con i a = hashWithSalt (hashWithSalt s (i::Int)) a
 
 ------------------------------------------------------------------------
 -- Casts

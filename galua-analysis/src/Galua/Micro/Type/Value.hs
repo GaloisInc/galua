@@ -3,25 +3,20 @@ module Galua.Micro.Type.Value
   (module Galua.Micro.Type.Value, FunId, subFun, noFun)
   where
 
-import Data.Map(Map)
-import Control.Monad (foldM)
+import           Control.Monad (foldM)
+import           Data.ByteString(ByteString)
+import           Data.Map(Map)
 import qualified Data.Map as Map
-import Data.Set(Set)
+import           Data.Maybe(fromMaybe,isNothing)
+import           Data.Set(Set)
 import qualified Data.Set as Set
-import Data.List(intercalate)
-import Data.Maybe(fromMaybe,isNothing)
-import Data.ByteString(ByteString)
-import GHC.Generics
-import Control.Monad (liftM3, liftM, ap)
-import Text.PrettyPrint(text)
-import Foreign.Ptr (FunPtr, Ptr)
-import Foreign.C.Types (CInt)
+import           Foreign.C.Types (CInt)
+import           Foreign.Ptr (FunPtr, Ptr)
+import           GHC.Generics
 
-import Language.Lua.Bytecode.Pretty(PP(..),pp)
 import Language.Lua.Bytecode.FunId
 
 import Galua.Micro.AST
-import Galua.LuaString(LuaString)
 
 
 -- | An abstract value.

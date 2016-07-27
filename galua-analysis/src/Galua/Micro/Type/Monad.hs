@@ -60,7 +60,6 @@ import           Data.Map ( Map )
 import qualified Data.Map as Map
 import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
-import           Data.Maybe(fromMaybe)
 
 import qualified MonadLib as M
 import           MonadLib hiding (raises,sets,sets_,ask,get)
@@ -280,7 +279,7 @@ raisesError v =
      blockRaisesError rwCurBlock v
 
 blockRaisesError :: BlockName -> Value -> BlockM ()
-blockRaisesError b v =
+blockRaisesError _ v =
   do gb <- getCurGlobalBlockName
      sets_ $ \a -> a { rwRaises = Map.insertWith (\/) gb v (rwRaises a) }
 

@@ -5,8 +5,6 @@ module Galua.Micro.Primitives (buildPrimMap) where
 import Galua.Micro.Type.Value
 import Galua.Micro.Type.Eval
 import Galua.Micro.Type.Monad
-import qualified Data.Set as Set
-import Control.Monad
 import Data.Maybe
 import Data.ByteString(ByteString)
 import           Data.Map (Map)

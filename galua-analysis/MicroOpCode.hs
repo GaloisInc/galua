@@ -2,38 +2,28 @@
 -- module Galua.MicroOpCode where
 
 import qualified Language.Lua.Bytecode as OP
-import           Language.Lua.Bytecode (DebugInfo(..),Count(..) )
 import           Language.Lua.Bytecode.Pretty(PP(..),blankPPInfo)
 import           Language.Lua.Bytecode.FunId
 import qualified Data.ByteString.Lazy as LBS
-import qualified Data.Vector as Vector
-import           Data.List(intercalate)
-import           Control.Monad(replicateM)
-import           Data.IORef(newIORef)
 import qualified Data.Map as Map
 
-import           Text.Show.Pretty(ppShow)
-import           Foreign(Ptr(..))
+import           Foreign(Ptr)
 
-import Galua.Value(Closure(..),FunctionValue(..),prettyValue)
-import Galua.Reference(newRef,runAlloc)
 import Galua.Mach(parseLua)
 import Galua.Micro.AST(Function(..),ppDot)
-import Galua.Micro.Translate(translateTop,translate)
-import Galua.Micro.Eval(runFunction)
+import Galua.Micro.Translate(translateTop)
 import Galua.Micro.Type.Eval(analyze)
 import Galua.Micro.Type.Pretty()
 import Galua.Micro.Type.Filter
 
 import Galua.Micro.Type.Value
-  ( bottom,basic,FunId(..),listConst,initLuaArgList
+  ( bottom,basic,initLuaArgList
   , GlobalState(..), fConst, Type(..)
   , TableV(..), FunV(..)
   , TableId(..), RefId(..), ClosureId(..)
   , newTable, externalId
   , Lift(..), FunImpl(..)
   )
-import qualified Galua.Value as Val (Value(Nil))
 
 
 main :: IO ()
@@ -45,9 +35,8 @@ testFile f =
   do txt <- LBS.readFile f
      mb  <- parseLua (Just f) txt
      case mb of
-       Right (OP.Chunk n fun) ->
-         do let fid = rootFun 0
-            let tr = translateTop 0 fun
+       Right (OP.Chunk _ fun) ->
+         do let tr = translateTop 0 fun
                 dotFile pre x = pre ++ "_" ++ funIdString x ++ ".dot"
 
             let save pre x =

@@ -13,8 +13,6 @@ import qualified Data.ByteString as BS
 import           Text.PrettyPrint
 import           Debug.Trace
 
-import           MonadLib hiding (raises)
-
 import Galua.Micro.AST
 import Galua.Micro.Type.Value
 import Galua.Micro.Type.Pretty()
@@ -129,11 +127,12 @@ evalStmt stmt =
       -- Note: XXX: we don't really need to expand function values completely,
       -- as they all give the same result.
       do v    <- exprCasesM e
-         GlobalState { basicMetas, stringMeta, funMeta } <- getGlobal
+         GlobalState { basicMetas, stringMeta, funMeta, booleanMeta } <- getGlobal
          newV <- case v of
                    TableValue l -> getTableMeta l
                    BasicValue t     -> return (appFun basicMetas t)
                    StringValue _    -> return stringMeta
+                   BooleanValue{}   -> return booleanMeta
                    FunctionValue _  -> return funMeta
          when (newV == bottom) impossible
          assign r (RegVal newV)
@@ -401,6 +400,8 @@ evalFun :: AnalysisM m =>
                                     m (Either Value (List Value), GlobalState)
 evalFun caller cid as glob =
   case functionFID funV of
+    NoValue -> impossible
+    MultipleValues -> error "evalFun: multiple values" -- todo: report intractibility
     OneValue (CFunImpl ptr) ->
       do mbPrim  <- getPrim ptr
          case mbPrim of

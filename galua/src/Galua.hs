@@ -15,7 +15,6 @@ import           Control.Monad(void)
 
 import           Foreign (Ptr)
 import           Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
-import           Foreign.C(CInt(..))
 import           Control.Concurrent (forkIO)
 
 

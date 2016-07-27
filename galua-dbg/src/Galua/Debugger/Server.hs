@@ -27,7 +27,7 @@ import qualified Snap.Core as Snap
 import           Control.Monad.IO.Class(liftIO)
 
 import           Control.Applicative((<|>))
-import           Control.Monad(unless,void)
+import           Control.Monad(void)
 import           Control.Exception (throwIO, catch)
 import           Control.Concurrent(forkIO)
 import           Data.ByteString(ByteString)
@@ -50,13 +50,11 @@ import           Data.Text.Encoding.Error(lenientDecode)
 import           Data.Maybe(fromMaybe)
 import qualified Data.Aeson as JS
 import           Text.Read(readMaybe)
-import           System.Environment (getProgName)
 import           System.IO (hPutStrLn, stderr)
 import           System.IO.Error (isDoesNotExistError)
 import           System.FilePath (takeExtension, takeDirectory, (</>))
-import           System.Console.GetOpt
 
-import           Foreign(Ptr,nullPtr)
+import           Foreign(Ptr)
 import           Foreign.C(CInt(..))
 
 
@@ -206,13 +204,6 @@ snapRemoveBreakPoint st =
        Just loc -> liftIO (removeBreakPoint st loc)
 
 
-snapClearBreakPoints :: Debugger -> Snap ()
-snapClearBreakPoints st =
-  liftIO (clearBreakPoints st)
-
-
-
-
 snapGetState :: Debugger -> Snap ()
 snapGetState st = sendJSON =<< liftIO (exportDebugger st)
 
@@ -291,10 +282,6 @@ notFound :: Snap a
 notFound = Snap.finishWith (Snap.setResponseStatus 404 "Not Found"
                                                       Snap.emptyResponse)
 
-errLocked :: Snap a
-errLocked = Snap.finishWith (Snap.setResponseStatus 423 "Locked"
-                                                      Snap.emptyResponse)
-
 
 maybeReadFile :: FilePath -> IO (Maybe Text)
 maybeReadFile fp =
@@ -347,6 +334,7 @@ parseBreakpoint :: Value -> Either String (FilePath, [Int])
 parseBreakpoint (List (Text fp : lineNumVals)) =
   do lineNums <- mapM getNumber lineNumVals
      return (Text.unpack fp, lineNums)
+parseBreakpoint _ = Left "Breakpoint section should be list of list of scriptnames and line number"
 
 getNumber :: Value -> Either String Int
 getNumber (Number _ n) = Right (fromIntegral n)
