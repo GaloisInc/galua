@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE BangPatterns #-}
 module Galua.Micro.Type.Monad
   ( -- * Analysis
     AnalysisM, GlobalBlockName(..)
@@ -49,6 +50,8 @@ module Galua.Micro.Type.Monad
     anyTableId, anyRefId, anyFunId
 
 
+  , -- * Logging
+    logTrace, logError
 
 
   ) where
@@ -116,6 +119,8 @@ data AnalysisS = AnalysisS
 
   , rwRaises    :: !(Map GlobalBlockName Value)
 
+  , logLines    :: [String]
+
   }
 
 
@@ -128,13 +133,14 @@ allPaths ::
   Map FunId Function ->
   Map CFun PrimImpl ->
   AllPaths a ->
-  [ (a, Map GlobalBlockName State , Map GlobalBlockName Value) ]
+  [ (a, Map GlobalBlockName State , Map GlobalBlockName Value, [String]) ]
 allPaths funs prims (AllPaths m) =
-  [ (a, rwStates rw, rwRaises rw)
-    | (a,rw) <- runStateT initS $ runReaderT ro m ]
+  [ (a, rwStates rw, rwRaises rw, reverse (logLines rw))
+    | (a,!rw) <- runStateT initS $ runReaderT ro m ]
   where
   initS = AnalysisS { rwStates    = Map.empty
                     , rwRaises    = Map.empty
+                    , logLines    = []
                     }
 
   ro    = RO { roCode = funs, roPrims = prims }
@@ -144,13 +150,14 @@ singlePath ::
   Map FunId Function ->
   Map CFun PrimImpl ->
   SinglePath a ->
-  ([a], Map GlobalBlockName State, Map GlobalBlockName Value)
-singlePath funs prims (SinglePath m) = (as, rwStates rw, rwRaises rw)
+  ([a], Map GlobalBlockName State, Map GlobalBlockName Value, [String])
+singlePath funs prims (SinglePath m) = (as, rwStates rw, rwRaises rw, reverse(logLines rw))
   where
-  (as,rw) = runId $ runStateT initS $ findAll $ runReaderT ro m
+  (as,!rw) = runId $ runStateT initS $ findAll $ runReaderT ro m
 
   initS = AnalysisS { rwStates    = Map.empty
                     , rwRaises    = Map.empty
+                    , logLines    = []
                     }
 
   ro = RO { roCode = funs, roPrims = prims }
@@ -579,3 +586,14 @@ getCurGlobalBlockName :: BlockM GlobalBlockName
 getCurGlobalBlockName =
   do BlockS{..} <- BlockM M.get
      return (GlobalBlockName rwCurCallsite (QualifiedBlockName rwCurFunId rwCurBlock))
+
+------------------------------------------------------------------------
+-- Logging
+
+logError :: String -> BlockM ()
+logError = logTrace -- TODO: severities
+
+logTrace :: String -> BlockM ()
+logTrace msg = BlockM $ lift $ sets_ $ \s ->
+  let msgs = logLines s
+  in msgs `seq` s { logLines = msg : msgs }
