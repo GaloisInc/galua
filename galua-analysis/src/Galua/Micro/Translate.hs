@@ -361,8 +361,7 @@ indexValue ans tab0 key' fin =
                (\meth ->
                   typeCase meth
                     $ IfType FunctionType
-                        (do res  <- newTMP
-                            emit $ SetList ListReg [ toExpr tab, toExpr key ]
+                        (do emit $ SetList ListReg [ toExpr tab, toExpr key ]
                             emit $ Call meth
                             emit $ IndexList ans ListReg 0
                             goto done
@@ -404,8 +403,7 @@ setTable tab0 key val k =
                 (\meth ->
                    typeCase meth
                      $ IfType FunctionType
-                          (do res  <- newTMP
-                              emit $ SetList ListReg [ toExpr tab, key, val ]
+                          (do emit $ SetList ListReg [ toExpr tab, key, val ]
                               emit $ Call meth
                               goto k
                           ) $

@@ -2,14 +2,12 @@
 {-# LANGUAGE TypeOperators #-}
 module Galua.Micro.Type.Import (importClosure) where
 
-import           Data.Text(Text)
 import qualified Data.Vector as Vector
 import           Data.IORef(IORef,readIORef)
 import           MonadLib
 import           Control.Monad.IO.Class(MonadIO(..))
 import           Data.Map ( Map )
 import qualified Data.Map as Map
-import           Data.List
 
 
 
@@ -19,9 +17,7 @@ import qualified Galua.Reference        as C
 import qualified Galua.Table            as C (tableToList,getTableMeta)
 import           Galua.LuaString(toByteString)
 import qualified Galua.Micro.Type.Value as A -- abstract
-import qualified Galua.Micro.AST        as A
 import           Language.Lua.Bytecode(UpIx(..))
-import           Language.Lua.Bytecode.FunId(noFun)
 
 
 importClosure ::
@@ -126,8 +122,8 @@ importMetas ref =
 
 importUpVal :: IORef C.Value -> M A.RefId
 importUpVal r =
-  do RW { importedUpVals } <- M get
-     case lookup r importedUpVals of
+  do imp <- importedUpVals <$> M get
+     case lookup r imp of
        Just i  -> return i
        Nothing ->
          do i <- newExternalRef A.RefId
@@ -143,8 +139,8 @@ importUpVal r =
 
 importTableRef :: C.Reference C.Table -> M A.TableId
 importTableRef r =
-  do RW { importedTables } <- M get
-     case Map.lookup r importedTables of
+  do imp <- importedTables <$> M get
+     case Map.lookup r imp of
        Just i  -> return i
        Nothing ->
         do i <- importNewRef A.TableId r
@@ -160,14 +156,14 @@ importTableRef r =
 
 importFunRef :: C.Reference C.Closure -> M A.ClosureId
 importFunRef r =
-  do RW { importedClosures } <- M get
-     case Map.lookup r importedClosures of
+  do imp <- importedClosures <$> M get
+     case Map.lookup r imp of
        Just i  -> return i
        Nothing ->
         do i <- importNewRef A.ClosureId r
-           M $ sets_ $ \RW { .. } ->
-                        RW { importedClosures = Map.insert r i
-                                                   importedClosures ,.. }
+           M $ sets_ $ \rw -> rw
+                        { importedClosures = Map.insert r i
+                                                   (importedClosures rw) }
            f <- importFunction =<< C.readRef r
            M $ sets_ $
              \RW { globs = A.GlobalState { .. }, .. } ->
@@ -181,20 +177,14 @@ importTable :: C.Table -> M A.TableV
 importTable t =
   do ents <- mapM importEntry =<< liftIO (C.tableToList t)
      meta <- importValue      =<< liftIO (C.getTableMeta t)
-     let initTab = A.bottom { A.tableFields = A.letFun A.Metatable meta
-                                                                    A.bottom }
-     return $ foldr addEntry initTab ents
+     let initTab = A.bottom { A.tableFields = A.fConst (A.basic A.Nil)
+                            , A.tableValues = A.basic A.Nil
+                            , A.tableMeta   = meta
+                            }
+     return $ foldr A.setTableEntry initTab ents
   where
   importEntry (x,y) = (,) <$> importValue x <*> importValue y
-  addEntry (k,v) t =
-    case A.valueString k of
-      A.OneValue s
-        | k { A.valueString = A.bottom } == A.bottom ->
-          t { A.tableFields = A.letFun (A.Field s) v (A.tableFields t) }
 
-      _ -> t { A.tableKeys   = k A.\/ A.tableKeys t
-             , A.tableValues = v A.\/ A.tableValues t
-             }
 
 
 importFunction :: C.Closure -> M A.FunV
@@ -223,7 +213,3 @@ importValue val =
     C.UserData _      -> return (A.basic A.UserData)
     C.LightUserData _ -> return (A.basic A.UserData)
     C.Thread _        -> return (A.basic A.Thread)
-
-
-
-

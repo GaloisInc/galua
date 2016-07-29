@@ -27,7 +27,6 @@ import           Control.Exception (assert)
 import           Data.IORef
 import           Data.Foldable (traverse_)
 import qualified Data.Map as Map
-import           Data.Map (Map)
 import qualified System.Clock as Clock
 
 import           GHC.Exts (inline)
@@ -82,8 +81,8 @@ performTailCall vm f vs =
 
      (newEnv, next) <- enterClosure f vs
 
-     th <- readRef (vmCurThread vm)
-     liftIO (recordProfTime (execCreateTime newEnv) (vmMachineEnv vm) (stExecEnv th))
+     execEnv <- stExecEnv <$> readRef (vmCurThread vm)
+     liftIO (recordProfTime (execCreateTime newEnv) (vmMachineEnv vm) execEnv)
      liftIO (recordProfEntry (vmMachineEnv vm) (funValueName (execFunction newEnv)))
 
      vmUpdateThread vm $ \th ->

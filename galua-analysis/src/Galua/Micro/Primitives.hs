@@ -5,8 +5,6 @@ module Galua.Micro.Primitives (buildPrimMap) where
 import Galua.Micro.Type.Value
 import Galua.Micro.Type.Eval
 import Galua.Micro.Type.Monad
-import qualified Data.Set as Set
-import Control.Monad
 import Data.Maybe
 import Data.ByteString(ByteString)
 import           Data.Map (Map)
@@ -60,9 +58,7 @@ primSetmetatable glob args =
      val <- valueCasesM arg0
      case val of
        TableValue (Just tid) ->
-         do let setmeta table = Just $! table
-                                  { tableFields = letFun Metatable arg1
-                                                      (tableFields table) }
+         do let setmeta table = Just $! table { tableMeta = arg1 }
                 glob' = glob { tables = Map.update setmeta tid (tables glob) }
             return (Right (listFromList [arg0]), glob')
        TableValue Nothing  -> fail "Attempted to set metatable on top table"

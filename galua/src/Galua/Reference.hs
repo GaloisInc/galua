@@ -23,7 +23,6 @@ import Numeric(showHex)
 import System.Mem.Weak
 import qualified Data.IntMap as IntMap
 import Data.IntMap (IntMap)
-import Data.Text(Text)
 
 import Language.Lua.Bytecode.FunId(FunId)
 import Galua.Loc
@@ -72,7 +71,6 @@ instance Applicative Alloc where
 instance Monad Alloc where
   Alloc m >>= f = Alloc (\e -> m e >>= \x -> unAlloc (f x) e)
   {-# INLINE (>>=) #-}
-  {-# INLINE return #-}
 
 class ReferenceType a where
   referenceTypeLoc :: Functor f => MonoLoc f (WeakMap a) AllocState

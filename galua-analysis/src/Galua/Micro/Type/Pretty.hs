@@ -2,6 +2,7 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
 module Galua.Micro.Type.Pretty where
 
+import           Data.ByteString (ByteString)
 import qualified Data.Set as Set
 import           Data.Map ( Map )
 import qualified Data.Map as Map
@@ -44,6 +45,8 @@ instance PP a => PP (List a) where
                  _  -> brackets (fsep (punctuate comma (map (pp n) xs'))) <+>
                        "++" <+> "repeat" <+> pp n y
 
+instance PP ByteString where
+  pp _ = text . show
 
 instance PP a => PP (WithTop a) where
   pp _ Top = "⊤"
@@ -81,12 +84,6 @@ instance PP Value where
           [ braces (text tag <> ":" <+> ppOpts (map sh (Set.toList xs))) ]
 
 
-instance PP FieldName where
-  pp _ fn =
-    case fn of
-      Metatable -> "meta"
-      Field x   -> text (show x)
-
 instance (PP a, PP b) => PP (a :-> b) where
   pp n (FFun mp b) =
     vcat [ pp n k <+> "->" <+> pp n v | (k,v) <- Map.toList mp ]
@@ -104,8 +101,9 @@ instance PP a => PP (Lift a) where
 
 
 instance PP TableV where
-  pp n TableV { .. } = braces (vcat (pp n tableFields : rest))
+  pp n TableV { .. } = braces (vcat (pp n tableFields : metatable : rest))
       where
+      metatable = "meta ->" <+> pp n tableMeta
       rest | tableKeys == bottom || tableValues == bottom = []
            | otherwise = [ pp n tableKeys <+> "->" <+> pp n tableValues ]
 

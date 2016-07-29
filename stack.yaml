@@ -1,9 +1,10 @@
 packages:
-- lib/hashtables
-- galua
-- galua-dbg
-- galua-analysis
-resolver: lts-6.7
+- location: lib/hashtables
+  extra-dep: true
+- location: galua
+- location: galua-dbg
+- location: galua-analysis
+resolver: lts-6.9
 extra-deps:
 - language-lua-0.9.0
 - config-value-0.4.0.2

@@ -17,8 +17,7 @@ import           Data.Vector (Vector)
 import qualified Data.Vector as Vector
 import           Data.ByteString (ByteString)
 import           Data.Void
-import           Foreign (ForeignPtr, Ptr, nullPtr, newForeignPtr,
-                            finalizerFree, plusPtr, FunPtr)
+import           Foreign (ForeignPtr, Ptr, nullPtr, newForeignPtr, FunPtr)
 import           Foreign.StablePtr
                    (newStablePtr, freeStablePtr, castStablePtrToPtr)
 import qualified Data.ByteString.Lazy as L
@@ -324,7 +323,6 @@ instance Monad Mach where
   fail e   = Mach $ \_ _   -> error e
   (>>)     = (*>)
   {-# INLINE (>>=) #-}
-  {-# INLINE return #-}
   {-# INLINE (>>) #-}
 
 instance MonadIO Mach where

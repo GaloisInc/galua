@@ -8,12 +8,10 @@ import           Data.Maybe(fromMaybe)
 import           Data.List(sortBy)
 import           Data.Function(on)
 import qualified Data.Aeson as JS
-import qualified Data.Aeson.Types as JS
-import           Data.Aeson (toJSON, (.=))
 import qualified Data.Vector as Vector
 import           Data.String(fromString)
 
-import Language.Lua.Bytecode(Reg(..),Function(..),DebugInfo(..),OpCode(..),
+import Language.Lua.Bytecode(Function(..),OpCode(..),
                               ProtoIx(..))
 import Language.Lua.Bytecode.FunId
 import Language.Lua.Bytecode.Debug
@@ -54,15 +52,15 @@ computeFunNames chunkId fun0 =
 
 
 getProtoNames :: FunId -> Function -> [FunName]
-getProtoNames fid fun = foldr check [] $ Vector.indexed $ funcCode fun
+getProtoNames fid f = foldr check [] $ Vector.indexed $ funcCode f
   where
   check (pc,op) mp =
     case op of
       OP_CLOSURE _ (ProtoIx k) ->
-        let proto = funcProtos fun Vector.! k
+        let proto = funcProtos f Vector.! k
             info  = FunName { fun     = proto
                             , funId   = subFun fid k
-                            , funName = unpackUtf8 <$> inferFunctionName fun pc
+                            , funName = unpackUtf8 <$> inferFunctionName f pc
                             }
         in info : mp
       _ -> mp

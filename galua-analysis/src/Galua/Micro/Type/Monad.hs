@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE BangPatterns #-}
 module Galua.Micro.Type.Monad
   ( -- * Analysis
     AnalysisM, GlobalBlockName(..)
@@ -49,6 +50,8 @@ module Galua.Micro.Type.Monad
     anyTableId, anyRefId, anyFunId
 
 
+  , -- * Logging
+    logTrace, logError
 
 
   ) where
@@ -57,7 +60,6 @@ import           Data.Map ( Map )
 import qualified Data.Map as Map
 import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
-import           Data.Maybe(fromMaybe)
 
 import qualified MonadLib as M
 import           MonadLib hiding (raises,sets,sets_,ask,get)
@@ -116,6 +118,8 @@ data AnalysisS = AnalysisS
 
   , rwRaises    :: !(Map GlobalBlockName Value)
 
+  , logLines    :: [String]
+
   }
 
 
@@ -128,13 +132,14 @@ allPaths ::
   Map FunId Function ->
   Map CFun PrimImpl ->
   AllPaths a ->
-  [ (a, Map GlobalBlockName State , Map GlobalBlockName Value) ]
+  [ (a, Map GlobalBlockName State , Map GlobalBlockName Value, [String]) ]
 allPaths funs prims (AllPaths m) =
-  [ (a, rwStates rw, rwRaises rw)
-    | (a,rw) <- runStateT initS $ runReaderT ro m ]
+  [ (a, rwStates rw, rwRaises rw, reverse (logLines rw))
+    | (a,!rw) <- runStateT initS $ runReaderT ro m ]
   where
   initS = AnalysisS { rwStates    = Map.empty
                     , rwRaises    = Map.empty
+                    , logLines    = []
                     }
 
   ro    = RO { roCode = funs, roPrims = prims }
@@ -144,13 +149,14 @@ singlePath ::
   Map FunId Function ->
   Map CFun PrimImpl ->
   SinglePath a ->
-  ([a], Map GlobalBlockName State, Map GlobalBlockName Value)
-singlePath funs prims (SinglePath m) = (as, rwStates rw, rwRaises rw)
+  ([a], Map GlobalBlockName State, Map GlobalBlockName Value, [String])
+singlePath funs prims (SinglePath m) = (as, rwStates rw, rwRaises rw, reverse(logLines rw))
   where
-  (as,rw) = runId $ runStateT initS $ findAll $ runReaderT ro m
+  (as,!rw) = runId $ runStateT initS $ findAll $ runReaderT ro m
 
   initS = AnalysisS { rwStates    = Map.empty
                     , rwRaises    = Map.empty
+                    , logLines    = []
                     }
 
   ro = RO { roCode = funs, roPrims = prims }
@@ -273,7 +279,7 @@ raisesError v =
      blockRaisesError rwCurBlock v
 
 blockRaisesError :: BlockName -> Value -> BlockM ()
-blockRaisesError b v =
+blockRaisesError _ v =
   do gb <- getCurGlobalBlockName
      sets_ $ \a -> a { rwRaises = Map.insertWith (\/) gb v (rwRaises a) }
 
@@ -407,7 +413,7 @@ getUpVal :: UpIx -> BlockM RegVal
 getUpVal u = do LocalState { upvals } <- getLocal
                 return $! case Map.lookup u upvals of
                             Just r  -> toVal r
-                            Nothing -> RegBottom
+                            Nothing -> error ("getUpVal: Unknown upvalue " ++ show u)
   where
   toVal r = case r of
               NoValue        -> RegBottom
@@ -437,7 +443,8 @@ newTableId =
   where
   emptyTable = TableV { tableFields = fConst (basic Nil)
                       , tableKeys   = bottom
-                      , tableValues = bottom
+                      , tableValues = basic Nil
+                      , tableMeta   = basic Nil
                       }
 
 
@@ -463,39 +470,24 @@ writeTableId t v = updGlobal $ \GlobalState { tables, .. } ->
 
 
 -- See: Modifying "Top" values
-setTable :: Maybe TableId -> SingleV -> Value -> BlockM ()
+setTable :: Maybe TableId -> Value -> Value -> BlockM ()
 setTable mb vi v =
   case mb of
     Just l  -> doSetTable l
     Nothing -> join $ options [ doSetTable =<< anyTableId, return () ]
   where
   doSetTable l =
-    do TableV { .. } <- readTableId l
-       writeTableId l $
-         case vi of
-
-           StringValue mb ->
-             case mb of
-               Nothing -> TableV { tableFields = letFunAll v tableFields
-                                 , .. }
-               Just ss -> TableV { tableFields = letFun (Field ss) v tableFields
-                                 , .. }
-
-           BasicValue Nil -> error "doSetTable: Nil key"
-
-           _ -> TableV { tableKeys   = fromSingleV vi \/ tableKeys
-                       , tableValues = v              \/ tableValues
-                       , .. }
-
+    do t <- readTableId l
+       writeTableId l (setTableEntry (vi,v) t)
 
 getTable :: Maybe TableId -> SingleV -> BlockM Value
 getTable Nothing _ = return topVal
 getTable (Just l) ti =
   do TableV { .. } <- readTableId l
      return $ case ti of
-                StringValue (Just xx) -> appFun tableFields (Field xx)
+                StringValue (Just xx) -> appFun tableFields xx
                 StringValue Nothing   -> appAll tableFields
-                _ | ti `elem` valueCases tableKeys -> basic Nil \/ tableValues
+                _ | ti `elem` valueCases tableKeys -> tableValues
                   | otherwise -> basic Nil
 
 
@@ -503,7 +495,7 @@ getTableMeta :: Maybe TableId -> BlockM Value
 getTableMeta Nothing = return (basic Nil \/ fromSingleV (TableValue Nothing))
 getTableMeta (Just l) =
   do TableV { .. } <- readTableId l
-     return (appFun tableFields Metatable)
+     return tableMeta
 
 
 
@@ -593,3 +585,14 @@ getCurGlobalBlockName :: BlockM GlobalBlockName
 getCurGlobalBlockName =
   do BlockS{..} <- BlockM M.get
      return (GlobalBlockName rwCurCallsite (QualifiedBlockName rwCurFunId rwCurBlock))
+
+------------------------------------------------------------------------
+-- Logging
+
+logError :: String -> BlockM ()
+logError = logTrace -- TODO: severities
+
+logTrace :: String -> BlockM ()
+logTrace msg = BlockM $ lift $ sets_ $ \s ->
+  let msgs = logLines s
+  in msgs `seq` s { logLines = msg : msgs }

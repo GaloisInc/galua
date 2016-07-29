@@ -1,9 +1,5 @@
-{-# Language CPP #-}
+{-# Language TemplateHaskell #-}
 {-# OPTIONS_GHC -Wall #-}
-
-#ifndef MIN_VERSION_Cabal
-#define MIN_VERSION_Cabal(x,y,z) 0
-#endif
 
 module Main (main) where
 
@@ -30,9 +26,8 @@ import Data.Graph (topSort)
 import Data.Version (showVersion)
 import System.FilePath
 
-#if MIN_VERSION_Cabal(1,24,0)
 import Distribution.Package
-#endif
+import Language.Haskell.TH
 
 main :: IO ()
 main = defaultMainWithHooks simpleUserHooks
@@ -118,10 +113,31 @@ threadedVersion lib =
     _ -> lib
 
 libPackageKey :: ComponentLocalBuildInfo -> String
-libPackageKey x = y
-  where
-#if MIN_VERSION_Cabal(1,24,0)
-  SimpleUnitId (ComponentId y) = componentUnitId x
-#else
-  [LibraryName y] = componentLibraries x
-#endif
+libPackageKey x = $(
+  do mbSUI <- lookupValueName "SimpleUnitId"
+     mbCI  <- lookupValueName "ComponentId"
+     mbCUI <- lookupValueName "componentUnitId"
+     mbLN  <- lookupValueName "LibraryName"
+     mbCL  <- lookupValueName "componentLibraries"
+     y     <- newName "y"
+
+     case (mbSUI, mbCI, mbCUI, mbLN, mbCL) of
+
+       -- Cabal-1.24
+       (Just sui, Just ci, Just cui, _, _) ->
+            [| case $(varE cui) x of
+                $(conP sui [conP ci [varP y]]) -> "HS" ++ $(varE y) |]
+
+       -- Cabal-1.22
+       (_,_,_,Just ln, Just cl) ->
+            [| case $(varE cl) x of
+                [$(conP ln [varP y])] -> $(varE y)
+                _ -> error "libPackageKey: bad componentLibraries" |]
+
+       _ -> fail "Setup.hs, libPackageKey: Unsupported Cabal version"
+  )
+  -- where
+  -- SimpleUnitId (ComponentId y) = componentUnitId x
+  -- [LibraryName y] = componentLibraries x
+
+

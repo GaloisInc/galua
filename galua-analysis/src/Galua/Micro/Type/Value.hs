@@ -3,25 +3,20 @@ module Galua.Micro.Type.Value
   (module Galua.Micro.Type.Value, FunId, subFun, noFun)
   where
 
-import Data.Map(Map)
-import Control.Monad (foldM)
+import           Control.Monad (foldM)
+import           Data.ByteString(ByteString)
+import           Data.Map(Map)
 import qualified Data.Map as Map
-import Data.Set(Set)
+import           Data.Maybe(fromMaybe,isNothing)
+import           Data.Set(Set)
 import qualified Data.Set as Set
-import Data.List(intercalate)
-import Data.Maybe(fromMaybe,isNothing)
-import Data.ByteString(ByteString)
-import GHC.Generics
-import Control.Monad (liftM3, liftM, ap)
-import Text.PrettyPrint(text)
-import Foreign.Ptr (FunPtr, Ptr)
-import Foreign.C.Types (CInt)
+import           Foreign.C.Types (CInt)
+import           Foreign.Ptr (FunPtr, Ptr)
+import           GHC.Generics
 
-import Language.Lua.Bytecode.Pretty(PP(..),pp)
 import Language.Lua.Bytecode.FunId
 
 import Galua.Micro.AST
-import Galua.LuaString(LuaString)
 
 
 -- | An abstract value.
@@ -34,11 +29,6 @@ data SingleV      = BasicValue        Type
 
 data Type         = Nil | Number | UserData | LightUserData | Thread
                     deriving (Show,Eq,Ord,Bounded,Enum)
-
--- | A field within a table.
-data FieldName    = Metatable           -- ^ The meta-table for a table
-                  | Field ByteString    -- ^ Normal field
-                    deriving (Show,Eq,Ord)
 
 -- | A block within a function
 data QualifiedBlockName = QualifiedBlockName FunId BlockName
@@ -139,14 +129,24 @@ data Value = Value
 
 -- | Information we keep about tables (i.e., "table types).
 data TableV = TableV
-  { tableFields  :: !(FieldName :-> Value)
-    -- ^ Types of specific fields.  Useful for tables that are more like
+  { tableFields  :: !(ByteString :-> Value)
+    -- ^ Types of string keyed fields.
+    -- Values stored at unknown string keys are kept in the "default"
+    -- case of the (:->) map. When looking up with an unknown string,
+    -- take the union of ALL fields and the default value.
+    --
+    -- Useful for tables that are more like
     -- records or modules (i.e., they contain a fixed set fields, each
     -- of a potentially different type)
+
+  , tableMeta    :: !Value
+    -- ^ Possible metadata values for the table.
+    -- This should only be nil or a table.
 
   , tableKeys    :: !Value
     -- ^ A general description of the keys of the table.
     -- Used to type tables used as containers.
+    -- Never contains STRINGs
 
   , tableValues  :: !Value
     -- ^ A general description of the values in the table.
@@ -232,6 +232,9 @@ valueCases Value { .. } =
 fromSingleV :: SingleV -> Value
 fromSingleV val =
   case val of
+    BooleanValue mb  -> bottom { valueBoolean  = case mb of
+                                                   Nothing -> MultipleValues
+                                                   Just b  -> OneValue b }
     BasicValue t     -> bottom { valueBasic    = Set.singleton t }
     StringValue mb   -> bottom { valueString   = case mb of
                                                   Nothing -> MultipleValues
@@ -630,7 +633,7 @@ findCFunName globalTable gs path =
 resolvePath1 :: GlobalState -> SingleV -> ByteString -> Maybe SingleV
 resolvePath1 gs (TableValue (Just tid)) label =
   do tab <- Map.lookup tid (tables gs)
-     let field = appFun (tableFields tab) (Field label)
+     let field = appFun (tableFields tab) label
      maybeSingleton (valueCases field)
 
 resolvePath1 _ _ _ = Nothing
@@ -643,3 +646,25 @@ liftSingleton :: Lift a -> Maybe a
 liftSingleton (OneValue x)   = Just x
 liftSingleton NoValue        = Nothing
 liftSingleton MultipleValues = Nothing
+
+
+--------------------------------------------------------------------------------
+
+setTableEntry :: (Value, Value) -> TableV -> TableV
+setTableEntry (k,v) t =
+  t { tableKeys   = kNoStr \/ tableKeys t
+    , tableValues = changeValues (tableValues t)
+    , tableFields = changeFields (tableFields t)
+    }
+  where
+    kNoStr = k { valueString = bottom }
+
+    changeValues
+      | kNoStr == bottom = id
+      | otherwise          = (\/) v
+
+    changeFields =
+      case valueString k of
+        NoValue        -> id
+        OneValue s     -> letFun s v
+        MultipleValues -> letFunAll v

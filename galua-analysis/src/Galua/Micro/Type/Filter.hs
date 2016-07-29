@@ -14,7 +14,7 @@ import Language.Lua.Bytecode.FunId
 
 import Galua.Micro.AST
 import Galua.Micro.Type.Eval
-         (analyze,Result(..),GlobalBlockName(..),QualifiedBlockName(..))
+         (Result(..),GlobalBlockName(..),QualifiedBlockName(..))
 
 filterFunctions :: Result -> Map FunId Function -> Map FunId Function
 filterFunctions res = Map.mapWithKey check
@@ -41,7 +41,7 @@ filterStmt used stmt =
   case stmt of
     Case e as d ->
       case (newAlts,dflt) of
-        ([], Just d)      -> [ Goto d]
+        ([], Just def)      -> [ Goto def]
         ([(_,b)],Nothing) -> [ Goto b ]
         _                 -> [ Case e newAlts dflt ]
       where
@@ -49,7 +49,7 @@ filterStmt used stmt =
       alt (t,b) = if isUsed b then Just (t,b) else Nothing
       dflt      = (\b -> if isUsed b then Just b else Nothing) =<< d
 
-    If p t e
+    If _ t e
       | isUsed t && isUsed e -> [ stmt ]
       | isUsed t             -> [ Goto t ]
       | isUsed e             -> [ Goto e ]

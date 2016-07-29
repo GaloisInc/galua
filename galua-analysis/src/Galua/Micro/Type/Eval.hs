@@ -5,13 +5,13 @@ module Galua.Micro.Type.Eval
   , valueCasesM
   ) where
 
+import           Control.Monad
 import           Data.Map ( Map )
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.ByteString as BS
 import           Text.PrettyPrint
-
-import           MonadLib hiding (raises)
+import           Debug.Trace
 
 import Galua.Micro.AST
 import Galua.Micro.Type.Value
@@ -19,9 +19,18 @@ import Galua.Micro.Type.Pretty()
 import Language.Lua.Bytecode.Pretty(PP(..),pp,blankPPInfo)
 import Galua.Micro.Type.Monad
 
-import Debug.Trace(trace)
+regCasesM :: Reg -> BlockM SingleV
+regCasesM reg =
+  do regVal <- getReg reg
+     value  <- regValCasesM regVal
+     assign reg (RegVal (fromSingleV value))
+     return value
 
+exprCasesM :: Expr -> BlockM SingleV
+exprCasesM = regValCasesM <=< evalExpr
 
+regValCasesM :: RegVal -> BlockM SingleV
+regValCasesM = valueCasesM <=< regValToVal
 
 valueCasesM :: AnalysisM m => Value -> m SingleV
 valueCasesM v = options (valueCases v)
@@ -79,7 +88,7 @@ raiseError v =
 
 evalStmt :: Stmt -> BlockM Next
 evalStmt stmt =
-  trace ("STMT: " ++ show (pp blankPPInfo stmt)) $
+  logTrace ("STMT: " ++ show (pp blankPPInfo stmt)) >>
 
   case stmt of
 
@@ -94,15 +103,15 @@ evalStmt stmt =
          return Continue
 
     LookupTable r t i ->
-      do TableValue l <- valueCasesM =<< regValToVal =<< getReg t
-         ti           <- valueCasesM =<< regValToVal =<< evalExpr i
+      do TableValue l <- regCasesM t
+         ti           <- exprCasesM i
          assign r =<< fmap RegVal (getTable l ti)
          return Continue
 
     SetTable t i v ->
       do val          <- regValToVal =<< evalExpr v
-         TableValue l <- valueCasesM =<< regValToVal =<< getReg  t
-         ti           <- valueCasesM =<< regValToVal =<< evalExpr i
+         TableValue l <- regCasesM t
+         ti           <- regValToVal =<< evalExpr i
          setTable l ti val
          return Continue
 
@@ -110,19 +119,20 @@ evalStmt stmt =
     SetTableList t _ ->
       do vs <- getList ListReg
          let vr = appListAll vs
-         TableValue tv <- valueCasesM =<< regValToVal =<< getReg t
-         setTable tv (BasicValue Number) vr
+         TableValue tv <- regCasesM t
+         setTable tv (basic Number) vr
          return Continue
 
     GetMeta r e ->
       -- Note: XXX: we don't really need to expand function values completely,
       -- as they all give the same result.
-      do v    <- valueCasesM =<< regValToVal =<< evalExpr e
-         GlobalState { basicMetas, stringMeta, funMeta } <- getGlobal
+      do v    <- exprCasesM e
+         GlobalState { basicMetas, stringMeta, funMeta, booleanMeta } <- getGlobal
          newV <- case v of
                    TableValue l -> getTableMeta l
                    BasicValue t     -> return (appFun basicMetas t)
                    StringValue _    -> return stringMeta
+                   BooleanValue{}   -> return booleanMeta
                    FunctionValue _  -> return funMeta
          when (newV == bottom) impossible
          assign r (RegVal newV)
@@ -234,7 +244,7 @@ evalStmt stmt =
     -- Functions
     Call fun ->
       do vs <- getList ListReg
-         FunctionValue fid <- valueCasesM =<< regValToVal =<< getReg fun
+         FunctionValue fid <- regCasesM fun
          next <- callFun fid vs
          case next of
            Left v   -> raiseError v
@@ -243,7 +253,7 @@ evalStmt stmt =
 
     TailCall fun ->
       do vs  <- getList ListReg
-         FunctionValue fid <- valueCasesM =<< regValToVal =<< getReg fun
+         FunctionValue fid <- regCasesM fun
          next <- callFun fid vs
          case next of
            Left v   -> raiseError v
@@ -365,9 +375,10 @@ evalStmt stmt =
 
 
 evalBlock :: AnalysisM m => GlobalBlockName -> State -> m (Next, State)
-evalBlock bn s = trace ("BLOCK: " ++ show (pp blankPPInfo bn)) $ inBlock bn s go
+evalBlock bn s = inBlock bn s go
   where
-  go = do next <- evalStmt =<< curStmt
+  go = do logTrace ("BLOCK: " ++ show (pp blankPPInfo bn))
+          next <- evalStmt =<< curStmt
           case next of
             Continue -> continue >> go
             _        -> return next
@@ -389,6 +400,8 @@ evalFun :: AnalysisM m =>
                                     m (Either Value (List Value), GlobalState)
 evalFun caller cid as glob =
   case functionFID funV of
+    NoValue -> impossible
+    MultipleValues -> error "evalFun: multiple values" -- todo: report intractibility
     OneValue (CFunImpl ptr) ->
       do mbPrim  <- getPrim ptr
          case mbPrim of
@@ -442,9 +455,13 @@ instance PP Result where
       | otherwise   = x <> colon $$ nest 2 (pp n y)
 
 {-
-analyze :: Map [Int] Function ->
-           FunId -> List Value -> GlobalState -> Result
-analyze funs fid args glob =
+analyze ::
+  Map FunId Function ->
+  Map CFun PrimImpl ->
+  ClosureId ->
+  List Value ->
+  GlobalState -> Result
+analyze funs prims cid args glob =
   Result { resReturns     = joins [ v | Right v <- nexts ]
          , resRaises      = joins [ v | Left  v <- nexts ]
          , resGlobals     = joins gs
@@ -453,17 +470,20 @@ analyze funs fid args glob =
          }
   where
   (nexts,gs)         = unzip rss
-  (rss, states,errs) = unzip3
-                     $ runAnalysisM code (FunId [])
-                     $ evalFun fid args glob
-
-  code   = Map.fromList [ (FunId x, y) | (x,y) <- Map.toList funs ]
+  (rss, states,errs)
+                     = unzip3
+                     $ allPaths funs prims
+                     $ evalFun initialCaller cid args glob
 -}
 
-analyze :: Map FunId Function ->
-           Map CFun PrimImpl ->
-           ClosureId -> List Value -> GlobalState -> Result
+analyze ::
+  Map FunId Function ->
+  Map CFun PrimImpl ->
+  ClosureId ->
+  List Value ->
+  GlobalState -> Result
 analyze funs prims cid args glob =
+  trace (unlines logs) $
   Result { resReturns     = joins [ v | Right v <- nexts ]
          , resRaises      = joins [ v | Left  v <- nexts ]
          , resGlobals     = joins gs
@@ -472,8 +492,6 @@ analyze funs prims cid args glob =
          }
   where
   (nexts,gs)          = unzip rss
-  (rss, states, errs) = singlePath funs prims
+  (rss, states, errs, logs)
+                      = singlePath funs prims
                       $ evalFun initialCaller cid args glob
-
-
-

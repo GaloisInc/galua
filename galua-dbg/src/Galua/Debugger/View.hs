@@ -20,7 +20,6 @@ import qualified Galua.Table as Tab
 import Galua.Reference
 import Galua.Debugger.Console
 import Galua.Debugger.View.Analysis(exportResult)
-import qualified Galua.Stack as Stack
 import qualified Galua.SizedVector as SV
 
 import qualified Galua.Micro.Primitives  as Analysis
@@ -28,33 +27,28 @@ import qualified Galua.Micro.AST         as Analysis
 import qualified Galua.Micro.Type.Import as Analysis
 import qualified Galua.Micro.Type.Value  as Analysis
 import qualified Galua.Micro.Type.Eval   as Analysis
-import qualified Galua.Micro.Type.Pretty as Analysis
 import qualified Galua.Micro.Translate   as Analysis
 
-import Language.Lua.Bytecode(Reg(..),Function(..),DebugInfo(..),OpCode(..),
-                              ProtoIx(..))
+import Language.Lua.Bytecode(Reg(..),Function(..),DebugInfo(..))
 import Language.Lua.Bytecode.FunId
 import Language.Lua.Bytecode.Pretty (ppOpCode,blankPPInfo,pp)
 import Language.Lua.Bytecode.Debug
-                            (lookupLocalName,inferFunctionName,lookupLineNumber)
+                            (lookupLocalName,lookupLineNumber)
 import Language.Lua.StringLiteral (constructStringLiteral)
 
 import qualified Data.Aeson as JS
 import qualified Data.Aeson.Types as JS
 import           Data.Aeson (toJSON, (.=))
-import           Data.List(intercalate,sortBy,nub,intersperse)
+import           Data.List(sortBy,nub,intersperse)
 import           Data.Foldable(toList)
 import           Data.Function(on)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString as B
-import           Data.Map (Map)
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.Sequence as Seq
 import qualified Data.Vector as Vector
-import qualified Data.Vector.Mutable as IOVector
-import           Data.String(fromString)
 import           Data.Maybe(fromMaybe)
 import           Data.Traversable(for)
 import           Data.Word(Word8)
@@ -208,9 +202,8 @@ analyze dbg n =
                            res  = Analysis.analyze funs prims cid args glob
                            txt  = show $ pp blankPPInfo res
                        save "out" funs
-                       writeFile "imported.txt" (show glob)
+                       writeFile "imported.txt" (show (cid, gid, glob))
                        writeFile "va.txt" txt
-                       putStrLn txt
                        return $ Just $ exportResult res
 
                   _ -> return Nothing
