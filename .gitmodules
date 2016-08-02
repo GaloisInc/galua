@@ -2,3 +2,6 @@
 	path = lib/hashtables
 	url = https://github.com/glguy/hashtables
 	branch = nextByIndex
+[submodule "lib/dwarf-tools"]
+	path = lib/dwarf-tools
+	url = https://github.com/GaloisInc/dwarf-tools.git

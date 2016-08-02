@@ -58,7 +58,9 @@ library
 
   if os(linux)
     build-depends:     process,
-                       unix
+                       unix,
+                       elf,
+                       dwarf-tools
 
   hs-source-dirs:      src
 
