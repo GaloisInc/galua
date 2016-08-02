@@ -27,6 +27,7 @@ library
                        Galua.Reference
                        Galua.Value
                        Galua.Stack
+                       Galua.NameResolution
                        Galua.SizedVector
                        Galua.LuaString
                        Galua.Table
@@ -55,6 +56,7 @@ library
                        pretty               >=1.1  && <1.2,
                        process              >=1.2  && <1.5,
                        deepseq              >=1.4  && <1.5,
+                       language-lua         >=0.9  && <0.10,
                        clock                >=0.7  && <0.8
 
   if os(linux)

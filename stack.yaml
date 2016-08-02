@@ -8,7 +8,7 @@ packages:
 resolver: lts-6.9
 extra-deps:
 - language-lua-0.9.0
-- config-value-0.4.0.2
+- config-value-0.5
 - config-value-getopt-0.1.0.0
 - lua-bc-0.1
 - elf-0.27
