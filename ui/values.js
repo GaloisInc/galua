@@ -40,7 +40,10 @@ function drawValue(dbgState,v) {
         var nm = $('<span/>').addClass('code_line uk-text-bold')
                              .text(' ' + v.name)
         if (v.file !== undefined && v.file !== null)
-          nm.attr('title', v.file)
+          var f = v.file
+          if (v.line !== undefined && v.line !== null)
+              f = f + ':' + v.line
+          nm.attr('title', f)
             .attr('data-uk-tooltip','')
         label.append(nm)
       }
