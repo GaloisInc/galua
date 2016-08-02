@@ -81,30 +81,9 @@ getCFunInfo fptr =
                                Nothing -> Nothing
                                Just n  -> n `seq` Just (show n)
                 }
+     print ("Resolving: " ++ show fptr)
      return $! obj
 
-
-{-
-     txt <- readProcess "addr2line" ["-p", "-f", "-e", exe, show fptr ] ""
-     case words txt of
-       [ a, "at", loc ]
-         | (fi , _ : li) <- break (== ':') loc ->
-            return CObjInfo { cObjAddr = addrName fptr
-                            , cObjName = known a
-                            , cObjFile = known fi
-                            , cObjLine = known li
-                            }
-
-       a : _ -> return CObjInfo { cObjAddr = addrName fptr
-                                , cObjName = known a
-                                , cObjFile = Nothing
-                                , cObjLine = Nothing
-                                }
-
-       [] -> return (noFunInfo fptr)
-  where
-  known x = guard (take 1 x /= "?") >> return x
--}
 
 #elif defined ( LUA_USE_MACOSX )
 getCFunInfo fptr =

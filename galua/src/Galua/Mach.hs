@@ -38,6 +38,8 @@ import           Galua.Value
 import           Galua.LuaString
 import qualified Galua.Stack as Stack
 import qualified Galua.SizedVector as SV
+import           Galua.Cache
+import           Galua.CObjInfo(CObjInfo,getCFunInfo)
 
 import           GHC.Exts (inline)
 
@@ -238,7 +240,13 @@ data MachineEnv = MachineEnv
 
   , machProfiling     :: {-# UNPACK #-} !ProfilingInfo
     -- ^ Profiling information
+
+  , machNameCache     :: {-# UNPACK #-} !(IORef (Cache CFun CObjInfo))
+    -- ^ A cache mapping addresses of C functions to human-readable
+    -- information about them.
   }
+
+
 
 data ProfilingInfo = ProfilingInfo
   { profCallCounters  :: {-# UNPACK #-} !(IORef (Map FunName Int))
@@ -439,6 +447,8 @@ newMachineEnv machConfig =
                                       machLuaServer machCServer ThreadRunning
      setTableRaw machRegistry (Number 1) (Thread machMainThreadRef)
      setTableRaw machRegistry (Number 2) (Table machGlobals)
+
+     machNameCache     <- liftIO (newIORef (cacheEmpty 50000))
      return MachineEnv { .. }
 
 newProfilingInfo :: IO ProfilingInfo
@@ -514,6 +524,8 @@ machNewThread =
      cMVar   <- getsMachEnv machCServer
      allocNewThread loc luaMVar cMVar ThreadNew
 
+ 
+
 data ExternalLuaState = ExternalLuaState
   { extLuaStateLuaServer   :: MVar CCallState
   , extLuaStateCServer     :: MVar CNextStep
@@ -569,6 +581,26 @@ machIsMainThread :: Reference Thread -> Mach Bool
 machIsMainThread t =
   do mainThread <- getsMachEnv machMainThreadRef
      return (t == mainThread)
+
+machLookupCFun :: CFun -> Mach CObjInfo
+machLookupCFun f =
+  do cacheRef <- getsMachEnv machNameCache
+     {- Note that there is a potential race when we are updating the cache.
+     We don't need to worry about it, because the cache is a "best effort"
+     strucutre and we should be getting reasonable results even if some
+     updates get lost. -}
+     liftIO $
+       do cache    <- readIORef cacheRef
+          case cacheLookup f cache of
+            Just (i,newCache) ->
+              do writeIORef cacheRef $! newCache
+                 return i
+            Nothing ->
+              do o <- getCFunInfo f
+                 writeIORef cacheRef $! cacheInsert f o cache
+                 return o
+
+
 
 -- | Build a closure for a function using the given value as its only upvalue
 chunkToClosure ::

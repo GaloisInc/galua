@@ -33,7 +33,7 @@ import Language.Lua.Bytecode.Debug
 import Language.Lua.Bytecode.FunId
 
 import Galua.Arguments
-import Galua.CObjInfo(CObjInfo(..),getCFunInfo)
+import Galua.CObjInfo(CObjInfo(..))
 import Galua.Mach
 import Galua.Number
 import Galua.Overloading
@@ -254,7 +254,7 @@ lua_pushcclosure_hs :: Ptr () -> CFun -> CInt -> IO CInt
 lua_pushcclosure_hs l func nup =
   reentry "lua_pushcclosure" [cArg func, cArg nup] l $ \args ->
   do upvals <- popN args $ fromIntegral nup
-     info   <- liftIO $ getCFunInfo func
+     info   <- machLookupCFun func
      vs     <- liftIO $ mapM newIORef $ Vector.fromList upvals
      c      <- machNewClosure (CFunction CFunName { cfunName = info
                                                   , cfunAddr = func}) vs

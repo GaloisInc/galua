@@ -33,6 +33,7 @@ library
                        Galua.Loc
                        Galua.Stepper
                        Galua.CObjInfo
+                       Galua.Cache
 
   other-modules:       CMath
                        Process
