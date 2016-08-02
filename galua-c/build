@@ -74,35 +74,40 @@ ARCH=$(uname -m)
 
 case $UNAME in
   "Linux" | "FreeBSD" )
+      TMP_DIR=$(mktemp -d .build.XXXX)
+
+      cut --complement -b 1 lua_api.txt | sort > $TMP_DIR/API
+
+      sed 's/^/--require-defined=/' <$TMP_DIR/API >$TMP_DIR/REQ
+
+      echo "{"                   >  $TMP_DIR/DYN
+      sed 's/$/;/' <$TMP_DIR/API >> $TMP_DIR/DYN
+      echo "};"                  >> $TMP_DIR/DYN
+
+
+      # XXX: Using --gc-sections causes a crash, for some reason?
+      # $LD -o $LIBNAME -arch $ARCH --relocatable --whole-archive \
+      #     @$TMP_DIR/REQ --gc-sections \
+      #  newstate.o liblualibs.a "${HS_LD_FLAGS[@]}"
+
       $LD -o $LIBNAME -arch $ARCH --relocatable --whole-archive \
-        newstate.o liblualibs.a "${HS_LD_FLAGS[@]}"
+       --retain-symbols-file=$TMP_DIR/API \
+       newstate.o liblualibs.a "${HS_LD_FLAGS[@]}"
 
-      # This only seems to work on 64-bit systems
-      # if [ "$ARCH" = "x86_64" ]; then
-      #     # First, we make all symbols local
-      #     SYM_FILE=$(mktemp SYMBOLS.XXXXXX)
-      #     nm $LIBNAME | awk '{ print $3 }' | grep -v '^$' > $SYM_FILE
-      #     objcopy --localize-symbols=$SYM_FILE $LIBNAME
 
-      #     # Next, we make the API global
-      #     # Our API has an extra `_` at the start of each name (for Mac) so drop it
-      #     sed 's/^.//' lua_api.txt > $SYM_FILE
-      #     objcopy --globalize-symbols=$SYM_FILE $LIBNAME
-      #     rm $SYM_FILE
 
-      #     strip --strip-unneeded $LIBNAME
+      nm -f posix $LIBNAME | awk '{print $1}' | sort > $TMP_DIR/ALL
+      comm -23 $TMP_DIR/ALL $TMP_DIR/API > $TMP_DIR/LOCALIZE
+      objcopy --localize-symbols=$TMP_DIR/LOCALIZE $LIBNAME
 
-      #     # Now, clean up unneeded stuff
-      #     objcopy --strip-unneeded $LIBNAME
-      # fi
 
       C_LD_FLAGS+=("-lpthread")
 
       # Build executable
       $CC main.c -g -o $TGT -I$TOP/galua-c/inplace/include/galua -std=gnu99 \
-              -rdynamic -L. -l$TGT "${C_LD_FLAGS[@]}"
-      # strip --strip-unneeded $TGT
-
+              -Wl,--dynamic-list=$TMP_DIR/DYN \
+              -L. -l$TGT "${C_LD_FLAGS[@]}"
+      rm -rf $TMP_DIR
   ;;
   "Darwin")
     $LD -r -o $LIBNAME \

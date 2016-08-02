@@ -104,7 +104,7 @@ data Debugger = Debugger
          should modify `dbgCommandCounter` -}
 
   , dbgCommandCounter :: !(IORef Word64)
-    {- ^ Every time we do a commond, we should increment this counter.
+    {- ^ Every time we do a command, we should increment this counter.
     This is useful to implement polling from the outside world,
     where the client can know if there have been any commands executed
     since last time they looked. -}
@@ -116,8 +116,10 @@ data Debugger = Debugger
 
 
   , dbgIdleReason :: !(IORef IdleReason)
+    -- ^ Why are we not running
 
   , dbgStateVM   :: !(IORef VMState)                -- ^ The interpreter state
+
   , dbgBreaks    :: !(IORef (Set (Int,FunId)))      -- ^ Static break points
   , dbgBreakOnError :: !(IORef Bool)
     -- ^ Should we stop automatically, when we encounter an error.
@@ -131,6 +133,7 @@ data Debugger = Debugger
   , dbgWatches   :: !(IORef (Seq ValuePath))       -- ^ Watched values
 
   , dbgExportable :: !(IORef ExportableState)
+    -- ^ Things that may be expanded further.
   }
 
 
@@ -337,8 +340,7 @@ setValue vp v =
 -- | All loaded top-level functions.
 data Chunks = Chunks
   { topLevelChunks :: Map Int ChunkInfo
-    -- ^ The key is the chunk id.  The top-level function has for chunk @k@
-    -- is @[k]@.
+    -- ^ The key is the chunk id.  The top-level id for chunk @k@ is @[k]@.
   , allFunNames    :: Map FunId FunVisName
   }
 

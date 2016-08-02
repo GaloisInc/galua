@@ -1,12 +1,23 @@
-{-# LANGUAGE CPP #-}
+{-# LANGUAGE CPP, OverloadedStrings #-}
 module Galua.CObjInfo ( CObjInfo(..), getCFunInfo, noFunInfo ) where
 
 import Foreign(FunPtr,nullFunPtr)
 
 #if defined (LUA_USE_LINUX)
-import Control.Monad(guard)
+import Data.Elf
+import DWARF.Basics(sections,Endian(..))
+import DWARF.Section.Line(File(..))
+import DWARF.Addr2Line(Info(..),addr2line)
+import Data.List(isPrefixOf)
 import System.Posix.Files(readSymbolicLink)
-import System.Process(readProcess)
+import qualified Data.Map as Map
+import qualified Data.Text.Encoding as Text (decodeUtf8)
+import qualified Data.Text as Text
+import Foreign.Ptr
+import qualified Data.ByteString as BS
+
+-- import Control.Monad(guard)
+-- import System.Process(readProcess)
 #endif
 
 #if defined (LUA_USE_MACOSX)
@@ -16,11 +27,11 @@ import Galua.DlInfo(DlInfo(..),funPtrInfo)
 
 
 data CObjInfo = CObjInfo
-  { cObjAddr  :: String
-  , cObjName  :: Maybe String
-  , cObjFile  :: Maybe String
-  , cObjLine  :: Maybe String
-  }
+  { cObjAddr  :: !String
+  , cObjName  :: !(Maybe String)
+  , cObjFile  :: !(Maybe String)
+  , cObjLine  :: !(Maybe String)
+  } deriving Show
 
 noFunInfo :: FunPtr a -> CObjInfo
 noFunInfo fptr = CObjInfo { cObjAddr = addrName fptr
@@ -38,10 +49,42 @@ addrName fp = if fp == nullFunPtr then "(entry)" else show fp
 
 
 getCFunInfo :: FunPtr a -> IO CObjInfo
--- defined ( LUA_USE_LINUX )
-#if 0
+#if defined ( LUA_USE_LINUX )
 getCFunInfo fptr =
   do exe <- readSymbolicLink "/proc/self/exe"
+     bytes <- BS.readFile exe
+     let elf = parseElf bytes
+         end = case elfData elf of
+                 ELFDATA2LSB -> LittleEndian
+                 ELFDATA2MSB -> BigEndian
+         secs = sections end $ Map.fromList [ (name, elfSectionData s)
+                                            | s <- elfSections elf
+                                            , let name = elfSectionName s
+                                            , ".debug_" `isPrefixOf` name ]
+         addr     = fromIntegral (ptrToIntPtr (castFunPtrToPtr fptr))
+         info     = addr2line secs addr
+     let obj = CObjInfo
+                { cObjAddr = addrName fptr
+                , cObjName =
+                    case function info of
+                      Nothing -> Nothing
+                      Just b  -> let s = Text.decodeUtf8 b
+                                 in s `seq` Just (Text.unpack s)
+                , cObjFile =
+                     case file info of
+                       Nothing -> Nothing
+                       Just f  -> let s = Text.concat [ Text.decodeUtf8 (directory f)
+                                                      , "/"
+                                                      , Text.decodeUtf8 (fileName f) ]
+                                  in s `seq` Just (Text.unpack s)
+                , cObjLine = case line info of
+                               Nothing -> Nothing
+                               Just n  -> n `seq` Just (show n)
+                }
+     return $! obj
+
+
+{-
      txt <- readProcess "addr2line" ["-p", "-f", "-e", exe, show fptr ] ""
      case words txt of
        [ a, "at", loc ]
@@ -61,6 +104,7 @@ getCFunInfo fptr =
        [] -> return (noFunInfo fptr)
   where
   known x = guard (take 1 x /= "?") >> return x
+-}
 
 #elif defined ( LUA_USE_MACOSX )
 getCFunInfo fptr =
