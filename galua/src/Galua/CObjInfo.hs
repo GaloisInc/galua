@@ -81,7 +81,6 @@ getCFunInfo fptr =
                                Nothing -> Nothing
                                Just n  -> n `seq` Just (show n)
                 }
-     print ("Resolving: " ++ show fptr)
      return $! obj
 
 
