@@ -5,12 +5,13 @@ import           Galua.Mach
 import           Galua.Value
 import           Galua.Overloading
 
+import qualified Galua.Util.SizedVector as SV
+
 import           Control.Concurrent
 import           Data.Traversable
 import           Control.Monad.IO.Class
 import           Data.Foldable
 import           Data.IORef
-import qualified Galua.SizedVector as SV
 
 execCFunction :: CFunName -> Mach a
 execCFunction cfun =

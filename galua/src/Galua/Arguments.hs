@@ -10,7 +10,7 @@ import           Galua.Number
 import           Galua.Reference (Reference)
 import           Galua.Value
 import           Galua.LuaString
-import qualified Galua.SizedVector as SV
+import qualified Galua.Util.SizedVector as SV
 
 maxstack :: Int
 maxstack = 1000000

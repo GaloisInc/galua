@@ -1,5 +1,5 @@
 {-# LANGUAGE RecordWildCards, BangPatterns #-}
-module Galua.Table
+module Galua.Util.Table
   ( Table
   , newTable
   , setTableMeta

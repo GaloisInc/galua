@@ -26,15 +26,16 @@ library
                        Galua.Overloading
                        Galua.Reference
                        Galua.Value
-                       Galua.Stack
                        Galua.NameResolution
-                       Galua.SizedVector
                        Galua.LuaString
-                       Galua.Table
-                       Galua.Loc
                        Galua.Stepper
                        Galua.CObjInfo
-                       Galua.Cache
+
+                       Galua.Util.Cache
+                       Galua.Util.Table
+                       Galua.Util.Loc
+                       Galua.Util.Stack
+                       Galua.Util.SizedVector
 
   other-modules:       CMath
                        Process

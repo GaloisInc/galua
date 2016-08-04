@@ -16,11 +16,11 @@ import Galua.Number
 import Galua.LuaString
 import Galua.Value
 import Galua.DlInfo
-import qualified Galua.Table as Tab
 import Galua.Reference
 import Galua.Debugger.Console
 import Galua.Debugger.View.Analysis(exportResult)
-import qualified Galua.SizedVector as SV
+import qualified Galua.Util.Table as Tab
+import qualified Galua.Util.SizedVector as SV
 
 import qualified Galua.Micro.Primitives  as Analysis
 import qualified Galua.Micro.AST         as Analysis

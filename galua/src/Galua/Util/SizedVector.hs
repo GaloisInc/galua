@@ -1,5 +1,5 @@
 {-# LANGUAGE RecordWildCards #-}
-module Galua.SizedVector
+module Galua.Util.SizedVector
   ( SizedVector
   , new
   , push

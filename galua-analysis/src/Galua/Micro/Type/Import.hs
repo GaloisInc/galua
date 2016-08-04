@@ -9,15 +9,15 @@ import           Control.Monad.IO.Class(MonadIO(..))
 import           Data.Map ( Map )
 import qualified Data.Map as Map
 
+import qualified Galua.Util.Table as C (tableToList,getTableMeta)
+import           Language.Lua.Bytecode(UpIx(..))
 
 
 import qualified Galua.Mach             as C -- concrete
 import qualified Galua.Value            as C hiding (getTableMeta)
 import qualified Galua.Reference        as C
-import qualified Galua.Table            as C (tableToList,getTableMeta)
 import           Galua.LuaString(toByteString)
 import qualified Galua.Micro.Type.Value as A -- abstract
-import           Language.Lua.Bytecode(UpIx(..))
 
 
 importClosure ::

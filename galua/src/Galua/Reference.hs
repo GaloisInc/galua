@@ -25,10 +25,10 @@ import qualified Data.IntMap as IntMap
 import Data.IntMap (IntMap)
 
 import Language.Lua.Bytecode.FunId(FunId)
-import Galua.Loc
+import Galua.Util.Loc
 import {-# SOURCE #-} Galua.Mach (Thread)
 import {-# SOURCE #-} Galua.Value (CFunName,Closure, Value, UserData)
-import Galua.Table(Table)
+import Galua.Util.Table(Table)
 
 type WeakMap a = IntMap (Weak (IORef a))
 

@@ -32,6 +32,9 @@ import Language.Lua.Bytecode
 import Language.Lua.Bytecode.Debug
 import Language.Lua.Bytecode.FunId
 
+
+import qualified Galua.Util.SizedVector as SV
+
 import Galua.Arguments
 import Galua.CObjInfo(CObjInfo(..))
 import Galua.Mach
@@ -40,7 +43,6 @@ import Galua.Overloading
 import Galua.Reference
 import Galua.Value
 import Galua.LuaString
-import qualified Galua.SizedVector as SV
 
 #include "lua.h"
 

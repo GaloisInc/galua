@@ -1,7 +1,7 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -funbox-strict-fields #-}
 -- | Implements a cache with a least-recently-used clean-up policy.
-module Galua.Cache
+module Galua.Util.Cache
   ( Cache
   , cacheEmpty
   , cacheInsert

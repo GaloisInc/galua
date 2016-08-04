@@ -33,13 +33,14 @@ import           Language.Lua.Bytecode.FunId
 import           Language.Lua.Bytecode.Parser
 
 import           Galua.Reference
-import           Galua.Stack(Stack)
 import           Galua.Value
 import           Galua.LuaString
-import qualified Galua.Stack as Stack
-import qualified Galua.SizedVector as SV
-import           Galua.Cache
 import           Galua.CObjInfo(CObjInfo,getCFunInfo)
+import           Galua.Util.Stack(Stack)
+import qualified Galua.Util.Stack as Stack
+import qualified Galua.Util.SizedVector as SV
+import           Galua.Util.Cache
+
 
 import           GHC.Exts (inline)
 
