@@ -14,12 +14,14 @@ import           Data.List(foldl',union)
 import           Data.Maybe(maybeToList)
 import           Data.Foldable(toList)
 
--- | Compute what registers contains references at the *beginning* of a block
+-- | Compute what registers contains references at the beginning and end
+-- of each block.
 analyze :: OP.Reg -> Map BlockName (Vector Stmt) -> Map BlockName (Set OP.Reg)
-analyze lim orig = Map.mapWithKey (\b _ -> incomingRefs prog endOfBlock b) orig
+analyze lim orig = Map.mapWithKey (\b _ -> atStart b) orig
   where
   prog       = makeProg lim orig
   endOfBlock = flowAnalysis prog
+  atStart b  = incomingRefs prog endOfBlock b
 
 
 makeProg :: OP.Reg -> Map BlockName (Vector Stmt) -> Prog
@@ -82,6 +84,8 @@ incomingRefs prog esc l =
                   | p <- Map.findWithDefault [] l (predecessors prog) ]
 
 
+-- | For each block, we are tracking which registers contain references
+-- at *the end* of each block.
 flowAnalysis :: Prog -> RefMap
 flowAnalysis fun = go (Map.keysSet (blocks fun)) Map.empty
   where

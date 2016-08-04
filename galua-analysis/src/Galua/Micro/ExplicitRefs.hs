@@ -26,7 +26,7 @@ explicitBlocks refs blocks = generate $ mapM_ oneBlock $ Map.toList blocks
   where
   oneBlock (name, stmts) =
     let rs = Map.findWithDefault Set.empty name refs
-    in inBlock name (runRefs rs (mapM_ refStmt (Vector.toList stmts)))
+    in inBlock name (runRefs refs rs (mapM_ refStmt (Vector.toList stmts)))
 
 
 
@@ -37,7 +37,7 @@ explicitBlocks refs blocks = generate $ mapM_ oneBlock $ Map.toList blocks
 -- change during 'newRef'. In the case of compiling NewClosure it
 -- can occur that we need to assign to a reference immediately after
 -- creating it.
-newtype R a = R (Set OP.Reg -> M (a, Set OP.Reg))
+newtype R a = R (Map BlockName (Set OP.Reg) -> Set OP.Reg -> M (a, Set OP.Reg))
 
 instance Functor R where
   fmap  = liftM
@@ -47,21 +47,21 @@ instance Applicative R where
   (<*>) = ap
 
 instance Monad R where
-  R m >>= f = R (\refs -> do (a,refs1) <- m refs
-                             let R m1 = f a
-                             m1 refs1)
+  R m >>= f = R (\rs refs -> do (a,refs1) <- m rs refs
+                                let R m1 = f a
+                                m1 rs refs1)
 
 reader :: (Set OP.Reg -> M a) -> R a
-reader f = R $ \refs -> do x <- f refs
-                           return (x,refs)
+reader f = R $ \_ refs -> do x <- f refs
+                             return (x,refs)
 
 isRef :: Reg -> R Bool
 isRef r = case r of
             Reg r' -> reader (\refs -> return (r' `Set.member` refs))
             _      -> return False
 
-runRefs :: Set OP.Reg -> R a -> M a
-runRefs refs (R f) = fmap fst (f refs)
+runRefs :: Map BlockName (Set OP.Reg) -> Set OP.Reg -> R a -> M a
+runRefs allRefs refs (R f) = fmap fst (f allRefs refs)
 
 doM :: M a -> R a
 doM m = reader (const m)
@@ -78,7 +78,7 @@ newTMP :: R Reg
 newTMP = doM (M.newPhaseTMP 2)
 
 newRef :: IsExpr e => Reg -> e -> R ()
-newRef r e = R $ \refs ->
+newRef r e = R $ \_ refs ->
   do M.emit (NewRef r (toExpr e))
      let refs' = case r of
                    Reg reg -> Set.insert reg refs
@@ -90,6 +90,22 @@ readRef r e = emit (ReadRef r (toExpr e))
 
 writeRef :: (IsExpr e1, IsExpr e2) => e1 -> e2 -> R ()
 writeRef e1 e2 = emit (WriteRef (toExpr e1) (toExpr e2))
+
+endBlock :: BlockName -> R BlockName
+endBlock tgt =
+  do newRefs <- shouldBeRefs
+     if Set.null newRefs
+       then return tgt
+       else doM $ M.inNewBlock_ $
+               do let toRef r = M.emit (NewRef (Reg r) (toExpr r))
+                  mapM_ toRef newRefs
+                  M.emit (Goto tgt)
+  where
+  shouldBeRefs =
+    R $ \allRs nowRs ->
+         return ( Set.difference (Map.findWithDefault Set.empty tgt allRs) nowRs
+                , nowRs
+                )
 
 
 
@@ -159,15 +175,25 @@ refStmt stmt =
       do e' <- readExpr e
          emit $ Raise e'
 
-    Goto xs -> emit (Goto xs)
+
+    Goto l -> do l' <- endBlock l
+                 emit (Goto l')
 
     Case e as d ->
       do e' <- readExpr e
-         emit $ Case e' as d
+         let alt (v,b) = do b' <- endBlock b
+                            return (v,b)
+         as' <- mapM alt as
+         d'  <- mapM endBlock d
+         emit $ Case e' as' d'
 
     If p t f ->
       do p' <- readProp p
-         emit $ If p' t f
+         t' <- endBlock t
+         f' <- endBlock f
+         emit $ If p' t' f'
+
+
 
     Call f ->
       do f' <- readReg f
