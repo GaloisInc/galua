@@ -113,7 +113,8 @@ performFunCall ::
 performFunCall vm f vs mb k =
   do liftIO (bumpCallCounter f vm)
      (newEnv, next) <- enterClosure f vs
-     liftIO (recordProfEntry (vmMachineEnv vm) (funValueName (execFunction newEnv)))
+     liftIO (recordProfEntry (vmMachineEnv vm)
+                             (funValueName (execFunction newEnv)))
 
      vmUpdateThread vm $ \th ->
        let frame       = CallFrame (stPC th) (stExecEnv th) (fmap handlerK mb) k

@@ -271,11 +271,18 @@ data MachConfig = MachConfig
 
 data ExecEnv = ExecEnv
   { execStack    :: !(SV.SizedVector (IORef Value))
+
+    -- The currently executing function
   , execUpvals   :: !(Vector (IORef Value))
   , execFunction :: !FunctionValue
   , execVarargs  :: !(IORef [Value])
-  , execApiCall  :: !(IORef ApiCallStatus)
   , execClosure  :: !Value
+    -- ^ This is because the debug API can return the current closure.
+
+    -- Interaction with the C world
+  , execApiCall  :: !(IORef ApiCallStatus)
+
+    -- Profiling
   , execCreateTime :: {-# UNPACK #-} !Clock.TimeSpec
   , execChildTime :: {-# UNPACK #-} !Clock.TimeSpec
   }
