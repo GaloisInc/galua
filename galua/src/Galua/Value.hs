@@ -74,11 +74,13 @@ import {-# SOURCE #-} Galua.Mach (Thread,Mach)
 import Language.Lua.Bytecode (Function(..))
 import Language.Lua.Bytecode.Pretty(PP(..))
 import Language.Lua.Bytecode.FunId
+
+import qualified Galua.Util.Table as Tab
+
 import Galua.Number
 import Galua.Reference
 import Galua.CObjInfo(CObjInfo,noFunInfo)
 import Galua.LuaString
-import qualified Galua.Table as Tab
 
 data Value
   = Bool     !Bool

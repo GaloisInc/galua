@@ -13,10 +13,11 @@ import           Galua.Value
 import           Galua.Reference
 import           Galua.CallIntoC
 import           Galua.OpcodeInterpreter (execute)
-import           Galua.Stack (Stack)
 import           Galua.LuaString
-import qualified Galua.Stack as Stack
-import qualified Galua.SizedVector as SV
+
+import           Galua.Util.Stack (Stack)
+import qualified Galua.Util.Stack as Stack
+import qualified Galua.Util.SizedVector as SV
 
 import           Language.Lua.Bytecode (Function(..))
 

@@ -13,6 +13,7 @@ import           Data.Foldable
 import           Data.IORef
 import qualified Data.Vector as Vector
 
+import qualified Galua.Util.SizedVector as SV
 
 import           Language.Lua.Bytecode
 import           Language.Lua.Bytecode.FunId
@@ -21,7 +22,6 @@ import           Galua.Overloading
 import           Galua.Mach
 import           Galua.Number
 import           Galua.LuaString
-import qualified Galua.SizedVector as SV
 
 -- | Compute the 'Value' corresponding to a bytecode file 'Constant'.
 constantValue :: Constant -> IO Value

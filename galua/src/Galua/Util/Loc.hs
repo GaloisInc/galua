@@ -1,4 +1,4 @@
-module Galua.Loc
+module Galua.Util.Loc
   ( -- * Types
     Loc, MonoLoc
 

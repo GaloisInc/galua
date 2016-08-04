@@ -1,7 +1,8 @@
 {-# LANGUAGE RecordWildCards, FlexibleInstances, MultiWayIf #-}
 module Galua.Micro.Eval where
 
-import           Data.IORef(IORef,newIORef,modifyIORef',modifyIORef,readIORef,writeIORef)
+import           Data.IORef(IORef,newIORef,modifyIORef',modifyIORef,readIORef,
+                            writeIORef)
 import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
 import           Data.Vector.Mutable(IOVector)
@@ -15,6 +16,7 @@ import           Control.Monad(zipWithM_,(<=<))
 
 import qualified Language.Lua.Bytecode as OP
 import           Language.Lua.Bytecode.FunId
+
 import           Galua.Reference(Reference,NameM,readRef,RefLoc(..),CodeLoc(..))
 import           Galua.Value
 import           Galua.Number(Number(..),wordshiftL,wordshiftR,nummod,

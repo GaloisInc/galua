@@ -41,7 +41,7 @@ import           Galua.Mach
 import           Galua.Stepper
 import           Galua.Reference
 import           Galua.Value
-import qualified Galua.SizedVector as SV
+import qualified Galua.Util.SizedVector as SV
 
 import           Language.Lua.Bytecode(Function(..))
 import           Language.Lua.Bytecode.Debug

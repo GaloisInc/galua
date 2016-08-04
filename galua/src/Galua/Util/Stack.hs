@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveFunctor, DeriveTraversable #-}
 
-module Galua.Stack
+module Galua.Util.Stack
   ( Stack
   , empty
   , push
@@ -8,7 +8,7 @@ module Galua.Stack
   , at
   ) where
 
-import Galua.Loc(MonoLoc)
+import Galua.Util.Loc(MonoLoc)
 import Data.Foldable
 
 data Stack a = Stack !Int ![a] -- Size, values
