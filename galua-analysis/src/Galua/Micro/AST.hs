@@ -248,7 +248,7 @@ instance PP Stmt where
       Arith2 r op x y -> pp' r <+> "=" <+> pp' x <+> pp' op <+> pp' y
 
       Call f        -> "list =" <+> pp' f <> "(list)"
-      TailCall f    -> "return" <+> pp' f <> "()"
+      TailCall f    -> "return" <+> pp' f <> "(list)"
       Return        -> "return"
 
 
