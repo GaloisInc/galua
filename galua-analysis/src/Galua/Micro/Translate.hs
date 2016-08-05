@@ -20,9 +20,10 @@ import           Galua.Micro.AST
 import           Galua.Micro.Translate.Monad
 import           Galua.Micro.Translate.AnalyzeRefs(analyze)
 import           Galua.Micro.Translate.ExplicitRefs(explicitBlocks)
+import           Galua.Micro.Translate.JoinBlocks(joinBlocks)
 
 translate :: OP.Function -> Function
-translate fun = pass1 { functionCode = explicitBlocks refs code1 }
+translate fun = joinBlocks pass1 { functionCode = explicitBlocks refs code1 }
   where
   pass1 = translatePass1 fun
   code1 = functionCode pass1
