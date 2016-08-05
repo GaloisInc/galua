@@ -1,5 +1,5 @@
 {-# LANGUAGE RecordWildCards, FlexibleInstances, ExistentialQuantification #-}
-module Galua.Micro.Monad where
+module Galua.Micro.Translate.Monad where
 
 import Galua.Micro.AST
 

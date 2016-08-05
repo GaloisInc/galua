@@ -1,6 +1,6 @@
 -- | Rewrite the staments in a Lua program, to add explicit reference
 -- allocation, reference reads, and writes.
-module Galua.Micro.ExplicitRefs (explicitBlocks) where
+module Galua.Micro.Translate.ExplicitRefs (explicitBlocks) where
 
 import           Data.Set (Set)
 import qualified Data.Set as Set
@@ -12,8 +12,8 @@ import           Control.Monad(liftM,ap)
 
 import qualified Language.Lua.Bytecode as OP
 import           Galua.Micro.AST
-import           Galua.Micro.Monad (M,generate,inBlock)
-import qualified Galua.Micro.Monad as M
+import           Galua.Micro.Translate.Monad (M,generate,inBlock)
+import qualified Galua.Micro.Translate.Monad as M
 
 
 

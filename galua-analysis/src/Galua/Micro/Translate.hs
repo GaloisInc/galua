@@ -17,9 +17,9 @@ import qualified Data.Map as Map
 import Language.Lua.Bytecode.FunId
 
 import           Galua.Micro.AST
-import           Galua.Micro.Monad
-import           Galua.Micro.AnalyzeRefs(analyze)
-import           Galua.Micro.ExplicitRefs(explicitBlocks)
+import           Galua.Micro.Translate.Monad
+import           Galua.Micro.Translate.AnalyzeRefs(analyze)
+import           Galua.Micro.Translate.ExplicitRefs(explicitBlocks)
 
 translate :: OP.Function -> Function
 translate fun = pass1 { functionCode = explicitBlocks refs code1 }

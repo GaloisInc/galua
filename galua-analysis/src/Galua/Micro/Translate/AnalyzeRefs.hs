@@ -1,6 +1,6 @@
 -- | Determines what registers are captured into closures.
 -- These registers are represented as references to values in the heap.
-module Galua.Micro.AnalyzeRefs where
+module Galua.Micro.Translate.AnalyzeRefs where
 
 import qualified Language.Lua.Bytecode as OP
 import           Galua.Micro.AST
