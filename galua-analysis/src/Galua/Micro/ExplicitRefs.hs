@@ -20,8 +20,8 @@ import qualified Galua.Micro.Monad as M
 --------------------------------------------------------------------------------
 
 explicitBlocks :: Map BlockName (Set OP.Reg) ->
-                  Map BlockName (Vector Stmt) ->
-                  Map BlockName (Vector Stmt)
+                  Map BlockName (Vector BlockStmt) ->
+                  Map BlockName (Vector BlockStmt)
 explicitBlocks refs blocks = generate $ mapM_ oneBlock $ Map.toList blocks
   where
   oneBlock (name, stmts) =
@@ -139,9 +139,9 @@ readExpr expr =
 readProp :: Prop -> R Prop
 readProp (Prop p es) = Prop p <$> mapM readExpr es
 
-refStmt :: Stmt -> R ()
+refStmt :: BlockStmt -> R ()
 refStmt stmt =
-  case stmt of
+  case stmtCode stmt of
 
     Assign r e ->
       do e' <- readExpr e

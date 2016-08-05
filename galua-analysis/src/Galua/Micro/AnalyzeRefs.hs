@@ -16,7 +16,8 @@ import           Data.Foldable(toList)
 
 -- | Compute what registers contains references at the beginning and end
 -- of each block.
-analyze :: OP.Reg -> Map BlockName (Vector Stmt) -> Map BlockName (Set OP.Reg)
+analyze :: OP.Reg -> Map BlockName (Vector BlockStmt) ->
+                                              Map BlockName (Set OP.Reg)
 analyze lim orig = Map.mapWithKey (\b _ -> atStart b) orig
   where
   prog       = makeProg lim orig
@@ -24,7 +25,7 @@ analyze lim orig = Map.mapWithKey (\b _ -> atStart b) orig
   atStart b  = incomingRefs prog endOfBlock b
 
 
-makeProg :: OP.Reg -> Map BlockName (Vector Stmt) -> Prog
+makeProg :: OP.Reg -> Map BlockName (Vector BlockStmt) -> Prog
 makeProg lim mp = Prog { predecessors = preds
                        , blocks       = blks
                        , maxReg       = lim
@@ -33,7 +34,7 @@ makeProg lim mp = Prog { predecessors = preds
   blks = fmap toBlock mp
 
   getNext stmt =
-    case stmt of
+    case stmtCode stmt of
       Goto l      -> [l]
       If _ t f    -> [t,f]
       Case _ as d -> map snd as ++ maybeToList d
@@ -60,7 +61,7 @@ data Prog = Prog { predecessors :: Map BlockName [ BlockName ]
                  }
 
 data Block  = Block { blockNext   :: [ BlockName ]
-                    , blockStmts  :: Vector Stmt
+                    , blockStmts  :: Vector BlockStmt
                     }
 
 -- | Given a set of registers that are known to be references at the
@@ -150,6 +151,9 @@ instance (Uses a, Uses b, Uses c) => Uses (a,b,c) where
 instance Uses Prop where
   uses (Prop _ es) = uses es
 
+instance Uses BlockStmt where
+  uses = uses . stmtCode
+
 instance Uses Stmt where
   uses stmt =
     case stmt of
@@ -192,9 +196,9 @@ data Simple = Use     OP.Reg
             | Capture OP.Reg
             | Close   OP.Reg
 
-cvt :: OP.Reg -> Stmt -> [Simple]
+cvt :: OP.Reg -> BlockStmt -> [Simple]
 cvt lim stmt =
-  case stmt of
+  case stmtCode stmt of
     CloseStack (Reg r) -> [ Close i | i <- [ r .. lim ] ]
     CloseStack _       -> error "CloseStack: non OP.Reg"
 

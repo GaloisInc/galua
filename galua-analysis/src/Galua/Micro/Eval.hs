@@ -40,7 +40,7 @@ data Frame = Frame { regs         :: !(IOVector V)
                    , metaTables   :: !MetaTables
                    , ourFID       :: !FunId
                    , subFuns      :: !(Vector OP.Function)
-                   , ourCode      :: !(Map BlockName (Vector Stmt))
+                   , ourCode      :: !(Map BlockName (Vector BlockStmt))
                    , ourCaller    :: !CodeLoc
                    }
 
@@ -235,9 +235,9 @@ isBool val =
 
 
 
-runStmt :: NameM m => Frame -> Int -> Stmt -> m Next
+runStmt :: NameM m => Frame -> Int -> BlockStmt -> m Next
 runStmt f@Frame { .. } pc stmt =
-  case stmt of
+  case stmtCode stmt of
     Assign r e    -> do liftIO (setReg f r =<< getExpr f e)
                         return Continue
 
@@ -478,14 +478,14 @@ runStmt f@Frame { .. } pc stmt =
 --------------------------------------------------------------------------------
 
 
-runStmtAt :: NameM m => Frame -> Vector Stmt -> Int -> m Next
+runStmtAt :: NameM m => Frame -> Vector BlockStmt -> Int -> m Next
 runStmtAt f curBlock pc =
   case curBlock Vector.!? pc of
     Just stmt -> runStmt f pc stmt
     Nothing   -> crash ("Invalid PC: " ++ show pc)
 
 
-run :: NameM m => Frame -> Vector Stmt -> Int -> m (Either Value [Value])
+run :: NameM m => Frame -> Vector BlockStmt -> Int -> m (Either Value [Value])
 run f curBlock pc =
   do next <- runStmtAt f curBlock pc
      case next of

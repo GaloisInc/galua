@@ -21,7 +21,7 @@ import           Data.Map (Map)
 import qualified Data.Map as Map
 
 data Function = Function
-  { functionCode :: Map BlockName (Vector Stmt)
+  { functionCode :: Map BlockName (Vector BlockStmt)
   } deriving Show
 
 data Reg        = Reg !OP.Reg
@@ -51,6 +51,10 @@ data Expr       = EReg Reg
                 | ELit Literal
                 | EUp  UpIx
                   deriving Show
+
+data BlockStmt = BlockStmt { stmtPC   :: !Int   -- ^ PC in original program
+                           , stmtCode :: !Stmt
+                           } deriving Show
 
 data Stmt =
 
@@ -212,6 +216,9 @@ instance PP ListReg where
   pp _ ArgReg = "arg"
   pp _ ListReg = "list"
 
+instance PP BlockStmt where
+  pp i stmt = int (stmtPC stmt) <> colon <+> pp i (stmtCode stmt)
+
 instance PP Stmt where
   pp _ stmt =
     case stmt of
@@ -340,16 +347,16 @@ instance PP BlockName where
       PCBlock n    -> "PC" <> int n
       NewBlock p n -> "PC" <> int p <> "_" <> int n
 
-ppBlocks :: Map BlockName (Vector Stmt) -> Doc
+ppBlocks :: Map BlockName (Vector BlockStmt) -> Doc
 ppBlocks = vcat . map ppBlock . Map.toList
 
-ppBlock :: (BlockName, Vector Stmt) -> Doc
+ppBlock :: (BlockName, Vector BlockStmt) -> Doc
 ppBlock (nm,xs) = (pp' nm <> colon) $$ nest 2 (ppStmts xs)
 
-ppStmts :: Vector Stmt -> Doc
+ppStmts :: Vector BlockStmt -> Doc
 ppStmts xs = vcat $ map pp' $ Vector.toList xs
 
-ppDot :: Map BlockName (Vector Stmt) -> Doc
+ppDot :: Map BlockName (Vector BlockStmt) -> Doc
 ppDot m = vcat $ [ "digraph G {"
                  , "size=\"6,4\";"
                  , "ratio=\"fill\";"
@@ -377,7 +384,7 @@ ppDot m = vcat $ [ "digraph G {"
 
 
   followers s =
-    case s of
+    case stmtCode s of
       Goto x      -> [ (Nothing,x) ]
       Case _ as b -> [ (Just (show (pp' t)),a) | (t,a) <- as ] ++
                      maybe [] (\x -> [(Just "otherwise",x)]) b

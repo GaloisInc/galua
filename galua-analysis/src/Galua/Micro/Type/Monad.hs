@@ -110,7 +110,8 @@ data RO = RO
   }
 
 newtype PrimImpl = PrimImpl
-  (forall m. AnalysisM m => GlobalState -> List Value -> m (Either Value (List Value), GlobalState))
+  (forall m. AnalysisM m => GlobalState -> List Value ->
+                                    m (Either Value (List Value), GlobalState))
 
 data AnalysisS = AnalysisS
   -- rwFunctions :: !(Map FunId (Map UpIx RefId))
@@ -267,7 +268,7 @@ getPrim ptr =
 data BlockS = BlockS
   { rwCurBlock    :: !BlockName
   , rwCurOpCode   :: !Int
-  , rwStatements  :: !(Vector Stmt)
+  , rwStatements  :: !(Vector BlockStmt)
   , rwCurState    :: !State
   , rwCurFunId    :: !FunId     -- ^ Current function that is executed.
   , rwCurCallsite :: !CallsiteId -- ^ Where we were called from.
@@ -293,7 +294,7 @@ blockRaisesError _ v =
 data Cont = Cont { plFun    :: FunId
                  , plBlock  :: BlockName
                  , plPC     :: Int
-                 , plStmts  :: Vector Stmt
+                 , plStmts  :: Vector BlockStmt
                  , plLocals :: LocalState
                  , plCallsite :: CallsiteId
                  }
@@ -329,7 +330,7 @@ setCont Cont { .. } =
 
 --------------------------------------------------------------------------------
 
-curStmt :: BlockM Stmt
+curStmt :: BlockM BlockStmt
 curStmt = BlockM $ do BlockS { rwStatements, rwCurOpCode } <- M.get
                       case rwStatements Vector.!? rwCurOpCode of
                         Just s  -> return s

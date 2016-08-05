@@ -40,11 +40,11 @@ data RO = RO
 data RW = RW
   { rwNextBlock :: !Int
   , rwNextTMP   :: !Int
-  , rwBlocks    :: !(Map BlockName (Seq Stmt))
+  , rwBlocks    :: !(Map BlockName (Seq BlockStmt))
   , rwListReg   :: !(Maybe OP.Reg)
   }
 
-generate :: M () -> Map BlockName (Vector Stmt)
+generate :: M () -> Map BlockName (Vector BlockStmt)
 generate (M m) = fmap (Vector.fromList . toList)
                $ rwBlocks
                $ snd
@@ -71,7 +71,9 @@ inBlock b (M m) = M $ \RO { .. } rw -> m RO { roCurBlock = b, .. } rw
 emit :: Stmt -> M ()
 emit s = M $ \RO { .. } RW { .. } ->
               let addEnd   = flip (Seq.><)
-                  addBlock = Map.insertWith addEnd roCurBlock (Seq.singleton s)
+                  pc       = blockNamePC roCurBlock
+                  bs       = BlockStmt { stmtPC = pc, stmtCode = s }
+                  addBlock = Map.insertWith addEnd roCurBlock (Seq.singleton bs)
               in ((), RW { rwBlocks = addBlock rwBlocks, .. })
 
 inNewBlock_ :: M () -> M BlockName

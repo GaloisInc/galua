@@ -33,17 +33,17 @@ filterFunction used f = f { functionCode = fmap (filterStmts used)
   where
   isUsed k _ = k `Set.member` used
 
-filterStmts :: Set BlockName -> Vector Stmt -> Vector Stmt
+filterStmts :: Set BlockName -> Vector BlockStmt -> Vector BlockStmt
 filterStmts used = Vector.fromList . concatMap (filterStmt used) . Vector.toList
 
-filterStmt :: Set BlockName -> Stmt -> [Stmt]
+filterStmt :: Set BlockName -> BlockStmt -> [BlockStmt]
 filterStmt used stmt =
-  case stmt of
+  case stmtCode stmt of
     Case e as d ->
       case (newAlts,dflt) of
-        ([], Just def)      -> [ Goto def]
-        ([(_,b)],Nothing) -> [ Goto b ]
-        _                 -> [ Case e newAlts dflt ]
+        ([], Just def)      -> [ stmt { stmtCode = Goto def } ]
+        ([(_,b)],Nothing) -> [ stmt { stmtCode = Goto b } ]
+        _                 -> [ stmt { stmtCode = Case e newAlts dflt } ]
       where
       newAlts   = mapMaybe alt as
       alt (t,b) = if isUsed b then Just (t,b) else Nothing
@@ -51,8 +51,8 @@ filterStmt used stmt =
 
     If _ t e
       | isUsed t && isUsed e -> [ stmt ]
-      | isUsed t             -> [ Goto t ]
-      | isUsed e             -> [ Goto e ]
+      | isUsed t             -> [ stmt { stmtCode = Goto t } ]
+      | isUsed e             -> [ stmt { stmtCode = Goto e } ]
       | otherwise            -> []
 
     _ -> [ stmt ]

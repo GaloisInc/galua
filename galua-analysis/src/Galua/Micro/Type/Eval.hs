@@ -12,7 +12,6 @@ import qualified Data.Set as Set
 import qualified Data.ByteString as BS
 import           Text.PrettyPrint
 import           Debug.Trace
-import           Text.Show.Pretty(ppShow)
 
 import Galua.Micro.AST
 import Galua.Micro.Type.Value
@@ -88,11 +87,11 @@ raiseError v =
 
 
 
-evalStmt :: Stmt -> BlockM Next
+evalStmt :: BlockStmt -> BlockM Next
 evalStmt stmt =
   logTrace ("STMT: " ++ show (pp blankPPInfo stmt)) >>
 
-  case stmt of
+  case stmtCode stmt of
 
     Assign r e -> do assign r =<< evalExpr e
                      return Continue
@@ -497,3 +496,6 @@ analyze funs prims cid args glob =
   (rss, states, errs, logs)
                       = singlePath funs prims
                       $ evalFun initialCaller cid args glob
+
+
+
