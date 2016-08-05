@@ -8,6 +8,7 @@ import           MonadLib
 import           Control.Monad.IO.Class(MonadIO(..))
 import           Data.Map ( Map )
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 
 import qualified Galua.Util.Table as C (tableToList,getTableMeta)
 import           Language.Lua.Bytecode(UpIx(..))
@@ -197,7 +198,7 @@ importFunction C.MkClosure { .. } =
                    , functionFID    = nm
                    }
   where
-  mkRef i r = (UpIx i, A.OneValue r)
+  mkRef i r = (UpIx i, A.NotTop (Set.singleton r))
 
 
 

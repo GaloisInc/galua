@@ -8,7 +8,7 @@ import           Data.Map ( Map )
 import qualified Data.Map as Map
 import Data.List(intersperse)
 import Text.PrettyPrint
-import Language.Lua.Bytecode.Pretty(PP(..))
+import Language.Lua.Bytecode.Pretty(PP(..),PPInfo)
 import Galua.Micro.Type.Value
 
 instance PP Int where
@@ -56,17 +56,16 @@ instance PP RegVal where
   pp n val =
     case val of
       RegBottom -> "⊥"
-      RegTop    -> "⊤"
       RegVal v  -> pp n v
-      RegRef r  -> pp n r
+      RegRef r  -> ppSet n "ref" r
 
 instance PP Value where
   pp _ t | t == bottom = "⊥"
   pp n Value { .. } =
       ppOpts $ map (pp n) (Set.toList valueBasic) ++
                ppStr ++
-               ppSet "fun"   (pp n) valueFunction ++
-               ppSet "table" (pp n) valueTable
+               [ ppSet n "fun"   valueFunction
+               , ppSet n "table" valueTable ]
 
     where
     ppStr = case valueString of
@@ -74,14 +73,17 @@ instance PP Value where
               OneValue x     -> [ text (show x) ]
               MultipleValues -> [ "String" ]
 
-    ppOpts ds = hsep (intersperse "/" ds)
+ppOpts :: [Doc] -> Doc
+ppOpts ds = hsep (intersperse "/" ds)
 
-    ppSet tag _ Top =
-          [ braces (text tag <> ": ⊤") ]
-    ppSet tag sh (NotTop xs)
-      | Set.null xs = []
-      | otherwise =
-          [ braces (text tag <> ":" <+> ppOpts (map sh (Set.toList xs))) ]
+
+
+ppSet :: PP a => PPInfo -> String -> WithTop (Set.Set a) -> Doc
+ppSet _ tag Top = braces (text tag <> ": ⊤")
+ppSet n tag (NotTop xs)
+  | Set.null xs = braces (text tag <> ": ⊥")
+  | otherwise   = braces (text tag <> ":" <+>
+                                    ppOpts (map (pp n) (Set.toList xs)))
 
 
 instance (PP a, PP b) => PP (a :-> b) where
@@ -109,7 +111,8 @@ instance PP TableV where
 
 instance PP FunV where
   pp n FunV { .. } = braces ( pp n (lab <$> functionFID) <+> "|" <+>
-                              hsep (map (pp n) (Map.elems functionUpVals)) )
+                              hsep (map (ppSet n "ref")
+                                        (Map.elems functionUpVals)) )
     where lab mb = case mb of
                      CFunImpl ptr -> "C:" <> text (show ptr)
                      LuaFunImpl fid -> "LUA" <+> pp n fid
@@ -118,7 +121,7 @@ instance PP FunV where
 instance PP LocalState where
   pp n LocalState { .. } =
     vcat [ entry "env" env
-         , "upvals" <> colon <+> hsep (map (pp n) (Map.elems upvals))
+         , "upvals" <> colon <+> hsep (map (ppSet n "ref") (Map.elems upvals))
          ]
     where
     entry x y

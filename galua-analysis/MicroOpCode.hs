@@ -6,6 +6,7 @@ import           Language.Lua.Bytecode.Pretty(PP(..),blankPPInfo)
 import           Language.Lua.Bytecode.FunId
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 
 import           Foreign(Ptr)
 
@@ -22,7 +23,7 @@ import Galua.Micro.Type.Value
   , TableV(..), FunV(..)
   , TableId(..), RefId(..), ClosureId(..)
   , newTable, externalId
-  , Lift(..), FunImpl(..)
+  , Lift(..), FunImpl(..), WithTop(..)
   )
 
 
@@ -101,7 +102,8 @@ initalGlobalState chunkId =
                  , tableMeta   = basic Nil
                  }
 
-  chunkFun = FunV { functionUpVals = Map.singleton (OP.UpIx 0) (OneValue upRef)
+  chunkFun = FunV { functionUpVals = Map.singleton (OP.UpIx 0)
+                                        (NotTop (Set.singleton upRef))
                   , functionFID    = OneValue (LuaFunImpl (rootFun chunkId))
                   }
 

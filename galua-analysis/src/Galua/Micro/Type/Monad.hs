@@ -40,6 +40,8 @@ module Galua.Micro.Type.Monad
   , assign, getReg, getUpVal
   , getList, setList
 
+  , getLocal
+
   , -- ** Continuations
     Cont, getCont, setCont, CallsiteId, initialCaller
 
@@ -58,6 +60,7 @@ module Galua.Micro.Type.Monad
 
 import           Data.Map ( Map )
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
 
@@ -411,16 +414,8 @@ setList r vs = updLocal $ \s ->
 -- Does not return bottom
 getUpVal :: UpIx -> BlockM RegVal
 getUpVal u = do LocalState { upvals } <- getLocal
-                return $! case Map.lookup u upvals of
-                            Just r  -> toVal r
-                            Nothing -> error ("getUpVal: Unknown upvalue " ++ show u)
-  where
-  toVal r = case r of
-              NoValue        -> RegBottom
-              MultipleValues -> RegTop
-              OneValue v     -> RegRef v
-
-
+                let r = Map.findWithDefault bottom u upvals
+                return (RegRef r)
 
 
 --------------------------------------------------------------------------------
@@ -559,7 +554,7 @@ newFunId proto refs =
      return ref
 
   where
-  up n r = (OP.UpIx n, OneValue r)
+  up n r = (OP.UpIx n, NotTop (Set.singleton r))
 
 
 anyFunId :: BlockM ClosureId

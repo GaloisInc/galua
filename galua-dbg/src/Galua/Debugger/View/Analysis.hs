@@ -138,9 +138,8 @@ exportFunV IdMaps { .. } FunV { .. } =
                OneValue (LuaFunImpl f)  -> exportFID f
 
   expRef x  = case x of
-                NoValue        -> -1
-                MultipleValues -> -2
-                OneValue r     -> refIds Map.! r
+                Top            -> [-2]
+                NotTop xs      -> map (refIds Map.!) (Set.toList xs)
 
 
 

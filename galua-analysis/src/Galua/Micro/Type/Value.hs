@@ -92,10 +92,11 @@ data GlobalState = GlobalState
   , funMeta     :: Value                -- ^ Meta-table for functions
   } deriving (Eq,Show,Generic)
 
+-- | Either a normal value or a reference.
+-- We should always know if currently we are the one or the other.
 data RegVal = RegBottom
             | RegVal Value
-            | RegRef RefId
-            | RegTop
+            | RegRef (WithTop (Set RefId))
               deriving (Eq,Show)
 
 -- | An abstract state describing the state of a function call.
@@ -105,7 +106,7 @@ data LocalState = LocalState
   , listReg     :: List Value     -- ^ The "list" register.
                                   -- This is used when we make function
                                   -- calls or to return results.
-  , upvals      :: Map UpIx (Lift RefId)  -- ^ Upvalues for current function
+  , upvals      :: Map UpIx (WithTop (Set RefId))  -- ^ Upvalues for current function
   } deriving (Eq,Show,Generic)
 
 -- | The current abstract state of the interpreter.
@@ -155,7 +156,7 @@ data TableV = TableV
 
 
 data FunV = FunV
-  { functionUpVals :: Map UpIx (Lift RefId) -- ^ UpValues
+  { functionUpVals :: Map UpIx (WithTop (Set RefId)) -- ^ UpValues
   , functionFID    :: Lift FunImpl    -- ^ Code
   } deriving (Generic,Eq,Show)
 
@@ -269,7 +270,7 @@ anyBoolean = fromSingleV (BooleanValue Nothing)
 
 -- | Make a value that is exactly this reference.
 newRef :: RefId -> RegVal
-newRef = RegRef
+newRef = RegRef . NotTop . Set.singleton
 
 -- | Make a value that is exactly this table.
 newTable :: TableId -> Value
@@ -437,15 +438,13 @@ instance Lattice a => Lattice (WithTop a) where
 
 
 instance Lattice RegVal where
-  bottom = RegBottom
-  addNewInfo RegBottom _ = Nothing
-  addNewInfo _ RegTop    = Nothing
-  addNewInfo (RegRef r1) (RegRef r2)
-    | r1 == r2  = Nothing
-  addNewInfo (RegVal v1) (RegVal v2) =
-    do v3 <- addNewInfo v1 v2
-       return (if v3 == topVal then RegTop else RegVal v3)
-  addNewInfo _ _ = Just RegTop
+  bottom                             = RegBottom
+  addNewInfo RegBottom _             = Nothing
+  addNewInfo v RegBottom             = Just v
+  addNewInfo (RegRef r1) (RegRef r2) = RegRef <$> addNewInfo r1 r2
+  addNewInfo (RegVal v1) (RegVal v2) = RegVal <$> addNewInfo v1 v2
+  addNewInfo x y = error "[bug] addNewInfo RegVal mixed referendes and values"
+
 
 
 

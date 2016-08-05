@@ -12,12 +12,14 @@ import qualified Data.Set as Set
 import qualified Data.ByteString as BS
 import           Text.PrettyPrint
 import           Debug.Trace
+import           Text.Show.Pretty(ppShow)
 
 import Galua.Micro.AST
 import Galua.Micro.Type.Value
 import Galua.Micro.Type.Pretty()
 import Language.Lua.Bytecode.Pretty(PP(..),pp,blankPPInfo)
 import Galua.Micro.Type.Monad
+
 
 regCasesM :: Reg -> BlockM SingleV
 regCasesM reg =
@@ -66,17 +68,17 @@ regValToRef :: RegVal -> BlockM (Maybe RefId)
 regValToRef rv =
   case rv of
     RegBottom -> impossible
-    RegVal _  -> impossible
-    RegRef r  -> return (Just r)
-    RegTop    -> return Nothing
+    RegVal _  -> error "[bug] regValToRef got a val, not a ref"
+    RegRef r  -> case r of
+                   Top       -> return Nothing
+                   NotTop xs -> Just <$> options (Set.toList xs)
 
 regValToVal :: RegVal -> BlockM Value
 regValToVal rv =
   case rv of
     RegBottom -> impossible
     RegVal v  -> return v
-    RegRef _  -> impossible
-    RegTop    -> return topVal
+    RegRef _  -> error "[bu] regValToVal got a ref, not a val"
 
 
 raiseError :: Value -> BlockM Next
@@ -431,7 +433,7 @@ evalFun caller cid as glob =
                                           , globalState = glob }
          return (next, globalState s1)
   where
-  funV    = functions glob Map.! cid
+  funV = functions glob Map.! cid
 
 data Result = Result
   { resReturns      :: List Value
