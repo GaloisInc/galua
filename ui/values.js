@@ -1,3 +1,11 @@
+function drawFunNameToolTip(obj) {
+  if (!obj.file && !obj.line) return '(unknown)'
+  var file = obj.file? obj.file         : ''
+  var line = obj.line? (':' + obj.line) : ''
+  return file + line
+}
+
+
 function drawValue(dbgState,v) {
 
   var label
@@ -39,12 +47,7 @@ function drawValue(dbgState,v) {
       if (v.name !== undefined) {
         var nm = $('<span/>').addClass('code_line uk-text-bold')
                              .text(' ' + v.name)
-        if (v.file !== undefined && v.file !== null)
-          var f = v.file
-          if (v.line !== undefined && v.line !== null)
-              f = f + ':' + v.line
-          nm.attr('title', f)
-            .attr('data-uk-tooltip','')
+        nm.attr('title', drawFunNameToolTip(v))
         label.append(nm)
       }
 

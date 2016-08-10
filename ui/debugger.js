@@ -405,7 +405,14 @@ function drawFunParts(f, nameHere, typeHere, pcHere, argsHere) {
 
   if (pcHere !== null) pcHere.empty()
   if (f.method !== undefined) {
-      argsHere.append('- '+f.method+' (')
+      var methBox = $('<span/>')
+                    .text(f.method)
+                    .attr('title', drawFunNameToolTip(f.return))
+                    .attr('data-uk-tooltip','')
+
+      argsHere.append('- ')
+              .append(methBox)
+              .append(' (')
       if (f.args !== undefined) {
         var leader = ''
         jQuery.each(f.args, function(ix,a) {
@@ -415,16 +422,6 @@ function drawFunParts(f, nameHere, typeHere, pcHere, argsHere) {
         })
       }
       argsHere.append(' )')
-      if (f.return !== undefined) {
-        if (f.return.file !== undefined) {
-          var txt = f.return.file
-          if (f.return.line !== undefined && f.return.line !== null) {
-            txt = txt + ':' + f.return.line
-          }
-          nameHere.attr('title', txt)
-                  .attr('data-uk-tooltip','')
-        }
-      }
   }
 
 
@@ -440,7 +437,7 @@ function drawFunParts(f, nameHere, typeHere, pcHere, argsHere) {
     case 'C':
       if (f.file !== null) {
         nameHere.attr('data-uk-tooltip','{pos:\'top\'}')
-        nameHere.attr('title',f.file)
+        nameHere.attr('title',drawFunNameToolTip(f))
       }
       break
   }
