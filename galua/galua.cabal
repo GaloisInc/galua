@@ -31,6 +31,15 @@ library
                        Galua.Stepper
                        Galua.CObjInfo
 
+                       Galua.Micro.AST
+                       Galua.Micro.Eval
+                       Galua.Micro.Translate
+                       Galua.Micro.Translate.Monad
+                       Galua.Micro.Translate.AnalyzeRefs
+                       Galua.Micro.Translate.ExplicitRefs
+                       Galua.Micro.Translate.JoinBlocks
+
+
                        Galua.Util.Cache
                        Galua.Util.Table
                        Galua.Util.Loc

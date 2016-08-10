@@ -22,8 +22,8 @@ import Galua.Debugger.View.Analysis(exportResult)
 import qualified Galua.Util.Table as Tab
 import qualified Galua.Util.SizedVector as SV
 
-import qualified Galua.Micro.Primitives  as Analysis
 import qualified Galua.Micro.AST         as Analysis
+import qualified Galua.Micro.Type.Primitives  as Analysis
 import qualified Galua.Micro.Type.Import as Analysis
 import qualified Galua.Micro.Type.Value  as Analysis
 import qualified Galua.Micro.Type.Eval   as Analysis

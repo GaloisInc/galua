@@ -16,20 +16,15 @@ custom-setup
 
 library
   hs-source-dirs:      src
-  exposed-modules:     Galua.Micro.AST
-                       Galua.Micro.Primitives
-                       Galua.Micro.Eval
-                       Galua.Micro.Type.Value
+
+  exposed-modules:     Galua.Micro.Type.Value
                        Galua.Micro.Type.Monad
                        Galua.Micro.Type.Eval
                        Galua.Micro.Type.Pretty
                        Galua.Micro.Type.Filter
                        Galua.Micro.Type.Import
-                       Galua.Micro.Translate
-                       Galua.Micro.Translate.Monad
-                       Galua.Micro.Translate.AnalyzeRefs
-                       Galua.Micro.Translate.ExplicitRefs
-                       Galua.Micro.Translate.JoinBlocks
+                       Galua.Micro.Type.Primitives
+ 
 
   build-depends:       base,
                        lua-bc,

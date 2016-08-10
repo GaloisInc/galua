@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NamedFieldPuns #-}
-module Galua.Micro.Primitives (buildPrimMap) where
+module Galua.Micro.Type.Primitives (buildPrimMap) where
 
 import Galua.Micro.Type.Value
 import Galua.Micro.Type.Eval
