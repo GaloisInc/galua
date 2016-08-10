@@ -4,6 +4,7 @@ module Galua.CallIntoC (execCFunction, cNextStepLoop) where
 import           Galua.Mach
 import           Galua.Value
 import           Galua.Overloading
+import           Galua.CObjInfo
 
 import qualified Galua.Util.SizedVector as SV
 
@@ -12,6 +13,7 @@ import           Data.Traversable
 import           Control.Monad.IO.Class
 import           Data.Foldable
 import           Data.IORef
+import           Foreign.Ptr
 
 execCFunction :: CFunName -> Mach a
 execCFunction cfun =
@@ -27,9 +29,9 @@ cNextStepLoop =
      cResult <- liftIO (takeMVar luaMVar)
      case cResult of
        CReturned n -> returnFromC n
-       CReEntry label primargs k ->
+       CReEntry label returnAddress primargs k ->
          do handleGC
-            reentryFromC label primargs k
+            reentryFromC label returnAddress primargs k
             cNextStepLoop
 
 handleGC :: Mach ()
@@ -47,12 +49,14 @@ gcValue val =
 
 reentryFromC ::
   String         {- ^ name of entry point      -} ->
+  CObjInfo       {- ^ return address           -} ->
   [PrimArgument] {- ^ arguments at entry point -} ->
   Mach ()        {- ^ code to run              -} ->
   Mach ()
-reentryFromC label primargs k =
+reentryFromC label returnAddress primargs k =
   do let apiCall = ApiCall
            { apiCallMethod = label
+           , apiCallReturn = returnAddress
            , apiCallArgs = primargs
            }
      machApiCall apiCall k

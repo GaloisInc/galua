@@ -520,6 +520,7 @@ exportApiCall api =
   do args <- traverse exportPrimArg (apiCallArgs api)
      pure [ "method" .= apiCallMethod api
           , "args"   .= args
+          , "return" .= JS.object (exportCObjInfo (apiCallReturn api))
           ]
 
 
@@ -635,17 +636,18 @@ exportCodeLoc funs cl =
 exportRefLoc :: Chunks -> RefLoc -> JS.Value
 exportRefLoc funs = exportCodeLoc funs . refLocSite
 
-
+exportCObjInfo :: CObjInfo -> [JS.Pair]
+exportCObjInfo coi =
+  [ "type" .= ("C"::Text)
+  , "name" .= fromMaybe (cObjAddr coi) (cObjName coi)
+  , "file" .= cObjFile coi
+  , "line" .= cObjLine coi
+  ]
 
 exportFunctionValue :: Chunks -> Int -> FunctionValue -> [ JS.Pair ]
 exportFunctionValue funs pc fun =
   case fun of
-    CFunction CFunName { cfunName } ->
-      [ "type" .= str "C"
-      , "name" .= fromMaybe (cObjAddr cfunName) (cObjName cfunName)
-      , "file" .= cObjFile cfunName
-      , "line" .= cObjLine cfunName
-      ]
+    CFunction CFunName { cfunName } -> exportCObjInfo cfunName
 
     LuaFunction fid _ ->
       let vn = Map.lookup fid (allFunNames funs)

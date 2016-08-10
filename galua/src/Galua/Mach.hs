@@ -76,7 +76,11 @@ data VMState  = FinishedOk [Value]
 
 data CCallState
   = CReturned Int
-  | CReEntry String [PrimArgument] (Mach ())
+  | CReEntry
+        String         -- entry point name
+        CObjInfo       -- lazily computed return location
+        [PrimArgument] -- api call arguments
+        (Mach ())      -- api call implementation
 
 data CNextStep = CAbort | CResume | CCallback CFun
 
@@ -294,6 +298,7 @@ data ApiCallStatus
 
 data ApiCall = ApiCall
   { apiCallMethod :: !String
+  , apiCallReturn :: CObjInfo -- ^ lazily generated location information
   , apiCallArgs   :: ![PrimArgument]
   }
 

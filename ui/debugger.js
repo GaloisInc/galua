@@ -415,6 +415,16 @@ function drawFunParts(f, nameHere, typeHere, pcHere, argsHere) {
         })
       }
       argsHere.append(' )')
+      if (f.return !== undefined) {
+        if (f.return.file !== undefined) {
+          var txt = f.return.file
+          if (f.return.line !== undefined && f.return.line !== null) {
+            txt = txt + ':' + f.return.line
+          }
+          nameHere.attr('title', txt)
+                  .attr('data-uk-tooltip','')
+        }
+      }
   }
 
 

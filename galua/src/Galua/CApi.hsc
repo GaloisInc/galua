@@ -27,6 +27,7 @@ import Foreign.StablePtr
 import Foreign.Storable
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as B8
+import System.IO.Unsafe (unsafeInterleaveIO)
 
 import Language.Lua.Bytecode
 import Language.Lua.Bytecode.Debug
@@ -40,6 +41,7 @@ import Galua.CObjInfo(CObjInfo(..))
 import Galua.Mach
 import Galua.Number
 import Galua.Overloading
+import Galua.CObjInfo
 import Galua.Reference
 import Galua.Value
 import Galua.LuaString
@@ -82,9 +84,12 @@ reentryAlloc label args l r k = reentry label args l r (liftAlloc . k)
 
 -- | Resume execution of the machine upon entry from the C API
 reentry :: Reentry Mach
-reentry label args l _ k =
+reentry label args l r k =
   do ext <- deRefLuaState l
-     putMVar (extLuaStateLuaServer ext) (CReEntry label args (wrapWithStack (extLuaStateThreadId ext) k))
+     returnObjInfo <- unsafeInterleaveIO (getCFunInfo (castPtrToFunPtr r))
+     putMVar
+       (extLuaStateLuaServer ext)
+       (CReEntry label returnObjInfo args (wrapWithStack (extLuaStateThreadId ext) k))
      cServiceLoop l (extLuaStateCServer ext) (extLuaStateLuaServer ext)
 
 wrapWithStack :: Int -> (SV.SizedVector (IORef Value) -> Mach a) -> Mach a
