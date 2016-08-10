@@ -23,7 +23,11 @@ struct lua_State
         sigjmp_buf *onerror;
 };
 
-#define API_ENTRY(method,L,...) do { if (method##_hs(L, ##__VA_ARGS__)) raise_error(L); } while(0)
+#define GET_RETURN_ADDR() __builtin_extract_return_addr(__builtin_return_address(0))
+#define API_ENTRY(method,L,...) \
+  do { if (method##_hs(L, GET_RETURN_ADDR(), ##__VA_ARGS__)) \
+            raise_error(L); \
+  } while(0)
 
 __attribute__((noreturn)) static void raise_error(lua_State *L);
 
@@ -530,7 +534,7 @@ int lua_load (lua_State *L, lua_Reader reader, void *data, const char *chunkname
         }
 
         int out;
-        int res = lua_load_hs(L, all_data, all_data_n, (char*)chunkname, (char*)mode, &out);
+        int res = lua_load_hs(L, GET_RETURN_ADDR(), all_data, all_data_n, (char*)chunkname, (char*)mode, &out);
         free(all_data);
         if (res) raise_error(L);
         return out;

@@ -61,22 +61,28 @@ luaERRRUN = (#const LUA_ERRRUN)
 
 --------
 
+type EntryPoint a =
+  Ptr () {- ^ stable pointer -} ->
+  Ptr () {- ^ return address -} ->
+  a
+
 type Reentry m =
   String            {- ^ entry name -} ->
   [PrimArgument]    {- ^ entry arguments -} ->
   Ptr ()            {- ^ stable pointer -} ->
+  Ptr ()            {- ^ return address -} ->
   (SV.SizedVector (IORef Value) -> m ())    {- ^ operation continuation -} ->
   IO CInt
 
 reentryIO :: Reentry IO
-reentryIO label args l k = reentry label args l (liftIO . k)
+reentryIO label args l r k = reentry label args l r (liftIO . k)
 
 reentryAlloc :: Reentry Alloc
-reentryAlloc label args l k = reentry label args l (liftAlloc . k)
+reentryAlloc label args l r k = reentry label args l r (liftAlloc . k)
 
 -- | Resume execution of the machine upon entry from the C API
 reentry :: Reentry Mach
-reentry label args l k =
+reentry label args l _ k =
   do ext <- deRefLuaState l
      putMVar (extLuaStateLuaServer ext) (CReEntry label args (wrapWithStack (extLuaStateThreadId ext) k))
      cServiceLoop l (extLuaStateCServer ext) (extLuaStateLuaServer ext)
@@ -166,10 +172,10 @@ cstringArg = PrimCStringLenArg
 
 --------------------------------------------------------------------------------
 
-foreign export ccall lua_error_hs :: Ptr () -> IO CInt
+foreign export ccall lua_error_hs :: EntryPoint (IO CInt)
 
-lua_error_hs :: Ptr () -> IO CInt
-lua_error_hs l = reentry "lua_error" [] l $ \args ->
+lua_error_hs :: EntryPoint (IO CInt)
+lua_error_hs l r = reentry "lua_error" [] l r $ \args ->
   do n <- liftIO (SV.size args)
      e <- if n == 0 then return Nil else pop args
      machThrow e
@@ -178,83 +184,82 @@ lua_error_hs l = reentry "lua_error" [] l $ \args ->
 -- Stack push functions
 --------------------------------------------------------------------------------
 
-foreign export ccall lua_pushlightuserdata_hs :: Ptr () -> Ptr () -> IO CInt
+foreign export ccall lua_pushlightuserdata_hs :: EntryPoint (Ptr () -> IO CInt)
 
-lua_pushlightuserdata_hs :: Ptr () -> Ptr () -> IO CInt
-lua_pushlightuserdata_hs l u =
-  reentryIO "lua_pushlightuserdata" [cArg u] l $ \stack ->
+lua_pushlightuserdata_hs :: EntryPoint (Ptr () -> IO CInt)
+lua_pushlightuserdata_hs l r u =
+  reentryIO "lua_pushlightuserdata" [cArg u] l r $ \stack ->
     push stack (LightUserData u)
 
-foreign export ccall lua_pushnumber_hs :: Ptr () -> Lua_Number -> IO CInt
+foreign export ccall lua_pushnumber_hs :: EntryPoint (Lua_Number -> IO CInt)
 
 -- | [-0, +1, -]
-lua_pushnumber_hs :: Ptr () -> Lua_Number -> IO CInt
-lua_pushnumber_hs l n =
-  reentryIO "lua_pushnumber" [cArg n] l $ \stack ->
+lua_pushnumber_hs :: EntryPoint (Lua_Number -> IO CInt)
+lua_pushnumber_hs l r n =
+  reentryIO "lua_pushnumber" [cArg n] l r $ \stack ->
     push stack (Number (Double (realToFrac n)))
 
-foreign export ccall lua_pushnil_hs :: Ptr () -> IO CInt
+foreign export ccall lua_pushnil_hs :: EntryPoint (IO CInt)
 
 -- | [-0, +1, -]
-lua_pushnil_hs :: Ptr () -> IO CInt
-lua_pushnil_hs l =
-  reentryIO "lua_pushnil" [] l $ \args ->
+lua_pushnil_hs :: EntryPoint (IO CInt)
+lua_pushnil_hs l r =
+  reentryIO "lua_pushnil" [] l r $ \args ->
     push args Nil
 
-foreign export ccall lua_pushinteger_hs :: Ptr () -> Lua_Integer -> IO CInt
+foreign export ccall lua_pushinteger_hs :: EntryPoint (Lua_Integer -> IO CInt)
 
 -- | [-0, +1, -]
-lua_pushinteger_hs :: Ptr () -> Lua_Integer -> IO CInt
-lua_pushinteger_hs l n =
-  reentryIO "lua_pushinteger" [cArg n] l $ \stack ->
+lua_pushinteger_hs :: EntryPoint (Lua_Integer -> IO CInt)
+lua_pushinteger_hs l r n =
+  reentryIO "lua_pushinteger" [cArg n] l r $ \stack ->
     push stack (Number (fromIntegral n))
 
-foreign export ccall lua_pushboolean_hs :: Ptr () -> CInt -> IO CInt
+foreign export ccall lua_pushboolean_hs :: EntryPoint (CInt -> IO CInt)
 
 -- | [-0, +1, -]
-lua_pushboolean_hs :: Ptr () -> CInt -> IO CInt
-lua_pushboolean_hs l b =
-  reentryIO "lua_pushboolean" [cArg b] l $ \stack ->
+lua_pushboolean_hs :: EntryPoint (CInt -> IO CInt)
+lua_pushboolean_hs l r b =
+  reentryIO "lua_pushboolean" [cArg b] l r $ \stack ->
     push stack (Bool (b /= 0))
 
-foreign export ccall lua_pushstring_hs :: Ptr () -> CString -> Ptr CString -> IO CInt
+foreign export ccall lua_pushstring_hs :: EntryPoint (CString -> Ptr CString -> IO CInt)
 
 -- | [-0, +1, e]
-lua_pushstring_hs :: Ptr () -> CString -> Ptr CString -> IO CInt
-lua_pushstring_hs l ptr out =
-  reentryIO "lua_pushstring" [cstringArg0 ptr] l $ \args ->
+lua_pushstring_hs :: EntryPoint (CString -> Ptr CString -> IO CInt)
+lua_pushstring_hs l r ptr out =
+  reentryIO "lua_pushstring" [cstringArg0 ptr] l r $ \args ->
   do str <- peekLuaString0 ptr
      poke out =<< luaStringPtr str
      push args (String str)
 
 foreign export ccall lua_pushlstring_hs
-  :: Ptr () -> CString -> CSize -> Ptr CString -> IO CInt
+  :: EntryPoint (CString -> CSize -> Ptr CString -> IO CInt)
 
 -- | [-0, +1, e]
-lua_pushlstring_hs :: Ptr () -> CString -> CSize -> Ptr CString -> IO CInt
-lua_pushlstring_hs l ptr sz out =
-  reentryIO "lua_pushlstring" [cstringArg (ptr, fromIntegral sz)] l $ \args ->
+lua_pushlstring_hs :: EntryPoint (CString -> CSize -> Ptr CString -> IO CInt)
+lua_pushlstring_hs l r ptr sz out =
+  reentryIO "lua_pushlstring" [cstringArg (ptr, fromIntegral sz)] l r $ \args ->
   do str <- peekLuaString (ptr, fromIntegral sz)
      poke out =<< luaStringPtr str
      -- Note that the output string must be null terminated!!
      push args (String str)
 
-foreign export ccall lua_pushvalue_hs :: Ptr () -> CInt -> IO CInt
+foreign export ccall lua_pushvalue_hs :: EntryPoint (CInt -> IO CInt)
 
 -- | [-0, +1, -]
-lua_pushvalue_hs :: Ptr () -> CInt -> IO CInt
-lua_pushvalue_hs l ix =
-  reentry "lua_pushvalue" [cArg ix] l $ \args ->
+lua_pushvalue_hs :: EntryPoint (CInt -> IO CInt)
+lua_pushvalue_hs l r ix =
+  reentry "lua_pushvalue" [cArg ix] l r $ \args ->
   do x <- valueArgument (fromIntegral ix) args
      liftIO (push args x)
 
-foreign export ccall lua_pushcclosure_hs
-  :: Ptr () -> CFun -> CInt -> IO CInt
+foreign export ccall lua_pushcclosure_hs :: EntryPoint (CFun -> CInt -> IO CInt)
 
 -- [-nup, +1, e]
-lua_pushcclosure_hs :: Ptr () -> CFun -> CInt -> IO CInt
-lua_pushcclosure_hs l func nup =
-  reentry "lua_pushcclosure" [cArg func, cArg nup] l $ \args ->
+lua_pushcclosure_hs :: EntryPoint (CFun -> CInt -> IO CInt)
+lua_pushcclosure_hs l r func nup =
+  reentry "lua_pushcclosure" [cArg func, cArg nup] l r $ \args ->
   do upvals <- popN args $ fromIntegral nup
      info   <- machLookupCFun func
      vs     <- liftIO $ mapM newIORef $ Vector.fromList upvals
@@ -263,12 +268,12 @@ lua_pushcclosure_hs l func nup =
      push args (Closure c)
 
 foreign export ccall lua_tocfunction_hs
-  :: Ptr () -> CInt -> Ptr CFun -> IO CInt
+  :: EntryPoint (CInt -> Ptr CFun -> IO CInt)
 
 -- [-0, +0, -]
-lua_tocfunction_hs :: Ptr () -> CInt -> Ptr CFun -> IO CInt
-lua_tocfunction_hs l ix out =
-  reentry "lua_tocfunction" [cArg ix] l $ \args ->
+lua_tocfunction_hs :: EntryPoint (CInt -> Ptr CFun -> IO CInt)
+lua_tocfunction_hs l r ix out =
+  reentry "lua_tocfunction" [cArg ix] l r $ \args ->
   do x <- valueArgument (fromIntegral ix) args
      res <- case x of
               Closure cref ->
@@ -279,12 +284,12 @@ lua_tocfunction_hs l ix out =
               _ -> return nullFunPtr
      liftIO (poke out res)
 
-foreign export ccall lua_iscfunction_hs :: Ptr () -> CInt -> Ptr CInt -> IO CInt
+foreign export ccall lua_iscfunction_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
 
 -- [-0, +0, -]
-lua_iscfunction_hs :: Ptr () -> CInt -> Ptr CInt -> IO CInt
-lua_iscfunction_hs l ix out =
-  reentry "lua_iscfunction" [cArg ix] l $ \args ->
+lua_iscfunction_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
+lua_iscfunction_hs l r ix out =
+  reentry "lua_iscfunction" [cArg ix] l r $ \args ->
   do x <- valueArgument (fromIntegral ix) args
      res <- case x of
               Closure cref ->
@@ -297,12 +302,13 @@ lua_iscfunction_hs l ix out =
 
 --------------------------------------------------------------------------------
 
-foreign export ccall lua_type_hs :: Ptr () -> CInt -> Ptr CInt -> IO CInt
+foreign export ccall lua_type_hs ::
+  EntryPoint (CInt -> Ptr CInt -> IO CInt)
 
 -- | [-0, +0, -]
-lua_type_hs :: Ptr () -> CInt -> Ptr CInt -> IO CInt
-lua_type_hs l ix out =
-  reentry "lua_type" [cArg ix] l $ \args ->
+lua_type_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
+lua_type_hs l r ix out =
+  reentry "lua_type" [cArg ix] l r $ \args ->
   do mb <- valueArgumentOpt (fromIntegral ix) args
      liftIO $ poke out $
        case mb of
@@ -324,12 +330,12 @@ lua_type_int v =
 
 --------------------------------------------------------------------------------
 
-foreign export ccall lua_settop_hs :: Ptr () -> CInt -> IO CInt
+foreign export ccall lua_settop_hs :: EntryPoint (CInt -> IO CInt)
 
 -- | [-?, +?, -]
-lua_settop_hs :: Ptr () -> CInt -> IO CInt
-lua_settop_hs l ix =
-  reentryIO "lua_settop" [cArg ix] l $ \stack ->
+lua_settop_hs :: EntryPoint (CInt -> IO CInt)
+lua_settop_hs l r ix =
+  reentryIO "lua_settop" [cArg ix] l r $ \stack ->
   do oldLen <- SV.size stack
      let i1 = fromIntegral ix
          newLen | i1 < 0    = oldLen + i1 + 1
@@ -338,20 +344,20 @@ lua_settop_hs l ix =
        then replicateM_ (newLen - oldLen) (SV.push stack =<< newIORef Nil)
        else SV.shrink stack (oldLen - newLen)
 
-foreign export ccall lua_gettop_hs :: Ptr () -> Ptr CInt -> IO CInt
+foreign export ccall lua_gettop_hs :: EntryPoint (Ptr CInt -> IO CInt)
 
 -- | [-?, +?, -]
-lua_gettop_hs :: Ptr () -> Ptr CInt -> IO CInt
-lua_gettop_hs l out =
-  reentryIO "lua_gettop" [] l $ \stack ->
+lua_gettop_hs :: EntryPoint (Ptr CInt -> IO CInt)
+lua_gettop_hs l r out =
+  reentryIO "lua_gettop" [] l r $ \stack ->
     do n <- SV.size stack
        poke out (fromIntegral n)
 
-foreign export ccall lua_rotate_hs :: Ptr () -> CInt -> CInt -> IO CInt
+foreign export ccall lua_rotate_hs :: EntryPoint (CInt -> CInt -> IO CInt)
 
-lua_rotate_hs :: Ptr () -> CInt -> CInt -> IO CInt
-lua_rotate_hs l idx n =
-  reentryIO "lua_rotate" [cArg idx, cArg n] l $ \args ->
+lua_rotate_hs :: EntryPoint (CInt -> CInt -> IO CInt)
+lua_rotate_hs l r idx n =
+  reentryIO "lua_rotate" [cArg idx, cArg n] l r $ \args ->
     rotateHelper (fromIntegral idx) (fromIntegral n) args
 
 rotateHelper :: Int -> Int -> SV.SizedVector a -> IO ()
@@ -365,12 +371,12 @@ rotateHelper idx n stack =
 
      SV.rotateSubset stack idx' elts n
 
-foreign export ccall lua_absindex_hs :: Ptr () -> CInt -> Ptr CInt -> IO CInt
+foreign export ccall lua_absindex_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
 
 -- | [-0, +0, -]
-lua_absindex_hs :: Ptr () -> CInt -> Ptr CInt -> IO CInt
-lua_absindex_hs l cidx out =
-  reentryIO "lua_absindex" [cArg cidx] l $ \stack ->
+lua_absindex_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
+lua_absindex_hs l r cidx out =
+  reentryIO "lua_absindex" [cArg cidx] l r $ \stack ->
   do n <- SV.size stack
      let idx = fromIntegral cidx
          idx' | isPseudo idx || idx > 0 = idx
@@ -379,12 +385,12 @@ lua_absindex_hs l cidx out =
 
 --------------------------------------------------------------------------------
 
-foreign export ccall lua_settable_hs :: Ptr () -> CInt -> IO CInt
+foreign export ccall lua_settable_hs :: EntryPoint (CInt -> IO CInt)
 
 -- | [-2, +0, e]
-lua_settable_hs :: Ptr () -> CInt -> IO CInt
-lua_settable_hs l ix =
-  reentry "lua_settable" [cArg ix] l $ \args ->
+lua_settable_hs :: EntryPoint (CInt -> IO CInt)
+lua_settable_hs l r ix =
+  reentry "lua_settable" [cArg ix] l r $ \args ->
   do t <- valueArgument (fromIntegral ix) args
      kv <- liftIO (popN args 2)
      case kv of
@@ -393,12 +399,12 @@ lua_settable_hs l ix =
 
 --------------------------------------------------------------------------------
 
-foreign export ccall lua_next_hs :: Ptr () -> CInt -> Ptr CInt -> IO CInt
+foreign export ccall lua_next_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
 
 -- | [-0,+0,-]
-lua_next_hs :: Ptr () -> CInt -> Ptr CInt -> IO CInt
-lua_next_hs l idx out =
-  reentry "lua_next" [cArg idx] l $ \args ->
+lua_next_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
+lua_next_hs l r idx out =
+  reentry "lua_next" [cArg idx] l r $ \args ->
   do t <- tableArgument (fromIntegral idx) args
      p <- pop args
      liftIO $
@@ -411,36 +417,35 @@ lua_next_hs l idx out =
 
 --------------------------------------------------------------------------------
 
-foreign export ccall lua_copy_hs :: Ptr () -> CInt -> CInt -> IO CInt
+foreign export ccall lua_copy_hs :: EntryPoint (CInt -> CInt -> IO CInt)
 
 -- | [-0,+0,-]
-lua_copy_hs :: Ptr () -> CInt -> CInt -> IO CInt
-lua_copy_hs l fromidx toidx =
-  reentry "lua_copy" [cArg fromidx, cArg toidx] l $ \args ->
+lua_copy_hs :: EntryPoint (CInt -> CInt -> IO CInt)
+lua_copy_hs l r fromidx toidx =
+  reentry "lua_copy" [cArg fromidx, cArg toidx] l r $ \args ->
   do x <- valueArgument (fromIntegral fromidx) args
      assign (fromIntegral toidx) x args
 
 --------------------------------------------------------------------------------
 
-foreign export ccall lua_isnumber_hs
-  :: Ptr () -> CInt -> Ptr CInt -> IO CInt
+foreign export ccall lua_isnumber_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
 
 -- | [-0, +0, -]
-lua_isnumber_hs :: Ptr () -> CInt -> Ptr CInt -> IO CInt
-lua_isnumber_hs l ix out =
-  reentry "lua_isnumber" [cArg ix] l $ \args ->
+lua_isnumber_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
+lua_isnumber_hs l r ix out =
+  reentry "lua_isnumber" [cArg ix] l r $ \args ->
   do v <- valueArgument(fromIntegral ix) args
      liftIO $ poke out $ case valueNumber v of
                            Just {} -> 1
                            Nothing -> 0
 
 foreign export ccall lua_isuserdata_hs
-  :: Ptr () -> CInt -> Ptr CInt -> IO CInt
+  :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
 
 -- | [-0, +0, -]
-lua_isuserdata_hs :: Ptr () -> CInt -> Ptr CInt -> IO CInt
-lua_isuserdata_hs l ix out =
-  reentry "lua_isuserdata" [cArg ix] l $ \args ->
+lua_isuserdata_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
+lua_isuserdata_hs l r ix out =
+  reentry "lua_isuserdata" [cArg ix] l r $ \args ->
   do v <- valueArgument (fromIntegral ix) args
      liftIO $ poke out $ case v of
                             UserData{}      -> 1
@@ -448,12 +453,12 @@ lua_isuserdata_hs l ix out =
                             _               -> 0
 
 foreign export ccall lua_isstring_hs
-  :: Ptr () -> CInt -> Ptr CInt -> IO CInt
+  :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
 
 -- | [-0, +0, -]
-lua_isstring_hs :: Ptr () -> CInt -> Ptr CInt -> IO CInt
-lua_isstring_hs l ix out =
-  reentry "lua_isstring" [cArg ix] l $ \args ->
+lua_isstring_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
+lua_isstring_hs l r ix out =
+  reentry "lua_isstring" [cArg ix] l r $ \args ->
   do v <- valueArgument (fromIntegral ix) args
      liftIO $ poke out $ case v of
                            String{} -> 1
@@ -461,23 +466,23 @@ lua_isstring_hs l ix out =
                            _        -> 0
 
 foreign export ccall lua_isinteger_hs
-  :: Ptr () -> CInt -> Ptr CInt -> IO CInt
+  :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
 
 -- | [-0, +0, -]
-lua_isinteger_hs :: Ptr () -> CInt -> Ptr CInt -> IO CInt
-lua_isinteger_hs l ix out =
-  reentry "lua_isinteger" [cArg ix] l $ \args ->
+lua_isinteger_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
+lua_isinteger_hs l r ix out =
+  reentry "lua_isinteger" [cArg ix] l r $ \args ->
   do v <- valueArgument (fromIntegral ix) args
      liftIO $ poke out $ case v of
                            Number Int{} -> 1
                            _            -> 0
 
 foreign export ccall lua_stringtonumber_hs
-  :: Ptr () -> CString -> Ptr CSize -> IO CInt
+  :: EntryPoint (CString -> Ptr CSize -> IO CInt)
 
-lua_stringtonumber_hs :: Ptr () -> CString -> Ptr CSize -> IO CInt
-lua_stringtonumber_hs l p out =
-  reentryIO "lua_stringtonumber" [cstringArg0 p] l $ \args ->
+lua_stringtonumber_hs :: EntryPoint (CString -> Ptr CSize -> IO CInt)
+lua_stringtonumber_hs l r p out =
+  reentryIO "lua_stringtonumber" [cstringArg0 p] l r $ \args ->
     do str <- peekCAString p
        case parseNumber str of
          Nothing -> do poke out 0
@@ -486,34 +491,34 @@ lua_stringtonumber_hs l p out =
 
 
 foreign export ccall lua_tointegerx_hs
-  :: Ptr () -> CInt -> Ptr CInt -> Ptr Lua_Integer -> IO CInt
+  :: EntryPoint (CInt -> Ptr CInt -> Ptr Lua_Integer -> IO CInt)
 
 -- | [-0, +0, -]
-lua_tointegerx_hs :: Ptr () -> CInt -> Ptr CInt -> Ptr Lua_Integer -> IO CInt
-lua_tointegerx_hs l ix isnum out =
-  reentry "lua_integerx" [cArg ix, cArg isnum] l $ \args ->
+lua_tointegerx_hs :: EntryPoint (CInt -> Ptr CInt -> Ptr Lua_Integer -> IO CInt)
+lua_tointegerx_hs l r ix isnum out =
+  reentry "lua_integerx" [cArg ix, cArg isnum] l r $ \args ->
   do v <- valueArgument (fromIntegral ix) args
      liftIO $ case valueInt v of
                 Just i  -> pokeNotNull isnum 1 >> poke out (fromIntegral i)
                 Nothing -> pokeNotNull isnum 0 >> poke out 0
 
 foreign export ccall lua_toboolean_hs
-  :: Ptr () -> CInt -> Ptr CInt -> IO CInt
+  :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
 
 -- | [-0, +0, -]
-lua_toboolean_hs :: Ptr () -> CInt -> Ptr CInt -> IO CInt
-lua_toboolean_hs l ix out =
-  reentry "lua_toboolean" [cArg ix] l $ \args ->
+lua_toboolean_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
+lua_toboolean_hs l r ix out =
+  reentry "lua_toboolean" [cArg ix] l r $ \args ->
   do b <- boolArgument (fromIntegral ix) args
      liftIO (poke out (if b then 1 else 0))
 
 foreign export ccall lua_tonumberx_hs
-  :: Ptr () -> CInt -> Ptr CInt -> Ptr Lua_Number -> IO CInt
+  :: EntryPoint (CInt -> Ptr CInt -> Ptr Lua_Number -> IO CInt)
 
 -- | [-0, +0, -]
-lua_tonumberx_hs :: Ptr () -> CInt -> Ptr CInt -> Ptr Lua_Number -> IO CInt
-lua_tonumberx_hs l ix isnum out =
-  reentry "lua_tonumberx" [cArg ix, cArg isnum] l $ \args ->
+lua_tonumberx_hs :: EntryPoint (CInt -> Ptr CInt -> Ptr Lua_Number -> IO CInt)
+lua_tonumberx_hs l r ix isnum out =
+  reentry "lua_tonumberx" [cArg ix, cArg isnum] l r $ \args ->
   do v <- valueArgument (fromIntegral ix) args
      liftIO $ case numberToDouble <$> valueNumber v of
                 Just d -> do pokeNotNull isnum 1
@@ -521,12 +526,12 @@ lua_tonumberx_hs l ix isnum out =
                 Nothing -> pokeNotNull isnum 0
 
 foreign export ccall lua_tolstring_hs
-  :: Ptr () -> CInt -> Ptr CSize -> Ptr CString -> IO CInt
+  :: EntryPoint (CInt -> Ptr CSize -> Ptr CString -> IO CInt)
 
 -- | [-0, +0, m]
-lua_tolstring_hs :: Ptr () -> CInt -> Ptr CSize -> Ptr CString -> IO CInt
-lua_tolstring_hs l arg len out =
-  reentry "lua_tolstring" [cArg arg, cArg len] l $ \args ->
+lua_tolstring_hs :: EntryPoint (CInt -> Ptr CSize -> Ptr CString -> IO CInt)
+lua_tolstring_hs l r arg len out =
+  reentry "lua_tolstring" [cArg arg, cArg len] l r $ \args ->
   do let idx = fromIntegral arg
      mb <- valueArgument idx args
      case mb of
@@ -549,12 +554,12 @@ lua_tolstring_hs l arg len out =
             poke out nullPtr
 
 foreign export ccall lua_touserdata_hs
-  :: Ptr () -> CInt -> Ptr (Ptr ()) -> IO CInt
+  :: EntryPoint (CInt -> Ptr (Ptr ()) -> IO CInt)
 
 -- | [-0, +0, -]
-lua_touserdata_hs :: Ptr () -> CInt -> Ptr (Ptr ()) -> IO CInt
-lua_touserdata_hs l arg out =
-  reentry "lua_touserdata" [cArg arg] l $ \args ->
+lua_touserdata_hs :: EntryPoint (CInt -> Ptr (Ptr ()) -> IO CInt)
+lua_touserdata_hs l r arg out =
+  reentry "lua_touserdata" [cArg arg] l r $ \args ->
   do v <- valueArgument (fromIntegral arg) args
      ptr <- case v of
               UserData uref ->
@@ -568,12 +573,12 @@ lua_touserdata_hs l arg out =
 --------------------------------------------------------------------------------
 
 foreign export ccall lua_getfield_hs
-  :: Ptr () -> CInt -> CString -> Ptr CInt -> IO CInt
+  :: EntryPoint (CInt -> CString -> Ptr CInt -> IO CInt)
 
 -- [-0, +1, e]
-lua_getfield_hs :: Ptr () -> CInt -> CString -> Ptr CInt -> IO CInt
-lua_getfield_hs l ix k out =
-  reentry "lua_getfield" [cArg ix, cstringArg0 k] l $ \args ->
+lua_getfield_hs :: EntryPoint (CInt -> CString -> Ptr CInt -> IO CInt)
+lua_getfield_hs l r ix k out =
+  reentry "lua_getfield" [cArg ix, cstringArg0 k] l r $ \args ->
   do t <- valueArgument (fromIntegral ix) args
      key <- liftIO (peekLuaString0 k)
      v <- indexValue t (String key)
@@ -582,32 +587,32 @@ lua_getfield_hs l ix k out =
           push args v
 
 foreign export ccall lua_setfield_hs
-  :: Ptr () -> CInt -> CString -> IO CInt
+  :: EntryPoint (CInt -> CString -> IO CInt)
 
 -- | [-1, +0, e]
-lua_setfield_hs :: Ptr () -> CInt -> CString -> IO CInt
-lua_setfield_hs l ix k =
-  reentry "lua_setfield" [cArg ix, cstringArg0 k] l $ \args ->
+lua_setfield_hs :: EntryPoint (CInt -> CString -> IO CInt)
+lua_setfield_hs l r ix k =
+  reentry "lua_setfield" [cArg ix, cstringArg0 k] l r $ \args ->
   do t <- valueArgument (fromIntegral ix) args
      v <- pop args
      key <- liftIO (peekLuaString0 k)
      setTable t (String key) v
 
-foreign export ccall lua_createtable_hs :: Ptr () -> CInt -> CInt -> IO CInt
+foreign export ccall lua_createtable_hs :: EntryPoint (CInt -> CInt -> IO CInt)
 
 -- | [-0, +1, e]
-lua_createtable_hs :: Ptr () -> CInt -> CInt -> IO CInt
-lua_createtable_hs l na nh =
-  reentry "lua_createtable" [cArg na, cArg nh] l $ \args ->
+lua_createtable_hs :: EntryPoint (CInt -> CInt -> IO CInt)
+lua_createtable_hs l r na nh =
+  reentry "lua_createtable" [cArg na, cArg nh] l r $ \args ->
   do t <- machNewTable (fromIntegral na) (fromIntegral nh)
      push args (Table t)
 
 foreign export ccall lua_rawgeti_hs
-  :: Ptr () -> CInt -> Lua_Integer -> Ptr CInt -> IO CInt
+  :: EntryPoint (CInt -> Lua_Integer -> Ptr CInt -> IO CInt)
 
-lua_rawgeti_hs :: Ptr () -> CInt -> Lua_Integer -> Ptr CInt -> IO CInt
-lua_rawgeti_hs l ix n out =
-  reentry "lua_rawgeti" [cArg ix, cArg n] l $ \args ->
+lua_rawgeti_hs :: EntryPoint (CInt -> Lua_Integer -> Ptr CInt -> IO CInt)
+lua_rawgeti_hs l r ix n out =
+  reentry "lua_rawgeti" [cArg ix, cArg n] l r $ \args ->
   do t <- tableArgument (fromIntegral ix) args
      liftIO $
        do v <- getTableRaw t (Number (fromIntegral n))
@@ -615,11 +620,11 @@ lua_rawgeti_hs l ix n out =
           push args v
 
 foreign export ccall lua_rawgetp_hs
-  :: Ptr () -> CInt -> Ptr () -> Ptr CInt -> IO CInt
+  :: EntryPoint (CInt -> Ptr () -> Ptr CInt -> IO CInt)
 
-lua_rawgetp_hs :: Ptr () -> CInt -> Ptr () -> Ptr CInt -> IO CInt
-lua_rawgetp_hs l ix p out =
-  reentry "lua_rawgetp" [cArg ix, cArg p] l $ \args ->
+lua_rawgetp_hs :: EntryPoint (CInt -> Ptr () -> Ptr CInt -> IO CInt)
+lua_rawgetp_hs l r ix p out =
+  reentry "lua_rawgetp" [cArg ix, cArg p] l r $ \args ->
   do t <- tableArgument (fromIntegral ix) args
      liftIO $
        do v <- getTableRaw t (LightUserData p)
@@ -627,11 +632,11 @@ lua_rawgetp_hs l ix p out =
           push args v
 
 foreign export ccall lua_rawget_hs
-  :: Ptr () -> CInt -> Ptr CInt -> IO CInt
+  :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
 
-lua_rawget_hs :: Ptr () -> CInt -> Ptr CInt -> IO CInt
-lua_rawget_hs l ix out =
-  reentry "lua_rawget" [cArg ix] l $ \args ->
+lua_rawget_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
+lua_rawget_hs l r ix out =
+  reentry "lua_rawget" [cArg ix] l r $ \args ->
   do t <- tableArgument (fromIntegral ix) args
      k <- pop args
      liftIO $
@@ -640,11 +645,11 @@ lua_rawget_hs l ix out =
           push args v
 
 foreign export ccall lua_geti_hs
-  :: Ptr () -> CInt -> Lua_Integer -> Ptr CInt -> IO CInt
+  :: EntryPoint (CInt -> Lua_Integer -> Ptr CInt -> IO CInt)
 
-lua_geti_hs :: Ptr () -> CInt -> Lua_Integer -> Ptr CInt -> IO CInt
-lua_geti_hs l ix n out =
-  reentry "lua_geti" [cArg ix, cArg n] l $ \args ->
+lua_geti_hs :: EntryPoint (CInt -> Lua_Integer -> Ptr CInt -> IO CInt)
+lua_geti_hs l r ix n out =
+  reentry "lua_geti" [cArg ix, cArg n] l r $ \args ->
   do t <- valueArgument (fromIntegral ix) args
      v <- indexValue t (Number (fromIntegral n))
      liftIO $
@@ -652,11 +657,11 @@ lua_geti_hs l ix n out =
           push args v
 
 foreign export ccall lua_gettable_hs
-  :: Ptr () -> CInt -> Ptr CInt -> IO CInt
+  :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
 
-lua_gettable_hs :: Ptr () -> CInt -> Ptr CInt -> IO CInt
-lua_gettable_hs l ix out =
-  reentry "lua_gettable" [cArg ix] l $ \args ->
+lua_gettable_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
+lua_gettable_hs l r ix out =
+  reentry "lua_gettable" [cArg ix] l r $ \args ->
   do t <- valueArgument (fromIntegral ix) args
      k <- pop args
      v <- indexValue t k
@@ -665,11 +670,11 @@ lua_gettable_hs l ix out =
           push args v
 
 foreign export ccall lua_rawset_hs
-  :: Ptr () -> CInt -> IO CInt
+  :: EntryPoint (CInt -> IO CInt)
 
-lua_rawset_hs :: Ptr () -> CInt -> IO CInt
-lua_rawset_hs l ix =
-  reentry "lua_rawset" [cArg ix] l $ \args ->
+lua_rawset_hs :: EntryPoint (CInt -> IO CInt)
+lua_rawset_hs l r ix =
+  reentry "lua_rawset" [cArg ix] l r $ \args ->
   do t <- tableArgument (fromIntegral ix) args
      kv <- liftIO (popN args 2)
      case kv of
@@ -679,31 +684,31 @@ lua_rawset_hs l ix =
        _                                   -> luaError "lua_rawset: missing arguments"
 
 foreign export ccall lua_seti_hs
-  :: Ptr () -> CInt -> Lua_Integer -> IO CInt
+  :: EntryPoint (CInt -> Lua_Integer -> IO CInt)
 
-lua_seti_hs :: Ptr () -> CInt -> Lua_Integer -> IO CInt
-lua_seti_hs l ix n =
-  reentry "lua_seti" [cArg ix, cArg n] l $ \args ->
+lua_seti_hs :: EntryPoint (CInt -> Lua_Integer -> IO CInt)
+lua_seti_hs l r ix n =
+  reentry "lua_seti" [cArg ix, cArg n] l r $ \args ->
   do t <- valueArgument (fromIntegral ix) args
      v <- pop args
      setTable t (Number (fromIntegral n)) v
 
 foreign export ccall lua_rawseti_hs
-  :: Ptr () -> CInt -> Lua_Integer -> IO CInt
+  :: EntryPoint (CInt -> Lua_Integer -> IO CInt)
 
-lua_rawseti_hs :: Ptr () -> CInt -> Lua_Integer -> IO CInt
-lua_rawseti_hs l ix n =
-  reentry "lua_rawseti" [cArg ix, cArg n] l $ \args ->
+lua_rawseti_hs :: EntryPoint (CInt -> Lua_Integer -> IO CInt)
+lua_rawseti_hs l r ix n =
+  reentry "lua_rawseti" [cArg ix, cArg n] l r $ \args ->
   do t <- tableArgument (fromIntegral ix) args
      v <- pop args
      setTableRaw t (Number (fromIntegral n)) v
 
 foreign export ccall lua_rawsetp_hs
-  :: Ptr () -> CInt -> Ptr () -> IO CInt
+  :: EntryPoint (CInt -> Ptr () -> IO CInt)
 
-lua_rawsetp_hs :: Ptr () -> CInt -> Ptr () -> IO CInt
-lua_rawsetp_hs l ix p =
-  reentry "lua_rawsetp" [cArg ix, cArg p] l $ \args ->
+lua_rawsetp_hs :: EntryPoint (CInt -> Ptr () -> IO CInt)
+lua_rawsetp_hs l r ix p =
+  reentry "lua_rawsetp" [cArg ix, cArg p] l r $ \args ->
   do t <- tableArgument (fromIntegral ix) args
      v <- pop args
      setTableRaw t (LightUserData p) v
@@ -711,11 +716,11 @@ lua_rawsetp_hs l ix p =
 ------------------------------------------------------------------------
 
 foreign export ccall lua_rawequal_hs
-  :: Ptr () -> CInt -> CInt -> Ptr CInt -> IO CInt
+  :: EntryPoint (CInt -> CInt -> Ptr CInt -> IO CInt)
 
-lua_rawequal_hs :: Ptr () -> CInt -> CInt -> Ptr CInt -> IO CInt
-lua_rawequal_hs l ix1 ix2 out =
-  reentry "lua_rawequal" [cArg ix1, cArg ix2] l $ \args ->
+lua_rawequal_hs :: EntryPoint (CInt -> CInt -> Ptr CInt -> IO CInt)
+lua_rawequal_hs l r ix1 ix2 out =
+  reentry "lua_rawequal" [cArg ix1, cArg ix2] l r $ \args ->
   do x <- valueArgumentOpt (fromIntegral ix1) args
      y <- valueArgumentOpt (fromIntegral ix2) args
      liftIO $ poke out $
@@ -724,11 +729,11 @@ lua_rawequal_hs l ix1 ix2 out =
           _                         -> 0
 
 foreign export ccall lua_compare_hs
-  :: Ptr () -> CInt -> CInt -> CInt -> Ptr CInt -> IO CInt
+  :: EntryPoint (CInt -> CInt -> CInt -> Ptr CInt -> IO CInt)
 
-lua_compare_hs :: Ptr () -> CInt -> CInt -> CInt -> Ptr CInt -> IO CInt
-lua_compare_hs l ix1 ix2 op out =
-  reentry "lua_compare" [cArg ix1, cArg ix2, cArg op] l $ \args ->
+lua_compare_hs :: EntryPoint (CInt -> CInt -> CInt -> Ptr CInt -> IO CInt)
+lua_compare_hs l r ix1 ix2 op out =
+  reentry "lua_compare" [cArg ix1, cArg ix2, cArg op] l r $ \args ->
   -- Note: Also returns 0 if any of the indices is not valid.
   do mbx <- valueArgumentOpt (fromIntegral ix1) args
      mby <- valueArgumentOpt (fromIntegral ix2) args
@@ -744,11 +749,11 @@ lua_compare_hs l ix1 ix2 op out =
        _ -> return 0
      liftIO (poke out ans)
 
-foreign export ccall lua_arith_hs :: Ptr () -> CInt -> IO CInt
+foreign export ccall lua_arith_hs :: EntryPoint (CInt -> IO CInt)
 
-lua_arith_hs :: Ptr () -> CInt -> IO CInt
-lua_arith_hs l opNum =
-  reentry "lua_arith" [cArg opNum] l $
+lua_arith_hs :: EntryPoint (CInt -> IO CInt)
+lua_arith_hs l r opNum =
+  reentry "lua_arith" [cArg opNum] l r $
     case opNum of
       #{const LUA_OPADD}  -> arith2 "__add" (+)
       #{const LUA_OPSUB}  -> arith2 "__sub" (-)
@@ -798,11 +803,11 @@ lua_arith_hs l opNum =
 
 
 foreign export ccall lua_getmetatable_hs
-  :: Ptr () -> CInt -> Ptr CInt -> IO CInt
+  :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
 
-lua_getmetatable_hs :: Ptr () -> CInt -> Ptr CInt -> IO CInt
-lua_getmetatable_hs l ix out =
-  reentry "lua_getmetatable" [cArg ix] l $ \args ->
+lua_getmetatable_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
+lua_getmetatable_hs l r ix out =
+  reentry "lua_getmetatable" [cArg ix] l r $ \args ->
   do v <- valueArgument (fromIntegral ix) args
      mt <- valueMetatable v
      case mt of
@@ -813,12 +818,12 @@ lua_getmetatable_hs l ix out =
 ------------------------------------------------------------------------
 
 foreign export ccall lua_newuserdata_hs
-  :: Ptr () -> CSize -> Ptr (Ptr ()) -> IO CInt
+  :: EntryPoint (CSize -> Ptr (Ptr ()) -> IO CInt)
 
 -- | [-0, +1, e]
-lua_newuserdata_hs :: Ptr () -> CSize -> Ptr (Ptr ()) -> IO CInt
-lua_newuserdata_hs l sz out =
-  reentry "lua_newuserdata" [cArg sz] l $ \args ->
+lua_newuserdata_hs :: EntryPoint (CSize -> Ptr (Ptr ()) -> IO CInt)
+lua_newuserdata_hs l r sz out =
+  reentry "lua_newuserdata" [cArg sz] l r $ \args ->
   do let sz' = fromIntegral sz
      fptr <- liftIO (mallocForeignPtrBytes sz')
      u <- machNewUserData fptr sz'
@@ -830,11 +835,11 @@ lua_newuserdata_hs l sz out =
      push args (UserData u)
 
 foreign export ccall lua_getuservalue_hs
-  :: Ptr () -> CInt -> Ptr CInt -> IO CInt
+  :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
 
-lua_getuservalue_hs :: Ptr () -> CInt -> Ptr CInt -> IO CInt
-lua_getuservalue_hs l ix out =
-  reentry "lua_getuservalue" [cArg ix] l $ \args ->
+lua_getuservalue_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
+lua_getuservalue_hs l r ix out =
+  reentry "lua_getuservalue" [cArg ix] l r $ \args ->
   do v <- valueArgument (fromIntegral ix) args
      case v of
        UserData uref ->
@@ -845,11 +850,11 @@ lua_getuservalue_hs l ix out =
        _ -> luaError "lua_getuservalue: argument is not full userdata"
 
 foreign export ccall lua_setuservalue_hs
-  :: Ptr () -> CInt -> IO CInt
+  :: EntryPoint (CInt -> IO CInt)
 
-lua_setuservalue_hs :: Ptr () -> CInt -> IO CInt
-lua_setuservalue_hs l ix =
-  reentry "lua_setuservalue" [cArg ix] l $ \args ->
+lua_setuservalue_hs :: EntryPoint (CInt -> IO CInt)
+lua_setuservalue_hs l r ix =
+  reentry "lua_setuservalue" [cArg ix] l r $ \args ->
   do v         <- valueArgument (fromIntegral ix) args
      uservalue <- pop args
      case v of
@@ -864,12 +869,12 @@ lua_multret :: CInt
 lua_multret = (#const LUA_MULTRET)
 
 foreign export ccall lua_callk_hs
-  :: Ptr () -> CInt -> CInt -> Lua_KContext -> Lua_KFunction -> IO CInt
+  :: EntryPoint (CInt -> CInt -> Lua_KContext -> Lua_KFunction -> IO CInt)
 
 -- | [-0, +1, e]
-lua_callk_hs :: Ptr () -> CInt -> CInt -> Lua_KContext -> Lua_KFunction -> IO CInt
-lua_callk_hs l narg nresult ctx k =
-  reentry "lua_callk" [cArg narg, cArg nresult, cArg ctx, cArg k] l $ \args ->
+lua_callk_hs :: EntryPoint (CInt -> CInt -> Lua_KContext -> Lua_KFunction -> IO CInt)
+lua_callk_hs l r narg nresult ctx k =
+  reentry "lua_callk" [cArg narg, cArg nresult, cArg ctx, cArg k] l r $ \args ->
   do fxs <- popN args (fromIntegral narg + 1)
      case fxs of
        f:xs ->
@@ -881,13 +886,13 @@ lua_callk_hs l narg nresult ctx k =
        _ -> luaError "lua_callk: invalid narg"
 
 foreign export ccall lua_pcallk_hs
-  :: Ptr () -> CInt -> CInt -> CInt -> Ptr CInt -> IO CInt
+  :: EntryPoint (CInt -> CInt -> CInt -> Ptr CInt -> IO CInt)
 
 -- | [-0, +1, e]
 lua_pcallk_hs ::
-  Ptr () -> CInt -> CInt -> CInt -> Ptr CInt -> IO CInt
-lua_pcallk_hs l narg nresult msgh out =
-  reentry "lua_callk" [cArg narg, cArg nresult, cArg msgh] l $ \args ->
+  EntryPoint (CInt -> CInt -> CInt -> Ptr CInt -> IO CInt)
+lua_pcallk_hs l r narg nresult msgh out =
+  reentry "lua_callk" [cArg narg, cArg nresult, cArg msgh] l r $ \args ->
   do h <- if msgh == 0
             then return DefaultHandler
             else FunHandler <$> functionArgument (fromIntegral msgh) args
@@ -910,12 +915,12 @@ lua_pcallk_hs l narg nresult msgh out =
 
 ------------------------------------------------------------------------
 
-foreign export ccall lua_setmetatable_hs :: Ptr () -> CInt -> IO CInt
+foreign export ccall lua_setmetatable_hs :: EntryPoint (CInt -> IO CInt)
 
 -- | [-1, +0, e]
-lua_setmetatable_hs :: Ptr () -> CInt -> IO CInt
-lua_setmetatable_hs l idx =
-  reentry "lua_setmetatable" [cArg idx] l $ \args ->
+lua_setmetatable_hs :: EntryPoint (CInt -> IO CInt)
+lua_setmetatable_hs l r idx =
+  reentry "lua_setmetatable" [cArg idx] l r $ \args ->
   do v <- valueArgument (fromIntegral idx) args
      m <- pop args
      case m of -- must be non-empty becuase previous line worked
@@ -925,22 +930,22 @@ lua_setmetatable_hs l idx =
 
 ------------------------------------------------------------------------
 
-foreign export ccall lua_len_hs :: Ptr () -> CInt -> IO CInt
+foreign export ccall lua_len_hs :: EntryPoint (CInt -> IO CInt)
 
 -- | [-0, +1, e]
-lua_len_hs :: Ptr () -> CInt -> IO CInt
-lua_len_hs l idx =
-  reentry "lua_len" [cArg idx] l $ \args ->
+lua_len_hs :: EntryPoint (CInt -> IO CInt)
+lua_len_hs l r idx =
+  reentry "lua_len" [cArg idx] l r $ \args ->
   do v <- valueArgument (fromIntegral idx) args
      len <- valueLength v
      liftIO (push args len)
 
-foreign export ccall lua_rawlen_hs :: Ptr () -> CInt -> Ptr CSize -> IO CInt
+foreign export ccall lua_rawlen_hs :: EntryPoint (CInt -> Ptr CSize -> IO CInt)
 
 -- | [-0, +0, –]
-lua_rawlen_hs :: Ptr () -> CInt -> Ptr CSize -> IO CInt
-lua_rawlen_hs l idx out =
-  reentry "lua_rawlen" [cArg idx] l $ \args ->
+lua_rawlen_hs :: EntryPoint (CInt -> Ptr CSize -> IO CInt)
+lua_rawlen_hs l r idx out =
+  reentry "lua_rawlen" [cArg idx] l r $ \args ->
   do v <- valueArgument (fromIntegral idx) args
      liftIO $
        do len <- case v of
@@ -954,12 +959,12 @@ lua_rawlen_hs l idx out =
 
 -- int lua_load (lua_State *L, lua_Reader reader, void *data, const char *chunkname, const char *mode) {
 foreign export ccall lua_load_hs ::
-  Ptr () -> CString -> CSize -> CString -> CString -> Ptr CInt -> IO CInt
+  EntryPoint (CString -> CSize -> CString -> CString -> Ptr CInt -> IO CInt)
 
-lua_load_hs :: Ptr () -> CString -> CSize -> CString -> CString -> Ptr CInt -> IO CInt
-lua_load_hs l chunk chunksize chunkname mode out =
+lua_load_hs :: EntryPoint (CString -> CSize -> CString -> CString -> Ptr CInt -> IO CInt)
+lua_load_hs l r chunk chunksize chunkname mode out =
   -- Note: this is an internal entry point, the C api handles the Reader
-  reentry "lua_load" [cstringArg0 chunkname, cstringArg0 mode] l
+  reentry "lua_load" [cstringArg0 chunkname, cstringArg0 mode] l r
      $ \args ->
     do chunk1<- liftIO (B.packCStringLen (chunk, fromIntegral chunksize))
        name  <- if nullPtr == chunkname
@@ -978,22 +983,22 @@ lua_load_hs l chunk chunksize chunkname mode out =
 
 ------------------------------------------------------------------------
 
-foreign export ccall lua_setglobal_hs :: Ptr () -> CString -> IO CInt
+foreign export ccall lua_setglobal_hs :: EntryPoint (CString -> IO CInt)
 
-lua_setglobal_hs :: Ptr () -> CString -> IO CInt
-lua_setglobal_hs l cname =
-  reentry "lua_setglobal" [cstringArg0 cname] l $ \args ->
+lua_setglobal_hs :: EntryPoint (CString -> IO CInt)
+lua_setglobal_hs l r cname =
+  reentry "lua_setglobal" [cstringArg0 cname] l r $ \args ->
   do v <- pop args
      t <- getsMachEnv machGlobals
      liftIO $
        do k <- peekLuaString0 cname
           setTableRaw t (String k) v
 
-foreign export ccall lua_getglobal_hs :: Ptr () -> CString -> Ptr CInt -> IO CInt
+foreign export ccall lua_getglobal_hs :: EntryPoint (CString -> Ptr CInt -> IO CInt)
 
-lua_getglobal_hs :: Ptr () -> CString -> Ptr CInt -> IO CInt
-lua_getglobal_hs l cname out =
-  reentry "lua_getglobal" [cstringArg0 cname] l $ \args ->
+lua_getglobal_hs :: EntryPoint (CString -> Ptr CInt -> IO CInt)
+lua_getglobal_hs l r cname out =
+  reentry "lua_getglobal" [cstringArg0 cname] l r $ \args ->
   do t <- getsMachEnv machGlobals
      liftIO $
        do k <- peekLuaString0 cname
@@ -1003,21 +1008,21 @@ lua_getglobal_hs l cname out =
 
 ------------------------------------------------------------------------
 
-foreign export ccall lua_concat_hs :: Ptr () -> CInt -> IO CInt
+foreign export ccall lua_concat_hs :: EntryPoint (CInt -> IO CInt)
 
-lua_concat_hs :: Ptr () -> CInt -> IO CInt
-lua_concat_hs l n =
-  reentry "lua_concat" [cArg n] l $ \args ->
+lua_concat_hs :: EntryPoint (CInt -> IO CInt)
+lua_concat_hs l r n =
+  reentry "lua_concat" [cArg n] l r $ \args ->
   do xs <- popN args (fromIntegral n)
      res <- opConcat xs
      push args res
 
 foreign export ccall lua_dump_hs ::
-  Ptr () -> FunPtr () -> Ptr () -> CInt -> Ptr CInt -> IO CInt
+  EntryPoint (FunPtr () -> Ptr () -> CInt -> Ptr CInt -> IO CInt)
 
-lua_dump_hs :: Ptr () -> FunPtr () -> Ptr () -> CInt -> Ptr CInt -> IO CInt
-lua_dump_hs l writer dat strip _out =
-  reentry "lua_dump" [cArg writer, cArg dat, cArg strip] l $ \_args ->
+lua_dump_hs :: EntryPoint (FunPtr () -> Ptr () -> CInt -> Ptr CInt -> IO CInt)
+lua_dump_hs l r writer dat strip _out =
+  reentry "lua_dump" [cArg writer, cArg dat, cArg strip] l r $ \_args ->
     luaError "lua_dump not implemented"
 
 ------------------------------------------------------------------------
@@ -1030,11 +1035,11 @@ pokeNotNull ptr a = unless (ptr == nullPtr) (poke ptr a)
 
 
 foreign export ccall
-  lua_tothread_hs :: Ptr () -> CInt -> Ptr (Ptr ()) -> IO CInt
+  lua_tothread_hs :: EntryPoint (CInt -> Ptr (Ptr ()) -> IO CInt)
 
-lua_tothread_hs :: Ptr () -> CInt -> Ptr (Ptr ()) -> IO CInt
-lua_tothread_hs st n res =
-  reentry "lua_tothread" [cArg n] st $ \args ->
+lua_tothread_hs :: EntryPoint (CInt -> Ptr (Ptr ()) -> IO CInt)
+lua_tothread_hs l r n res =
+  reentry "lua_tothread" [cArg n] l r $ \args ->
     do v <- valueArgument (fromIntegral n) args
        p <- case v of
           Thread t ->
@@ -1044,11 +1049,11 @@ lua_tothread_hs st n res =
        liftIO (poke res p)
 
 foreign export ccall
-  lua_pushthread_hs :: Ptr () -> Ptr CInt -> IO CInt
+  lua_pushthread_hs :: EntryPoint (Ptr CInt -> IO CInt)
 
-lua_pushthread_hs :: Ptr () -> Ptr CInt -> IO CInt
-lua_pushthread_hs st res =
-  reentry "lua_pushthread" [] st $ \args ->
+lua_pushthread_hs :: EntryPoint (Ptr CInt -> IO CInt)
+lua_pushthread_hs l r res =
+  reentry "lua_pushthread" [] l r $ \args ->
     do ref    <- machCurrentThread
        isMain <- machIsMainThread ref
        liftIO (poke res (if isMain then 1 else 0))
@@ -1056,11 +1061,11 @@ lua_pushthread_hs st res =
 
 
 foreign export ccall
-  lua_status_hs :: Ptr () -> Ptr CInt -> IO CInt
+  lua_status_hs :: EntryPoint (Ptr CInt -> IO CInt)
 
-lua_status_hs :: Ptr () -> Ptr CInt -> IO CInt
-lua_status_hs l out =
-  reentry "lua_status" [] l $ \_ ->
+lua_status_hs :: EntryPoint (Ptr CInt -> IO CInt)
+lua_status_hs l r out =
+  reentry "lua_status" [] l r $ \_ ->
      do thread <- readRef =<< extToThreadRef =<< liftIO (deRefLuaState l)
         let statusNum =
               case threadStatus thread of
@@ -1072,11 +1077,11 @@ lua_status_hs l out =
         liftIO (poke out statusNum)
 
 foreign export ccall
-  lua_resume_hs :: Ptr () -> Ptr () -> CInt -> Ptr CInt -> IO CInt
+  lua_resume_hs :: EntryPoint (Ptr () -> CInt -> Ptr CInt -> IO CInt)
 
-lua_resume_hs :: Ptr () -> Ptr () -> CInt -> Ptr CInt -> IO CInt
-lua_resume_hs l from nargs out =
-  reentry "lua_resume" [cArg from, cArg nargs] l $ \args ->
+lua_resume_hs :: EntryPoint (Ptr () -> CInt -> Ptr CInt -> IO CInt)
+lua_resume_hs l r from nargs out =
+  reentry "lua_resume" [cArg from, cArg nargs] l r $ \args ->
     do tRef <- extToThreadRef =<< liftIO (deRefLuaState l)
 
        st <- getThreadStatus tRef
@@ -1118,11 +1123,11 @@ lua_resume_hs l from nargs out =
 
 
 foreign export ccall
-  lua_yieldk_hs :: Ptr () -> CInt -> Lua_KContext -> Lua_KFunction -> IO CInt
+  lua_yieldk_hs :: EntryPoint (CInt -> Lua_KContext -> Lua_KFunction -> IO CInt)
 
-lua_yieldk_hs :: Ptr () -> CInt -> Lua_KContext -> Lua_KFunction -> IO CInt
-lua_yieldk_hs l nResults ctx func =
-  reentry "lua_yieldk" [cArg nResults, cArg ctx, cArg func] l $ \args ->
+lua_yieldk_hs :: EntryPoint (CInt -> Lua_KContext -> Lua_KFunction -> IO CInt)
+lua_yieldk_hs l r nResults ctx func =
+  reentry "lua_yieldk" [cArg nResults, cArg ctx, cArg func] l r $ \args ->
     do outputs <- popN args (fromIntegral nResults)
 
        tRef <- extToThreadRef =<< liftIO (deRefLuaState l)
@@ -1141,22 +1146,22 @@ lua_yieldk_hs l nResults ctx func =
 
 
 foreign export ccall
-  lua_newthread_hs :: Ptr () -> Ptr (Ptr ()) -> IO CInt
+  lua_newthread_hs :: EntryPoint (Ptr (Ptr ()) -> IO CInt)
 
-lua_newthread_hs :: Ptr () -> Ptr (Ptr ()) -> IO CInt
-lua_newthread_hs l out =
-  reentry "lua_newthread" [] l $ \args ->
+lua_newthread_hs :: EntryPoint (Ptr (Ptr ()) -> IO CInt)
+lua_newthread_hs l r out =
+  reentry "lua_newthread" [] l r $ \args ->
     do threadRef <- machNewThread
        thread    <- readRef threadRef
        liftIO (poke out (unsafeForeignPtrToPtr (threadCPtr thread)))
        push args (Thread threadRef)
 
 foreign export ccall
-  lua_isyieldable_hs :: Ptr () -> Ptr CInt -> IO CInt
+  lua_isyieldable_hs :: EntryPoint (Ptr CInt -> IO CInt)
 
-lua_isyieldable_hs :: Ptr () -> Ptr CInt -> IO CInt
-lua_isyieldable_hs l out =
-  reentry "lua_isyieldable" [] l $ \_ ->
+lua_isyieldable_hs :: EntryPoint (Ptr CInt -> IO CInt)
+lua_isyieldable_hs l r out =
+  reentry "lua_isyieldable" [] l r $ \_ ->
     do tRef <- extToThreadRef =<< liftIO (deRefLuaState l)
 
        isMain <- machIsMainThread tRef
@@ -1243,11 +1248,11 @@ importExecEnv = deRefStablePtr . castPtrToStablePtr
 ------------------------------------------------------------------------
 
 foreign export ccall
-  lua_getstack_hs :: Ptr () -> CInt -> Ptr LuaDebug -> Ptr CInt -> IO CInt
+  lua_getstack_hs :: EntryPoint (CInt -> Ptr LuaDebug -> Ptr CInt -> IO CInt)
 
-lua_getstack_hs :: Ptr () -> CInt -> Ptr LuaDebug -> Ptr CInt -> IO CInt
-lua_getstack_hs l level ar out =
-  reentry "lua_getstack" [cArg level, cArg (castPtr ar :: Ptr ())] l $ \_ ->
+lua_getstack_hs :: EntryPoint (CInt -> Ptr LuaDebug -> Ptr CInt -> IO CInt)
+lua_getstack_hs l r level ar out =
+  reentry "lua_getstack" [cArg level, cArg (castPtr ar :: Ptr ())] l r $ \_ ->
 
   do tRef <- extToThreadRef =<< liftIO (deRefLuaState l)
      thread <- readRef tRef
@@ -1270,11 +1275,11 @@ isNullCFunction _                = False
 ------------------------------------------------------------------------
 
 foreign export ccall
-  lua_getinfo_hs :: Ptr () -> CString -> Ptr LuaDebug -> Ptr CInt -> IO CInt
+  lua_getinfo_hs :: EntryPoint (CString -> Ptr LuaDebug -> Ptr CInt -> IO CInt)
 
-lua_getinfo_hs :: Ptr () -> CString -> Ptr LuaDebug -> Ptr CInt -> IO CInt
-lua_getinfo_hs l whatPtr ar out =
-  reentry "lua_getinfo" [cstringArg0 whatPtr, cArg (castPtr ar :: Ptr ())] l $ \args ->
+lua_getinfo_hs :: EntryPoint (CString -> Ptr LuaDebug -> Ptr CInt -> IO CInt)
+lua_getinfo_hs l r whatPtr ar out =
+  reentry "lua_getinfo" [cstringArg0 whatPtr, cArg (castPtr ar :: Ptr ())] l r $ \args ->
   do (pc,execEnv) <- liftIO (importExecEnv =<< peekLuaDebugCallInfo ar)
      what          <- liftIO (peekCString whatPtr)
 
@@ -1343,11 +1348,11 @@ lua_getinfo_hs l whatPtr ar out =
 ------------------------------------------------------------------------
 
 foreign export ccall
-  lua_getlocal_hs :: Ptr () -> Ptr LuaDebug -> CInt -> Ptr CString -> IO CInt
+  lua_getlocal_hs :: EntryPoint (Ptr LuaDebug -> CInt -> Ptr CString -> IO CInt)
 
-lua_getlocal_hs :: Ptr () -> Ptr LuaDebug -> CInt -> Ptr CString -> IO CInt
-lua_getlocal_hs l ar n out =
-  reentry "lua_getlocal" [cArg (castPtr ar :: Ptr ()), cArg n] l $ \args ->
+lua_getlocal_hs :: EntryPoint (Ptr LuaDebug -> CInt -> Ptr CString -> IO CInt)
+lua_getlocal_hs l r ar n out =
+  reentry "lua_getlocal" [cArg (castPtr ar :: Ptr ()), cArg n] l r $ \args ->
     if ar == nullPtr
       then getLocalFunArgs (fromIntegral n) out args
       else getLocalStackArgs (fromIntegral n) out args ar
@@ -1388,11 +1393,11 @@ getLocalStackArgs n out args ar =
 ------------------------------------------------------------------------
 
 foreign export ccall
-  lua_getupvalue_hs :: Ptr () -> CInt -> CInt -> Ptr CString -> IO CInt
+  lua_getupvalue_hs :: EntryPoint (CInt -> CInt -> Ptr CString -> IO CInt)
 
-lua_getupvalue_hs :: Ptr () -> CInt -> CInt -> Ptr CString -> IO CInt
-lua_getupvalue_hs l funcindex n out =
-  reentry "lua_getupvalue" [cArg funcindex, cArg n] l $ \args ->
+lua_getupvalue_hs :: EntryPoint (CInt -> CInt -> Ptr CString -> IO CInt)
+lua_getupvalue_hs l r funcindex n out =
+  reentry "lua_getupvalue" [cArg funcindex, cArg n] l r $ \args ->
     do v <- valueArgument (fromIntegral funcindex) args
 
        let failure = poke out nullPtr
@@ -1419,11 +1424,11 @@ upvalueName (LuaFunction _ fun) n =
 ------------------------------------------------------------------------
 
 foreign export ccall
-  lua_setlocal_hs :: Ptr () -> Ptr LuaDebug -> CInt -> Ptr CString -> IO CInt
+  lua_setlocal_hs :: EntryPoint (Ptr LuaDebug -> CInt -> Ptr CString -> IO CInt)
 
-lua_setlocal_hs :: Ptr () -> Ptr LuaDebug -> CInt -> Ptr CString -> IO CInt
-lua_setlocal_hs l ar n out =
-  reentry "lua_setlocal" [cArg (castPtr ar :: Ptr ()), cArg n] l $ \args ->
+lua_setlocal_hs :: EntryPoint (Ptr LuaDebug -> CInt -> Ptr CString -> IO CInt)
+lua_setlocal_hs l r ar n out =
+  reentry "lua_setlocal" [cArg (castPtr ar :: Ptr ()), cArg n] l r $ \args ->
 
   do (pc,execEnv) <- liftIO (importExecEnv =<< peekLuaDebugCallInfo ar)
 
@@ -1447,11 +1452,11 @@ lua_setlocal_hs l ar n out =
 ------------------------------------------------------------------------
 
 foreign export ccall
-  lua_setupvalue_hs :: Ptr () -> CInt -> CInt -> Ptr CString -> IO CInt
+  lua_setupvalue_hs :: EntryPoint (CInt -> CInt -> Ptr CString -> IO CInt)
 
-lua_setupvalue_hs :: Ptr () -> CInt -> CInt -> Ptr CString -> IO CInt
-lua_setupvalue_hs l funcindex n out =
-  reentry "lua_setupvalue" [cArg funcindex, cArg n] l $ \args ->
+lua_setupvalue_hs :: EntryPoint (CInt -> CInt -> Ptr CString -> IO CInt)
+lua_setupvalue_hs l r funcindex n out =
+  reentry "lua_setupvalue" [cArg funcindex, cArg n] l r $ \args ->
 
     do v <- valueArgument (fromIntegral funcindex) args
 
@@ -1473,11 +1478,11 @@ lua_setupvalue_hs l funcindex n out =
 ------------------------------------------------------------------------
 
 foreign export ccall
-  lua_xmove_hs :: Ptr () -> Ptr () -> CInt -> IO CInt
+  lua_xmove_hs :: EntryPoint (Ptr () -> CInt -> IO CInt)
 
-lua_xmove_hs :: Ptr () -> Ptr () -> CInt -> IO CInt
-lua_xmove_hs l to n =
-  reentry "lua_xmove" [cArg to, cArg n] l $ \fromArgs ->
+lua_xmove_hs :: EntryPoint (Ptr () -> CInt -> IO CInt)
+lua_xmove_hs l r to n =
+  reentry "lua_xmove" [cArg to, cArg n] l r $ \fromArgs ->
 
     do fromRef <- extToThreadRef =<< liftIO (deRefLuaState l)
        toRef   <- extToThreadRef =<< liftIO (deRefLuaState to)
@@ -1493,14 +1498,14 @@ lua_xmove_hs l to n =
 ------------------------------------------------------------------------
 
 foreign export ccall
-  lua_upvaluejoin_hs :: Ptr () -> CInt -> CInt -> CInt -> CInt -> IO CInt
+  lua_upvaluejoin_hs :: EntryPoint (CInt -> CInt -> CInt -> CInt -> IO CInt)
 
 -- Make the n1-th upvalue of the Lua closure at index funcindex1 refer to
 -- the n2-th upvalue of the Lua closure at index funcindex2.
 -- [-0, +0, –]
-lua_upvaluejoin_hs :: Ptr () -> CInt -> CInt -> CInt -> CInt -> IO CInt
-lua_upvaluejoin_hs l f1 n1 f2 n2 =
-  reentry "lua_upvaluejoin" (cArg <$> [f1,n1,f2,n2]) l $ \args ->
+lua_upvaluejoin_hs :: EntryPoint (CInt -> CInt -> CInt -> CInt -> IO CInt)
+lua_upvaluejoin_hs l r f1 n1 f2 n2 =
+  reentry "lua_upvaluejoin" (cArg <$> [f1,n1,f2,n2]) l r $ \args ->
     do f1' <- valueArgument (fromIntegral f1) args
        f2' <- valueArgument (fromIntegral f2) args
        let n1' = fromIntegral n1 - 1
@@ -1523,38 +1528,38 @@ replaceAt i x v
 ------------------------------------------------------------------------
 
 foreign export ccall
-  lua_upvalueid_hs :: Ptr () -> CInt -> CInt -> Ptr (Ptr ()) -> IO CInt
+  lua_upvalueid_hs :: EntryPoint (CInt -> CInt -> Ptr (Ptr ()) -> IO CInt)
 
-lua_upvalueid_hs :: Ptr () -> CInt -> CInt -> Ptr (Ptr ()) -> IO CInt
-lua_upvalueid_hs l funcindex n _out =
-  reentry "lua_upvalueid" (cArg <$> [funcindex,n]) l $ \_ ->
+lua_upvalueid_hs :: EntryPoint (CInt -> CInt -> Ptr (Ptr ()) -> IO CInt)
+lua_upvalueid_hs l r funcindex n _out =
+  reentry "lua_upvalueid" (cArg <$> [funcindex,n]) l r $ \_ ->
     luaError "lua_upvalueid: not implemented"
 
 
 foreign export ccall
-  lua_gc_hs :: Ptr () -> CInt -> CInt -> Ptr CInt -> IO CInt
+  lua_gc_hs :: EntryPoint (CInt -> CInt -> Ptr CInt -> IO CInt)
 
-lua_gc_hs :: Ptr () -> CInt -> CInt -> Ptr CInt -> IO CInt
-lua_gc_hs l what dat out =
-  reentryIO "lua_gc" [cArg what, cArg dat] l $ \_ ->
+lua_gc_hs :: EntryPoint (CInt -> CInt -> Ptr CInt -> IO CInt)
+lua_gc_hs l r what dat out =
+  reentryIO "lua_gc" [cArg what, cArg dat] l r $ \_ ->
     poke out 0
 
 
 foreign export ccall
-  lua_setallocf_hs :: Ptr () -> Lua_Alloc -> Ptr () -> IO CInt
+  lua_setallocf_hs :: EntryPoint (Lua_Alloc -> Ptr () -> IO CInt)
 
-lua_setallocf_hs :: Ptr () -> Lua_Alloc -> Ptr () -> IO CInt
-lua_setallocf_hs l f ud =
-  reentry "lua_setallocf" [cArg f, cArg ud] l $ \_ -> return()
+lua_setallocf_hs :: EntryPoint (Lua_Alloc -> Ptr () -> IO CInt)
+lua_setallocf_hs l r f ud =
+  reentry "lua_setallocf" [cArg f, cArg ud] l r $ \_ -> return()
   -- XXX: Not implemented, ignored
 
 
 foreign export ccall
-  lua_topointer_hs :: Ptr () -> CInt -> Ptr (Ptr ()) -> IO CInt
+  lua_topointer_hs :: EntryPoint (CInt -> Ptr (Ptr ()) -> IO CInt)
 
-lua_topointer_hs :: Ptr () -> CInt -> Ptr (Ptr ()) -> IO CInt
-lua_topointer_hs l ix out =
-  reentry "lua_topointer" [cArg ix] l $ \args ->
+lua_topointer_hs :: EntryPoint (CInt -> Ptr (Ptr ()) -> IO CInt)
+lua_topointer_hs l r ix out =
+  reentry "lua_topointer" [cArg ix] l r $ \args ->
   do mb <- valueArgument (fromIntegral ix) args
      liftIO $ poke out $
              case mb of
