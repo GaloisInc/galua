@@ -26,7 +26,6 @@ library
                        Galua.Overloading
                        Galua.Reference
                        Galua.Value
-                       Galua.NameResolution
                        Galua.LuaString
                        Galua.Stepper
                        Galua.CObjInfo
@@ -39,6 +38,7 @@ library
                        Galua.Micro.Translate.ExplicitRefs
                        Galua.Micro.Translate.JoinBlocks
 
+                       Galua.Names.Find
 
                        Galua.Util.Cache
                        Galua.Util.Table
