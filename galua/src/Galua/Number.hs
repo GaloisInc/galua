@@ -103,12 +103,11 @@ numberIDiv x y = liftDoubleOp (\a b -> N.floor (a/b)) x y
 -- Casts
 ------------------------------------------------------------------------
 
-stringToNumber :: String -> Maybe Number
-stringToNumber x = Double <$> readMaybe x -- XXX: wrong number format
-
 numberToString :: Number -> String
 numberToString (Int x) = show x
-numberToString (Double x) = show x -- XXX: wrong number format
+numberToString (Double x) = show x
+  -- XXX: this produces valid output, but it might differ a bit from
+  -- the exact formatting of the Lua implementation.
 
 leIntFloat :: Int -> Double -> Bool
 leIntFloat i d
