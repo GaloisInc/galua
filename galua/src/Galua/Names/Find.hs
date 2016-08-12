@@ -1,6 +1,10 @@
 {-# LANGUAGE FlexibleInstances#-}
 -- | Identify expressions that refer to interesting names of things.
-module Galua.Names.Find (chunkLocations) where
+module Galua.Names.Find
+  ( chunkLocations
+  , LocatedExprName(..)
+  , ExprName(..)
+  ) where
 
 import qualified Language.Lua.Syntax as Lua
 import Language.Lua.Annotated.Syntax
@@ -17,13 +21,15 @@ import Data.Foldable
 import Galua.Number
 
 import Language.Lua.Annotated.Parser
-import Text.Show.Pretty(pPrint)
+
+{-
+-- import Text.Show.Pretty(pPrint)
 
 test = do res <- parseFile "test.lua"
           case res of
             Left x -> fail (show x)
             Right a -> pPrint (chunkLocations a)
-
+-}
 
 chunkLocations :: Block SourcePos -> [LocatedExprName]
 chunkLocations b = case resolve b of
