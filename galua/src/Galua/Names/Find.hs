@@ -23,7 +23,8 @@ import Galua.Number
 import Language.Lua.Annotated.Parser
 
 {-
--- import Text.Show.Pretty(pPrint)
+import Text.Show.Pretty(pPrint)
+import Debug.Trace
 
 test = do res <- parseFile "test.lua"
           case res of
@@ -104,8 +105,8 @@ instance Resolve (Stat SourcePos) where
       If _ xs ys            -> resolve (xs,ys)
       ForRange _ i x y z b  -> resolve (i,(x,(y,(z,b))))
       ForIn _ is xs b       -> resolve (is,(xs,b))
-      FunAssign{}           -> ignore
-      LocalFunAssign{}      -> ignore
+      FunAssign _ _ x       -> resolve x
+      LocalFunAssign _ _ b  -> resolve b
       LocalAssign _ xs b    -> resolve (xs,b)
       EmptyStat{}           -> ignore
 
@@ -121,11 +122,18 @@ instance Resolve (Exp SourcePos) where
                           Just ok -> pure (EString (LBS.toStrict ok))
                           Nothing -> ignore
       Vararg a       -> ignore <* emit a (pure EVarArg)
-      EFunDef{}      -> ignore  -- XXX: Maybe we can do something about this?
+      EFunDef _ b    -> resolve b
       PrefixExp _ p  -> resolve p
       TableConst _ t -> resolve t
       Binop _ _ l r  -> resolve (l,r)
       Unop _ i e     -> EUni (sUnop i) <$> resolve e
+
+instance Resolve (FunDef SourcePos) where
+  resolve (FunDef _ x) = resolve x
+
+instance Resolve (FunBody SourcePos) where
+  resolve (FunBody _ xs hasVa block) = resolve block
+
 
 instance Resolve (Table SourcePos) where
   resolve (Table _ xs) = resolve xs

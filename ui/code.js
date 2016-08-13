@@ -201,6 +201,7 @@ function drawLine(dbgState,chunkId,here) {
 
       jQuery.each(line.text, function(ix,t) {
         text.append($('<span/>')
+                    .attr('title', t.names)   // XXX: TEMPORARY, for debug
                     .text(t.lexeme)
                     .addClass(t.token)
                    )

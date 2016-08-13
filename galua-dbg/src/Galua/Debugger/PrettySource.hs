@@ -4,11 +4,16 @@ module Galua.Debugger.PrettySource (Line, lexChunk, omittedLine) where
 
 import Language.Lua.Annotated.Lexer
           (llexNamedWithWhiteSpace,LexToken(..),SourcePos(..))
+import Language.Lua.Annotated.Parser(parseText,chunk)
 import qualified Language.Lua.Token as L
+
+import Galua.Names.Find(chunkLocations,ExprName(..),LocatedExprName(..))
+
+import Debug.Trace
 
 
 import           Data.Function(on)
-import           Data.List(groupBy)
+import           Data.List(groupBy,sortBy)
 import qualified Data.ByteString as BS
 import           Data.Vector (Vector)
 import qualified Data.Vector as Vector
@@ -23,7 +28,7 @@ import           Data.Aeson (ToJSON(..), (.=))
 newtype Line    = Line [Token]
                   deriving Show
 
-data Token      = Token TokenType Text
+data Token      = Token TokenType Text [ExprName]
                   deriving Show
 
 data TokenType  = Keyword | Operator | Symbol | Ident | Literal
@@ -31,21 +36,48 @@ data TokenType  = Keyword | Operator | Symbol | Ident | Literal
                   deriving Show
 
 omittedLine :: Line
-omittedLine = Line [Token Comment "..."]
+omittedLine = Line [Token Comment "..." []]
 
+-- XXX: This lexes the file twice.
 lexChunk :: String -> BS.ByteString -> Vector Line
-lexChunk name = Vector.fromList
-              . map (Line . map token)
-              . groupBy ((==) `on` (sourcePosLine . ltokPos))
-              . concatMap splitTok
-              . llexNamedWithWhiteSpace name
-              . decodeUtf8With lenientDecode
+lexChunk name bytes = trace (show names) $ 
+      Vector.fromList
+    $ map (Line . map token)
+    $ groupBy ((==) `on` aTokLine)
+    $ addNames names
+    $ concatMap splitTok
+    $ llexNamedWithWhiteSpace name txt
+  where
+  txt   = decodeUtf8With lenientDecode bytes
+
+  names = sortBy (compare `on` (sourcePosIndex . exprPos))
+        $ case parseText chunk txt of
+            Left _  -> []
+            Right b -> chunkLocations b
+
+data AnnotToken = AnnotToken (LexToken SourcePos) [ExprName]
+
+aTokLine :: AnnotToken -> Int
+aTokLine (AnnotToken l _) = sourcePosLine (ltokPos l)
+
+-- XXX: Make it better
+addNames :: [LocatedExprName] -> [LexToken SourcePos] -> [AnnotToken]
+addNames ns (t:ts) =
+  let thisIx       = tokIx t
+      (here,later) = span ((<= thisIx) . nameIx) ns
+  in AnnotToken t (map exprName here) : addNames later ts
+  where
+  nameIx = sourcePosIndex . exprPos
+  tokIx  = sourcePosIndex . ltokPos
+addNames _ []  = []
+
 
 instance ToJSON Line where
   toJSON (Line xs) = toJSON xs
 
 instance ToJSON Token where
-  toJSON (Token x y) = JS.object [ "token" .= x, "lexeme" .= y ]
+  toJSON (Token x y t) = JS.object [ "token" .= x, "lexeme" .= y
+                                   , "names" .= show t ] -- XXX
 
 instance ToJSON TokenType where
   toJSON l = toJSON
@@ -78,8 +110,8 @@ splitTok tok = map mk (zip [ 0 .. ] (split (ltokLexeme tok)))
                   | Text.null bs   -> [ as ]
                   | otherwise      -> as : split (Text.tail bs)
 
-token :: LexToken SourcePos -> Token
-token tok = Token (tokenType tok) (ltokLexeme tok)
+token :: AnnotToken -> Token
+token (AnnotToken tok ns) = Token (tokenType tok) (ltokLexeme tok) ns
 
 tokenType :: LexToken a -> TokenType
 tokenType tok =
