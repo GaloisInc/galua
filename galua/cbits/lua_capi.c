@@ -711,9 +711,10 @@ size_t galua_writestring_nondbg(char *s, size_t l) {
   return fwrite(s, sizeof(char), l, stdout);
 }
 
-LUA_API void lua_close (lua_State *L) {
+LUA_API
+void lua_close (lua_State *L) {
+        hs_exit();
 }
-
 
 __attribute__((noreturn))
 static void raise_error(lua_State *L) {

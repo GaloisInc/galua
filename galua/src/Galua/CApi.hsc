@@ -1207,7 +1207,7 @@ pokeLuaDebugLastLineDefined = #poke struct lua_Debug, lastlinedefined
 pokeLuaDebugCurrentLine :: Ptr LuaDebug -> CInt -> IO ()
 pokeLuaDebugCurrentLine = #poke struct lua_Debug, currentline
 
-pokeLuaDebugIsTailCall :: Ptr LuaDebug -> CInt -> IO ()
+pokeLuaDebugIsTailCall :: Ptr LuaDebug -> CChar -> IO ()
 pokeLuaDebugIsTailCall = #poke struct lua_Debug, istailcall
 
 pokeLuaDebugName :: Ptr LuaDebug -> CString -> IO ()
@@ -1219,13 +1219,13 @@ pokeLuaDebugNameWhat = #poke struct lua_Debug, namewhat
 pokeLuaDebugWhat :: Ptr LuaDebug -> CString -> IO ()
 pokeLuaDebugWhat = #poke struct lua_Debug, namewhat
 
-pokeLuaDebugNUps :: Ptr LuaDebug -> CInt -> IO ()
+pokeLuaDebugNUps :: Ptr LuaDebug -> CUChar -> IO ()
 pokeLuaDebugNUps = #poke struct lua_Debug, nups
 
-pokeLuaDebugNParams :: Ptr LuaDebug -> CInt -> IO ()
+pokeLuaDebugNParams :: Ptr LuaDebug -> CUChar -> IO ()
 pokeLuaDebugNParams = #poke struct lua_Debug, nparams
 
-pokeLuaDebugIsVarArg :: Ptr LuaDebug -> CInt -> IO ()
+pokeLuaDebugIsVarArg :: Ptr LuaDebug -> CChar -> IO ()
 pokeLuaDebugIsVarArg = #poke struct lua_Debug, isvararg
 
 findExecEnv :: Int -> Thread -> Maybe (Int,ExecEnv)
@@ -1243,9 +1243,7 @@ findExecEnv level thread =
 
 
 exportExecEnv :: (Int,ExecEnv) -> IO (Ptr ())
-exportExecEnv e =
-  do sptr <- newStablePtr e -- XXX: memory leak
-     return (castStablePtrToPtr sptr)
+exportExecEnv e = castStablePtrToPtr <$> newStablePtr e -- XXX: memory leak
 
 importExecEnv :: Ptr () -> IO (Int,ExecEnv)
 importExecEnv = deRefStablePtr . castPtrToStablePtr
@@ -1285,8 +1283,12 @@ foreign export ccall
 lua_getinfo_hs :: EntryPoint (CString -> Ptr LuaDebug -> Ptr CInt -> IO CInt)
 lua_getinfo_hs l r whatPtr ar out =
   reentry "lua_getinfo" [cstringArg0 whatPtr, cArg (castPtr ar :: Ptr ())] l r $ \args ->
-  do (pc,execEnv) <- liftIO (importExecEnv =<< peekLuaDebugCallInfo ar)
-     what          <- liftIO (peekCString whatPtr)
+  do what         <- liftIO (peekCString whatPtr)
+
+     (pc,execEnv) <- if '>'`elem` what
+                       then do t <- readRef =<< extToThreadRef =<< liftIO (deRefLuaState l)
+                               return (stPC t, stExecEnv t)
+                       else liftIO (importExecEnv =<< peekLuaDebugCallInfo ar)
 
      let luaWhat fid = if isRootFun fid then "main" else "Lua"
 
@@ -1574,3 +1576,12 @@ lua_topointer_hs l r ix out =
                UserData ref -> plusPtr nullPtr $ referenceId ref
                LightUserData ptr -> ptr
                _ -> nullPtr
+
+------------------------------------------------------------------------
+
+-- type ApiLuaClose = EntryPoint (IO CInt)
+-- 
+-- foreign export ccall lua_close_hs :: ApiLuaClose
+-- lua_close_hs :: ApiLuaClose
+-- lua_close_hs l r = reentry "lua_close" [] l r $ \_args ->
+--   return ()
