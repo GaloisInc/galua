@@ -3,17 +3,16 @@ module Galua.Debugger.PrettySource (Line, lexChunk, omittedLine) where
 
 
 import Language.Lua.Annotated.Lexer
-          (llexNamedWithWhiteSpace,LexToken(..),SourcePos(..))
-import Language.Lua.Annotated.Parser(parseText,chunk)
+          (llexNamedWithWhiteSpace,LexToken(..),SourcePos(..),SourceRange(..))
+import Language.Lua.Annotated.Parser(parseTokens,chunk)
 import qualified Language.Lua.Token as L
 
-import Galua.Names.Find(chunkLocations,ExprName(..),LocatedExprName(..))
-
-import Debug.Trace
+import Galua.Names.Find (chunkLocations,ExprName(..),LocatedExprName(..)
+                        ,ppExprName,strictPrefix)
 
 
 import           Data.Function(on)
-import           Data.List(groupBy,sortBy)
+import           Data.List(groupBy,sortBy,find,unfoldr)
 import qualified Data.ByteString as BS
 import           Data.Vector (Vector)
 import qualified Data.Vector as Vector
@@ -38,37 +37,39 @@ data TokenType  = Keyword | Operator | Symbol | Ident | Literal
 omittedLine :: Line
 omittedLine = Line [Token Comment "..." []]
 
--- XXX: This lexes the file twice.
 lexChunk :: String -> BS.ByteString -> Vector Line
-lexChunk name bytes = trace (show names) $ 
+lexChunk name bytes =
       Vector.fromList
     $ map (Line . map token)
     $ groupBy ((==) `on` aTokLine)
     $ addNames names
     $ concatMap splitTok
-    $ llexNamedWithWhiteSpace name txt
+    $ tokens
   where
-  txt   = decodeUtf8With lenientDecode bytes
+  txt    = decodeUtf8With lenientDecode bytes
 
-  names = sortBy (compare `on` (sourcePosIndex . exprPos))
-        $ case parseText chunk txt of
+  tokens = llexNamedWithWhiteSpace name txt
+
+  names = sortBy (compare `on` (sourcePosIndex . sourceFrom . exprPos))
+        $ case parseTokens chunk tokens of
             Left _  -> []
             Right b -> chunkLocations b
 
-data AnnotToken = AnnotToken (LexToken SourcePos) [ExprName]
+data AnnotToken = AnnotToken LexToken [ExprName]
 
 aTokLine :: AnnotToken -> Int
-aTokLine (AnnotToken l _) = sourcePosLine (ltokPos l)
+aTokLine (AnnotToken l _) = sourcePosLine (sourceFrom (ltokRange l))
 
 -- XXX: Make it better
-addNames :: [LocatedExprName] -> [LexToken SourcePos] -> [AnnotToken]
+addNames :: [LocatedExprName] -> [LexToken] -> [AnnotToken]
 addNames ns (t:ts) =
   let thisIx       = tokIx t
       (here,later) = span ((<= thisIx) . nameIx) ns
   in AnnotToken t (map exprName here) : addNames later ts
   where
-  nameIx = sourcePosIndex . exprPos
-  tokIx  = sourcePosIndex . ltokPos
+  nameIx = sourcePosIndex . sourceFrom . exprPos
+  tokIx  = sourcePosIndex . sourceFrom . ltokRange
+
 addNames _ []  = []
 
 
@@ -77,7 +78,7 @@ instance ToJSON Line where
 
 instance ToJSON Token where
   toJSON (Token x y t) = JS.object [ "token" .= x, "lexeme" .= y
-                                   , "names" .= show t ] -- XXX
+                                   , "names" .= map ppExprName t ] -- XXX
 
 instance ToJSON TokenType where
   toJSON l = toJSON
@@ -97,23 +98,46 @@ instance ToJSON TokenType where
 
 --------------------------------------------------------------------------------
 
--- String and comment tokens may span multiple lines, so we split them
+-- | String and comment tokens may span multiple lines, so we split them
 -- into multiple tokens---one per line.
-splitTok :: LexToken SourcePos -> [LexToken SourcePos]
-splitTok tok = map mk (zip [ 0 .. ] (split (ltokLexeme tok)))
+splitTok :: LexToken -> [LexToken]
+splitTok t = case unfoldr split t of
+               [] -> [t]
+               xs -> xs
   where
-  mk (n,s)  = tok { ltokLexeme = s, ltokPos = incBy n (ltokPos tok) }
-  incBy n p = p { sourcePosLine = n + sourcePosLine p }
+  split tok =
+    case Text.break (== '\n') (ltokLexeme tok) of
+      (as,bs)
+        | Text.null bs -> Nothing
+        | otherwise ->
+          let rng  = ltokRange tok
+              from = sourceFrom rng
+              to   = sourceFrom rng
+              len  = Text.length as
+              ix   = sourcePosIndex from + len
+              to'  = from { sourcePosColumn = sourcePosColumn from + len
+                          , sourcePosIndex  = sourcePosIndex from + len
+                          }
+              from' = from { sourcePosColumn  = 1
+                           , sourcePosLine    = sourcePosLine from + 1
+                           , sourcePosIndex   = sourcePosIndex from + len + 2
+                             -- the char after the \n
+                           }
 
-  split cs = case Text.break (== '\n') cs of
-               (as,bs)
-                  | Text.null bs   -> [ as ]
-                  | otherwise      -> as : split (Text.tail bs)
+              t1 = tok { ltokLexeme = as
+                       , ltokRange  = SourceRange from to'
+                       }
+              t2 = tok { ltokLexeme = Text.tail bs
+                       , ltokRange  = SourceRange from' to
+                       }
+
+          in Just (t1,t2)
+
 
 token :: AnnotToken -> Token
 token (AnnotToken tok ns) = Token (tokenType tok) (ltokLexeme tok) ns
 
-tokenType :: LexToken a -> TokenType
+tokenType :: LexToken -> TokenType
 tokenType tok =
   case ltokToken tok of
     L.TokPlus        -> Operator

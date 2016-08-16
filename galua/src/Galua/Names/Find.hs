@@ -4,11 +4,13 @@ module Galua.Names.Find
   ( chunkLocations
   , LocatedExprName(..)
   , ExprName(..)
+  , ppExprName
+  , strictPrefix
   ) where
 
 import qualified Language.Lua.Syntax as Lua
 import Language.Lua.Annotated.Syntax
-import Language.Lua.Annotated.Lexer (SourcePos(..))
+import Language.Lua.Annotated.Lexer (SourceRange(..))
 import Language.Lua.Annotated.Simplify
 import Language.Lua.StringLiteral(interpretStringLiteral)
 import Data.ByteString (ByteString)
@@ -32,22 +34,51 @@ test = do res <- parseFile "test.lua"
             Right a -> pPrint (chunkLocations a)
 -}
 
-chunkLocations :: Block SourcePos -> [LocatedExprName]
+chunkLocations :: Block SourceRange -> [LocatedExprName]
 chunkLocations b = case resolve b of
                      M _ out -> out []
 
 
 
 data ExprName = EIdent    Lua.Name
+              | ESelectFrom ExprName ExprIx -- value, index
+              | EVarArg
+
+              -- These appear only in the indexes of a selection
               | EString   ByteString
               | ENumber   Number
               | EBool     Bool
               | EUni Lua.Unop ExprName
-              | EVarArg
-              | ESelectFrom ExprName ExprName  -- value, index
                 deriving (Show,Eq)
 
-data LocatedExprName = LocatedExprName { exprPos :: SourcePos
+strictPrefix :: ExprName -> ExprName -> Bool
+strictPrefix e (ESelectFrom e1 ix) = e == e1 || strictPrefix e e1
+strictPrefix _ _                   = False
+
+
+
+
+type ExprIx = ExprName
+
+ppExprName :: ExprName -> String
+ppExprName x =
+  case x of
+    EIdent (Lua.Name x) -> Text.unpack x
+    EString x           -> show x
+    ENumber (Int x)     -> show x
+    ENumber (Double x)  -> show x
+    EBool x             -> show x
+    EUni op e           -> opTxt ++ ppExprName e
+      where opTxt = case op of
+                      Lua.Neg        -> "-"
+                      Lua.Not        -> "not"
+                      Lua.Len        -> "#"
+                      Lua.Complement -> "~"
+    EVarArg             -> "..."
+    ESelectFrom a b     -> ppExprName a ++ "[" ++ ppExprName b ++ "]"
+
+
+data LocatedExprName = LocatedExprName { exprPos  :: SourceRange
                                        , exprName :: ExprName
                                        } deriving (Show,Eq)
 
@@ -61,7 +92,7 @@ instance Applicative M where
   pure a                  = M (Just a) id
   M f out1 <*> M x out2   = M (f <*> x) (out1 . out2)
 
-emit :: SourcePos -> M ExprName -> M ExprName
+emit :: SourceRange -> M ExprName -> M ExprName
 emit src (M mb out) =
   case  mb of
     Nothing -> M Nothing out
@@ -88,10 +119,10 @@ instance (Resolve a, Resolve b) => Resolve (a,b) where
   resolve (x,y) = ignore <* resolve x <* resolve y
 
 
-instance Resolve (Block SourcePos) where
+instance Resolve (Block SourceRange) where
   resolve (Block _ stats mbReturn) = resolve (stats, mbReturn)
 
-instance Resolve (Stat SourcePos) where
+instance Resolve (Stat SourceRange) where
   resolve s =
     case s of
       Assign _ vs xs        -> resolve (vs,xs)
@@ -110,7 +141,7 @@ instance Resolve (Stat SourcePos) where
       LocalAssign _ xs b    -> resolve (xs,b)
       EmptyStat{}           -> ignore
 
-instance Resolve (Exp SourcePos) where
+instance Resolve (Exp SourceRange) where
   resolve expr =
     case expr of
       Nil{}          -> ignore
@@ -128,31 +159,31 @@ instance Resolve (Exp SourcePos) where
       Binop _ _ l r  -> resolve (l,r)
       Unop _ i e     -> EUni (sUnop i) <$> resolve e
 
-instance Resolve (FunDef SourcePos) where
+instance Resolve (FunDef SourceRange) where
   resolve (FunDef _ x) = resolve x
 
-instance Resolve (FunBody SourcePos) where
+instance Resolve (FunBody SourceRange) where
   resolve (FunBody _ xs hasVa block) = resolve block
 
 
-instance Resolve (Table SourcePos) where
+instance Resolve (Table SourceRange) where
   resolve (Table _ xs) = resolve xs
 
-instance Resolve (TableField SourcePos) where
+instance Resolve (TableField SourceRange) where
   resolve field =
     case field of
       ExpField _ l r   -> resolve (l,r)
       NamedField _ _ r -> ignore <* resolve r
       Field _ r        -> ignore <* resolve r
 
-instance Resolve (PrefixExp SourcePos) where
+instance Resolve (PrefixExp SourceRange) where
   resolve p =
     case p of
       PEVar _ v      -> resolve v
       PEFunCall _ fc -> resolve fc
       Paren _ x      -> resolve x
 
-instance Resolve (FunCall SourcePos) where
+instance Resolve (FunCall SourceRange) where
   resolve fc =
     case fc of
       NormalFunCall _ f x -> resolve (f,x)
@@ -160,14 +191,14 @@ instance Resolve (FunCall SourcePos) where
               emit a (sel <$> resolve obj) <* resolve arg
         where sel o = ESelectFrom o (EString (encodeUtf8 meth))
 
-instance Resolve (FunArg SourcePos) where
+instance Resolve (FunArg SourceRange) where
   resolve fa =
     case fa of
       Args _ xs     -> resolve xs
       TableArg _ t  -> resolve t
       StringArg _ _ -> ignore
 
-instance Resolve (Var SourcePos) where
+instance Resolve (Var SourceRange) where
   resolve v =
     case v of
       VarName _ x      -> resolve x
@@ -175,6 +206,6 @@ instance Resolve (Var SourcePos) where
       SelectName _ l (Name a x) -> emit a (sel <$> resolve l)
         where sel o = ESelectFrom o (EString (encodeUtf8 x))
 
-instance Resolve (Name SourcePos) where
+instance Resolve (Name SourceRange) where
   resolve (Name a x) = emit a (pure (EIdent (Lua.Name x)))
 
