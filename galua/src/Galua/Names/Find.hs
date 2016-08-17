@@ -8,21 +8,21 @@ module Galua.Names.Find
   , ppLocatedExprName
   ) where
 
-import qualified Language.Lua.Syntax as Lua
-import Language.Lua.Annotated.Syntax
-import Language.Lua.Annotated.Lexer (SourceRange(..),showRange)
-import Language.Lua.Annotated.Simplify
-import Language.Lua.StringLiteral(interpretStringLiteral)
-import Data.ByteString (ByteString)
+import           Control.Applicative
+import           Control.Monad (zipWithM_)
+import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
+import           Data.Foldable
 import qualified Data.Text as Text
-import Data.Text.Encoding(encodeUtf8)
-import Control.Applicative
-import Data.Foldable
+import           Data.Text.Encoding(encodeUtf8)
+import           Language.Lua.Annotated.Lexer (SourceRange(..),showRange)
+import           Language.Lua.Annotated.Simplify
+import           Language.Lua.Annotated.Syntax
+import           Language.Lua.StringLiteral(interpretStringLiteral)
+import qualified Language.Lua.Syntax as Lua
 
 import Galua.Number
 
-import Language.Lua.Annotated.Parser
 
 chunkLocations :: Block SourceRange -> [LocatedExprName]
 chunkLocations b = case resolve b of
@@ -123,10 +123,33 @@ instance Resolve (Stat SourceRange) where
       If _ xs ys            -> resolve (xs,ys)
       ForRange _ i x y z b  -> resolve (i,(x,(y,(z,b))))
       ForIn _ is xs b       -> resolve (is,(xs,b))
-      FunAssign _ _ x       -> resolve x
-      LocalFunAssign _ _ b  -> resolve b
+      FunAssign _ n x       -> resolve (n,x)
+      LocalFunAssign _ n b  -> resolve (n,b)
       LocalAssign _ xs b    -> resolve (xs,b)
       EmptyStat{}           -> ignore
+
+instance Resolve (FunName SourceRange) where
+  --name.field.field.field:method
+  resolve (FunName _ (Name nameA name) fields method) =
+     ignore <* zipWithA_ emit (nameA : locations) (map pure things)
+    where
+      fields' = case method of
+                  Nothing -> fields
+                  Just m  -> fields ++ [m]
+
+      (labels, locations) =
+        unzip [ (EString (encodeUtf8 x), mkRange a) | Name a x <- fields' ]
+
+      things = scanl ESelectFrom (EIdent (Lua.Name name)) labels
+
+      mkRange s =
+        SourceRange
+          { sourceFrom = sourceFrom nameA
+          , sourceTo   = sourceTo s
+          }
+
+zipWithA_ :: Applicative f => (a -> b -> f c) -> [a] -> [b] -> f ()
+zipWithA_ f xs ys = sequenceA_ (zipWith f xs ys)
 
 instance Resolve (Exp SourceRange) where
   resolve expr =

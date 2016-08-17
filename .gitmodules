@@ -5,3 +5,6 @@
 [submodule "lib/dwarf-tools"]
 	path = lib/dwarf-tools
 	url = https://github.com/GaloisInc/dwarf-tools.git
+[submodule "lib/language-lua"]
+	path = lib/language-lua
+	url = https://github.com/glguy/language-lua
