@@ -50,11 +50,11 @@ function focusCurLine() {
 
 function drawFunction(dbgState, here, f) {
   here.empty()
-  jQuery.each(f.lines, drawLine(dbgState,f.fid,f.chunk,here))
+  jQuery.each(f.lines, drawLine(dbgState,f.namesRefs,f.chunk,here))
 }
 
 
-function drawLine(dbgState,funId,chunkId,here) {
+function drawLine(dbgState,showNameRefs,chunkId,here) {
 
   // This is how we identify a location to the server
   function mkOpKey(fid,c) {
@@ -203,20 +203,23 @@ function drawLine(dbgState,funId,chunkId,here) {
         var it = $('<span/>')
                  .text(t.lexeme)
                  .addClass(t.token)
-        jQuery.each(t.names, function(ix,cl) {
-          it.addClass('exp'+cl)
-        })
 
-        if (t.name !== null) {
-          it.hover(function() {
-            $('.exp' + t.name).addClass('gal_highlight_name')
-          }, function() {
-            $('.exp' + t.name).removeClass('gal_highlight_name')
-          }).click(function () {
-               jQuery.post('/watchName', { fid: funId, id: t.name })
-                     .fail(disconnected)
-             return false
+        if (showNameRefs) {
+          jQuery.each(t.names, function(ix,cl) {
+            it.addClass('exp'+cl)
           })
+
+          if (t.name !== null) {
+            it.hover(function() {
+              $('.exp' + t.name).addClass('gal_highlight_name')
+            }, function() {
+              $('.exp' + t.name).removeClass('gal_highlight_name')
+            }).click(function () {
+                 jQuery.post('/watchName', { id: t.name })
+                       .fail(disconnected)
+               return false
+            })
+          }
         }
 
         text.append(it)

@@ -157,9 +157,8 @@ snapWatch dbg =
 
 snapWatchName :: Debugger -> Snap ()
 snapWatchName dbg =
-  do fid <- funIdParam "fid"
-     nid <- nameIdParam "id"
-     liftIO $ putStrLn $ "Now we should start watching: " ++ show (fid,nid)
+  do nid <- nameIdParam "id"
+     liftIO $ putStrLn $ "Now we should start watching: " ++ show nid
 
 snapSetValue :: Debugger -> Snap ()
 snapSetValue dbg =
@@ -226,7 +225,7 @@ snapGetFunction :: Debugger -> Snap ()
 snapGetFunction st =
   do fid <- funIdParam "fid"
      sources <- liftIO (readIORef (dbgSources st))
-     case exportFun sources fid of
+     case exportFun sources False fid of
        Just js -> sendJSON js
        _       -> notFound
 

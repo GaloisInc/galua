@@ -691,7 +691,7 @@ exportExecEnv funs pc
          (code,locNames,upNames) =
             case execFunction of
               LuaFunction fid fun ->
-                ( Just (exportFun funs fid)
+                ( Just (exportFun funs True fid)
                 , lookupLocalName fun pc . Reg
                 , \x -> debugInfoUpvalues (funcDebug fun) Vector.!? x
                 )
@@ -703,7 +703,8 @@ exportExecEnv funs pc
      uVs   <- zipWithM (exportNamed (VP_Upvalue env) upNames)
                        [ 0 .. ] (Vector.toList execUpvals)
 
-     vAs <- zipWithM (\n -> named (VP_Varargs env n) Nothing) [0..] =<< io (readIORef execVarargs)
+     vAs <- zipWithM (\n -> named (VP_Varargs env n) Nothing) [0..] =<<
+                                                    io (readIORef execVarargs)
      return $ JS.object $ [ "registers" .= regVs
                           , "upvalues"  .= uVs
                           , "varargs"   .= vAs
@@ -714,7 +715,7 @@ exportExecEnv funs pc
   named path nm v =
     do vjs <- exportValue funs path v
        return $ JS.object [ "name" .= (nm :: Maybe String)
-                                     , "val"  .= vjs ]
+                          , "val"  .= vjs ]
 
   exportNamed pathCon names n ref =
     do val <- io $ readIORef ref
@@ -742,17 +743,17 @@ funIdParent (FunId (_:xs)) = Just (FunId xs)
 -- | Merge together the source lines of a function with their corresponding
 -- opcodes.
 -- XXX: Only works when there is debug info
-exportFun :: Chunks -> FunId -> Maybe JS.Value
-exportFun funs fid0 =
+exportFun :: Chunks -> Bool -> FunId -> Maybe JS.Value
+exportFun funs withNameRefs fid0 =
   do fi@(_,f0) <- lookupFun funs fid0
      let subs = subFunLines f0
 
      return $ JS.object
-       [ "chunk" .= getRoot fid0
-       , "name"  .= getFunctionName funs fid0
+       [ "chunk"  .= getRoot fid0
+       , "name"   .= getFunctionName funs fid0
        , "parent" .= fmap exportFID (funIdParent fid0)
-       , "fid"    .= exportFID fid0
-       , "lines" .=
+       , "namesRefs" .= withNameRefs
+       , "lines"  .=
            [ JS.object
               [ "line"    .= lNum
               , "text"    .= l
