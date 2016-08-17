@@ -24,7 +24,6 @@ library
                        Galua.Micro.Type.Filter
                        Galua.Micro.Type.Import
                        Galua.Micro.Type.Primitives
- 
 
   build-depends:       base,
                        lua-bc,
@@ -37,11 +36,13 @@ library
                        bytestring,
                        text
   default-language:    Haskell2010
+  ghc-options:         -Wall
   ghc-prof-options:    -fprof-auto-top
 
 
 executable GaluaMicroTest
   main-is: MicroOpCode.hs
+  ghc-options:         -Wall
   build-depends:       base,
                        lua-bc,
                        galua,

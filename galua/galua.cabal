@@ -16,6 +16,7 @@ custom-setup
 
 library
   ghc-prof-options: -fprof-auto-top
+  ghc-options:      -Wall
   exposed-modules:     Galua
                        Galua.Arguments
                        Galua.CallIntoC
