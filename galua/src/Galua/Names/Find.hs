@@ -5,12 +5,12 @@ module Galua.Names.Find
   , LocatedExprName(..)
   , ExprName(..)
   , ppExprName
-  , strictPrefix
+  , ppLocatedExprName
   ) where
 
 import qualified Language.Lua.Syntax as Lua
 import Language.Lua.Annotated.Syntax
-import Language.Lua.Annotated.Lexer (SourceRange(..))
+import Language.Lua.Annotated.Lexer (SourceRange(..),showRange)
 import Language.Lua.Annotated.Simplify
 import Language.Lua.StringLiteral(interpretStringLiteral)
 import Data.ByteString (ByteString)
@@ -23,16 +23,6 @@ import Data.Foldable
 import Galua.Number
 
 import Language.Lua.Annotated.Parser
-
-{-
-import Text.Show.Pretty(pPrint)
-import Debug.Trace
-
-test = do res <- parseFile "test.lua"
-          case res of
-            Left x -> fail (show x)
-            Right a -> pPrint (chunkLocations a)
--}
 
 chunkLocations :: Block SourceRange -> [LocatedExprName]
 chunkLocations b = case resolve b of
@@ -50,13 +40,6 @@ data ExprName = EIdent    Lua.Name
               | EBool     Bool
               | EUni Lua.Unop ExprName
                 deriving (Show,Eq)
-
-strictPrefix :: ExprName -> ExprName -> Bool
-strictPrefix e (ESelectFrom e1 ix) = e == e1 || strictPrefix e e1
-strictPrefix _ _                   = False
-
-
-
 
 type ExprIx = ExprName
 
@@ -81,6 +64,10 @@ ppExprName x =
 data LocatedExprName = LocatedExprName { exprPos  :: SourceRange
                                        , exprName :: ExprName
                                        } deriving (Show,Eq)
+
+ppLocatedExprName :: LocatedExprName -> String
+ppLocatedExprName x =
+  ppExprName (exprName x) ++ " " ++ showRange (exprPos x)
 
 
 data M a = M (Maybe a) ([LocatedExprName] -> [LocatedExprName])
@@ -187,7 +174,7 @@ instance Resolve (FunCall SourceRange) where
   resolve fc =
     case fc of
       NormalFunCall _ f x -> resolve (f,x)
-      MethodCall _ obj (Name a meth) arg ->
+      MethodCall a obj (Name _ meth) arg ->
               emit a (sel <$> resolve obj) <* resolve arg
         where sel o = ESelectFrom o (EString (encodeUtf8 meth))
 
@@ -203,7 +190,7 @@ instance Resolve (Var SourceRange) where
     case v of
       VarName _ x      -> resolve x
       Select a l r     -> emit a (ESelectFrom <$> resolve l <*> resolve r)
-      SelectName _ l (Name a x) -> emit a (sel <$> resolve l)
+      SelectName a l (Name _ x) -> emit a (sel <$> resolve l)
         where sel o = ESelectFrom o (EString (encodeUtf8 x))
 
 instance Resolve (Name SourceRange) where

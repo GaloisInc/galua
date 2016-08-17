@@ -200,11 +200,25 @@ function drawLine(dbgState,chunkId,here) {
       } else num.append(lineLab)
 
       jQuery.each(line.text, function(ix,t) {
-        text.append($('<span/>')
-                    .attr('title', t.names)   // XXX: TEMPORARY, for debug
-                    .text(t.lexeme)
-                    .addClass(t.token)
-                   )
+        var it = $('<span/>')
+                 .text(t.lexeme)
+                 .addClass(t.token)
+        jQuery.each(t.names, function(ix,cl) {
+          it.addClass(cl)
+        })
+
+        if (t.name !== null) {
+          it.hover(function() {
+            $('.' + t.name).addClass('gal_highlight_name')
+          }, function() {
+            $('.' + t.name).removeClass('gal_highlight_name')
+          }).click(function () {
+              console.log(t.name)
+              return false
+          })
+        }
+
+        text.append(it)
       })
       here.append(skel.row)
     }

@@ -3,12 +3,13 @@ module Galua.Debugger.PrettySource (Line, lexChunk, omittedLine) where
 
 
 import Language.Lua.Annotated.Lexer
-          (llexNamedWithWhiteSpace,LexToken(..),SourcePos(..),SourceRange(..))
+          (llexNamedWithWhiteSpace,LexToken(..),SourcePos(..),SourceRange(..)
+          , dropWhiteSpace)
 import Language.Lua.Annotated.Parser(parseTokens,chunk)
 import qualified Language.Lua.Token as L
 
 import Galua.Names.Find (chunkLocations,ExprName(..),LocatedExprName(..)
-                        ,ppExprName,strictPrefix)
+                        ,ppExprName,ppLocatedExprName)
 
 
 import           Data.Function(on)
@@ -27,7 +28,7 @@ import           Data.Aeson (ToJSON(..), (.=))
 newtype Line    = Line [Token]
                   deriving Show
 
-data Token      = Token TokenType Text [ExprName]
+data Token      = Token TokenType Text (Maybe NameId) [NameId]
                   deriving Show
 
 data TokenType  = Keyword | Operator | Symbol | Ident | Literal
@@ -35,7 +36,7 @@ data TokenType  = Keyword | Operator | Symbol | Ident | Literal
                   deriving Show
 
 omittedLine :: Line
-omittedLine = Line [Token Comment "..." []]
+omittedLine = Line [Token Comment "..." Nothing []]
 
 lexChunk :: String -> BS.ByteString -> Vector Line
 lexChunk name bytes =
@@ -46,39 +47,100 @@ lexChunk name bytes =
     $ concatMap splitTok
     $ tokens
   where
+
   txt    = decodeUtf8With lenientDecode bytes
 
   tokens = llexNamedWithWhiteSpace name txt
 
-  names = sortBy (compare `on` (sourcePosIndex . sourceFrom . exprPos))
-        $ case parseTokens chunk tokens of
-            Left _  -> []
-            Right b -> chunkLocations b
+  names = map (sortBy (compare `on` endIx))
+        $ groupBy ((==) `on` startIx)
+        $ sortBy (compare `on` startIx)
+        $ case parseTokens chunk (dropWhiteSpace tokens) of
+            Left err  -> []
+            Right b   -> chunkLocations b
 
-data AnnotToken = AnnotToken LexToken [ExprName]
+class Rng t where
+  getRange :: t -> SourceRange
+
+instance Rng LexToken where
+  getRange = ltokRange
+
+instance Rng LocatedExprName where
+  getRange = exprPos
+
+startIx :: Rng t => t -> Int
+startIx = sourcePosIndex . sourceFrom . getRange
+
+endIx :: Rng t => t -> Int
+endIx = sourcePosIndex . sourceTo . getRange
+
+
+data AnnotToken = AnnotToken LexToken (Maybe NameId) [NameId]
 
 aTokLine :: AnnotToken -> Int
-aTokLine (AnnotToken l _) = sourcePosLine (sourceFrom (ltokRange l))
+aTokLine (AnnotToken l _ _) = sourcePosLine (sourceFrom (ltokRange l))
 
--- XXX: Make it better
-addNames :: [LocatedExprName] -> [LexToken] -> [AnnotToken]
-addNames ns (t:ts) =
-  let thisIx       = tokIx t
-      (here,later) = span ((<= thisIx) . nameIx) ns
-  in AnnotToken t (map exprName here) : addNames later ts
+
+data NameId = NameId !Int !Int
+              deriving Show
+
+nameId :: LocatedExprName -> NameId
+nameId e = NameId (startIx e) (endIx e)
+
+
+addNames :: [ [LocatedExprName] ] -> [LexToken] -> [ AnnotToken ]
+addNames = go []
   where
-  nameIx = sourcePosIndex . sourceFrom . exprPos
-  tokIx  = sourcePosIndex . sourceFrom . ltokRange
 
-addNames _ []  = []
+  annot t mb stack = AnnotToken t (nameId <$> mb) (map nameId stack)
+
+  -- ensure top of the stack, if any, is active
+  go (s : stack) ns (t : ts)
+    | endIx s < startIx t = go stack ns (t : ts)
+
+  -- shouldn't happen but here for completenes, and no warnings
+  go stack ([] : nss) ts = go stack nss ts
+
+  -- n is not active, use the stack
+  go st@(s : stack) nss@((n : _) : _) (t : ts)
+    | startIx n > endIx t =
+      annot t (Just s) st : go (s : stack) nss ts
+
+  -- no more names, use the stack
+  go st@(s : stack) [] (t : ts) =
+      annot t (Just s) st : go (s : stack) [] ts
+
+  -- n is not active, no stack
+  go [] nss@((n : _) : _) (t : ts)
+    | startIx n > endIx t =
+       annot t Nothing [] : go [] nss ts
+
+  -- no more names or stack, just copy token.
+  go [] [] (t : ts) =
+       annot t Nothing [] : go [] [] ts
+
+  -- new active name
+  go stack ((n:ns) : nss) (t : ts) =
+      let stack' = n : ns ++ stack
+      in annot t (Just n) stack' : go stack' nss ts
+
+  go _ _ [] = []
+
+
 
 
 instance ToJSON Line where
   toJSON (Line xs) = toJSON xs
 
 instance ToJSON Token where
-  toJSON (Token x y t) = JS.object [ "token" .= x, "lexeme" .= y
-                                   , "names" .= map ppExprName t ] -- XXX
+  toJSON (Token x y t cs) = JS.object [ "token"   .= x
+                                      , "lexeme"  .= y
+                                      , "name"    .= t
+                                      , "names"   .= cs
+                                      ]
+
+instance ToJSON NameId where
+  toJSON (NameId x y) = toJSON (show x ++ "_" ++ show y)
 
 instance ToJSON TokenType where
   toJSON l = toJSON
@@ -135,7 +197,7 @@ splitTok t = case unfoldr split t of
 
 
 token :: AnnotToken -> Token
-token (AnnotToken tok ns) = Token (tokenType tok) (ltokLexeme tok) ns
+token (AnnotToken tok ns cs) = Token (tokenType tok) (ltokLexeme tok) ns cs
 
 tokenType :: LexToken -> TokenType
 tokenType tok =

@@ -1,3 +1,8 @@
+.gal_highlight_name {
+  background-color: #fe9;
+  font-weight: bold;
+}
+
 .cur-line td {
   background-color: #fee;
 }
