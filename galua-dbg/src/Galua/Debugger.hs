@@ -34,7 +34,8 @@ module Galua.Debugger
   ) where
 
 import           Galua(setupLuaState)
-import           Galua.Debugger.PrettySource(lexChunk,Line)
+import           Galua.Debugger.PrettySource
+                  (lexChunk,Line,NameId,LocatedExprName)
 import           Galua.Debugger.Options
 
 import           Galua.Mach
@@ -420,12 +421,13 @@ addTopLevel mbName bytes cid fun Chunks { .. } =
 -- | Source code for a chunk.
 data Source = Source { srcName  :: Maybe String
                      , srcLines :: Vector Line
+                     , srcNames :: Map NameId LocatedExprName
                      }
 
 -- | Syntax high-lighting for a source file.
 lexSourceFile :: Maybe String -> ByteString -> Source
 lexSourceFile srcName bytes = Source { srcName, srcLines }
-  where srcLines = lexChunk (fromMaybe "" srcName) bytes
+  where (srcLines,srcNames) = lexChunk (fromMaybe "" srcName) bytes
 
 -- | Keep track of the source code for loaded modules.
 addSourceFile :: IORef CommandLineBreakPoints ->

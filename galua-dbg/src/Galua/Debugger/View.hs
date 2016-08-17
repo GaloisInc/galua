@@ -751,6 +751,7 @@ exportFun funs fid0 =
        [ "chunk" .= getRoot fid0
        , "name"  .= getFunctionName funs fid0
        , "parent" .= fmap exportFID (funIdParent fid0)
+       , "fid"    .= exportFID fid0
        , "lines" .=
            [ JS.object
               [ "line"    .= lNum

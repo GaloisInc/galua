@@ -50,11 +50,11 @@ function focusCurLine() {
 
 function drawFunction(dbgState, here, f) {
   here.empty()
-  jQuery.each(f.lines, drawLine(dbgState,f.chunk,here))
+  jQuery.each(f.lines, drawLine(dbgState,f.fid,f.chunk,here))
 }
 
 
-function drawLine(dbgState,chunkId,here) {
+function drawLine(dbgState,funId,chunkId,here) {
 
   // This is how we identify a location to the server
   function mkOpKey(fid,c) {
@@ -213,8 +213,9 @@ function drawLine(dbgState,chunkId,here) {
           }, function() {
             $('.exp' + t.name).removeClass('gal_highlight_name')
           }).click(function () {
-              console.log(t.name)
-              return false
+               jQuery.post('/watchName', { fid: funId, id: t.name })
+                     .fail(disconnected)
+             return false
           })
         }
 

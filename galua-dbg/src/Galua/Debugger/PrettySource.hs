@@ -1,5 +1,8 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Galua.Debugger.PrettySource (Line, lexChunk, omittedLine) where
+module Galua.Debugger.PrettySource
+  ( Line, lexChunk, omittedLine
+  , NameId(..), LocatedExprName
+  ) where
 
 
 import Language.Lua.Annotated.Lexer
@@ -17,6 +20,8 @@ import           Data.List(groupBy,sortBy,find,unfoldr)
 import qualified Data.ByteString as BS
 import           Data.Vector (Vector)
 import qualified Data.Vector as Vector
+import           Data.Map (Map)
+import qualified Data.Map as Map
 import           Data.Text (Text)
 import qualified Data.Text as Text
 import           Data.Text.Encoding(decodeUtf8With)
@@ -38,26 +43,31 @@ data TokenType  = Keyword | Operator | Symbol | Ident | Literal
 omittedLine :: Line
 omittedLine = Line [Token Comment "..." Nothing []]
 
-lexChunk :: String -> BS.ByteString -> Vector Line
+lexChunk :: String -> BS.ByteString -> (Vector Line, Map NameId LocatedExprName)
 lexChunk name bytes =
-      Vector.fromList
-    $ map (Line . map token)
-    $ groupBy ((==) `on` aTokLine)
-    $ addNames names
-    $ concatMap splitTok
-    $ tokens
+    ( Vector.fromList
+      $ map (Line . map token)
+      $ groupBy ((==) `on` aTokLine)
+      $ addNames names
+      $ concatMap splitTok
+      $ tokens
+    , nameMap
+    )
   where
 
   txt    = decodeUtf8With lenientDecode bytes
 
   tokens = llexNamedWithWhiteSpace name txt
 
+  flatNames = case parseTokens chunk (dropWhiteSpace tokens) of
+                Left err  -> []
+                Right b   -> chunkLocations b
+
   names = map (sortBy (compare `on` endIx))
         $ groupBy ((==) `on` startIx)
-        $ sortBy (compare `on` startIx)
-        $ case parseTokens chunk (dropWhiteSpace tokens) of
-            Left err  -> []
-            Right b   -> chunkLocations b
+        $ sortBy (compare `on` startIx) flatNames
+
+  nameMap = Map.fromList [ (nameId x, x) | x <- flatNames ]
 
 class Rng t where
   getRange :: t -> SourceRange
@@ -82,7 +92,7 @@ aTokLine (AnnotToken l _ _) = sourcePosLine (sourceFrom (ltokRange l))
 
 
 data NameId = NameId !Int !Int
-              deriving Show
+              deriving (Show,Eq,Ord)
 
 nameId :: LocatedExprName -> NameId
 nameId e = NameId (startIx e) (endIx e)

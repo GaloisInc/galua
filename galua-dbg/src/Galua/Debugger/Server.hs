@@ -4,6 +4,7 @@ module Galua.Debugger.Server () where
 import           Language.Lua.Bytecode.FunId
 
 import           Galua.Debugger.Options(Options(..), defaultOptions)
+import           Galua.Debugger.PrettySource(NameId(..))
 import           Galua.Debugger
 import           Galua.Debugger.View
                   (exportDebugger,watchExportable,expandExportable,
@@ -123,8 +124,9 @@ apiRoutes st =
 
      , ("/goto", cmd snapGoto)
 
-     , ("/expand", cmd snapExpand)
-     , ("/watch", cmd snapWatch)
+     , ("/expand",    cmd snapExpand)
+     , ("/watch",     cmd snapWatch)
+     , ("/watchName", cmd snapWatchName)
 
      , ("/breakOnErr", cmd snapBreakOnError)
 
@@ -152,6 +154,12 @@ snapWatch dbg =
      case mb of
        Nothing -> notFound
        Just js -> sendJSON js
+
+snapWatchName :: Debugger -> Snap ()
+snapWatchName dbg =
+  do fid <- funIdParam "fid"
+     nid <- nameIdParam "id"
+     liftIO $ putStrLn $ "Now we should start watching: " ++ show (fid,nid)
 
 snapSetValue :: Debugger -> Snap ()
 snapSetValue dbg =
@@ -216,11 +224,11 @@ snapPoll st =
 
 snapGetFunction :: Debugger -> Snap ()
 snapGetFunction st =
-  do txt <- textParam "fid"
+  do fid <- funIdParam "fid"
      sources <- liftIO (readIORef (dbgSources st))
-     case funIdFromString (Text.unpack txt) of
-       Just fid | Just js <- exportFun sources fid -> sendJSON js
-       _ -> notFound
+     case exportFun sources fid of
+       Just js -> sendJSON js
+       _       -> notFound
 
 snapAnalyze :: Debugger -> Snap ()
 snapAnalyze dbg =
@@ -270,7 +278,25 @@ boolParam p =
                else badInput ("Malformed boolean parameter: " `BS.append` p)
 
 
+-- | Get a parameter identifying a name.
+nameIdParam :: ByteString -> Snap NameId
+nameIdParam p =
+  do txt <- textParam p
+     case Text.break (== '_') txt of
+       (as,bs) | not (Text.null bs) ->
+          case (decimal as, decimal (Text.tail bs)) of
+            (Right (a1,t1), Right (a2,t2))
+               | Text.null t1 && Text.null t2 -> return (NameId a1 a2)
+            _ -> bad
+       _ -> bad
+  where bad = badInput ("Malformed name identifier: " `BS.append` p)
 
+funIdParam :: ByteString -> Snap FunId
+funIdParam p =
+  do txt <- textParam p
+     case funIdFromString (Text.unpack txt) of
+       Just fid -> return fid
+       Nothing  -> badInput ("Malformed function identifier: " `BS.append` p)
 
 -- | Finish with "Bad user input"
 badInput :: ByteString -> Snap a
