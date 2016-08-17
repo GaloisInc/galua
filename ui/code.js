@@ -204,14 +204,14 @@ function drawLine(dbgState,chunkId,here) {
                  .text(t.lexeme)
                  .addClass(t.token)
         jQuery.each(t.names, function(ix,cl) {
-          it.addClass(cl)
+          it.addClass('exp'+cl)
         })
 
         if (t.name !== null) {
           it.hover(function() {
-            $('.' + t.name).addClass('gal_highlight_name')
+            $('.exp' + t.name).addClass('gal_highlight_name')
           }, function() {
-            $('.' + t.name).removeClass('gal_highlight_name')
+            $('.exp' + t.name).removeClass('gal_highlight_name')
           }).click(function () {
               console.log(t.name)
               return false
