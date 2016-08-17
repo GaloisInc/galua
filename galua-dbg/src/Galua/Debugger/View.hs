@@ -456,9 +456,14 @@ exportVM :: Chunks -> VM -> NextStep -> ExportM JS.Value
 exportVM funs vm next =
   do t  <- exportThread funs (Just next) (vmCurThread vm)
      ts <- mapM (exportValue funs VP_None . Thread) (toList (vmBlocked vm))
-     stats <- io $ exportProfilingStats funs $ machProfiling $ vmMachineEnv vm
-     return (JS.object [ "thread" .= t, "blocked" .= ts
-                       , "stats"  .= stats
+     let menv = vmMachineEnv vm
+     stats <- io $ exportProfilingStats funs $ machProfiling menv
+     let actualRegistry = Table (machRegistry menv)
+     registry <- exportValue funs (VP_Registry actualRegistry) actualRegistry
+     return (JS.object [ "thread"   .= t
+                       , "blocked"  .= ts
+                       , "stats"    .= stats
+                       , "registry" .= registry
                        ])
 
 exportProfilingStats :: Chunks -> ProfilingInfo -> IO JS.Value

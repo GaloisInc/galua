@@ -6,7 +6,7 @@ packages:
 - location: galua-analysis
 - location: lib/dwarf-tools
 - location: lib/language-lua
-resolver: lts-6.11
+resolver: lts-6.12
 extra-deps:
 - config-value-0.5
 - config-value-getopt-0.1.0.0

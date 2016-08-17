@@ -273,6 +273,12 @@ function drawProfiling(dbgState,stats) {
   list.append(tab)
 }
 
+function drawRegistry( dbgState, val, here ) {
+
+        here.append(drawValue(dbgState, val))
+
+}
+
 
 function drawDebugger() { return function (d) {
   var body      = $('body')
@@ -280,6 +286,7 @@ function drawDebugger() { return function (d) {
   var status    = $('#status').removeClass('uk-badge-success')
                               .removeClass('uk-badge-danger')
   var prints    = $('#prints').empty()
+  var registry  = $('#registry').empty()
   var result    = $('#result').empty()
   var mons      = $('#monitoring').empty()
 
@@ -316,7 +323,8 @@ function drawDebugger() { return function (d) {
       $('#thread_handlers').empty()
       $('#thread_code').empty()
 
-      drawProfiling(dbgState,state.vm.stats)
+      drawProfiling(dbgState, state.vm.stats)
+      drawRegistry(dbgState, state.vm.registry, registry)
 
       drawNewThread(dbgState, state.vm.thread)
       var blocked = $('#blocked_threads').empty()

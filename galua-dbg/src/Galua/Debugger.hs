@@ -171,6 +171,7 @@ data ValuePath
   | VP_Register ExecEnv Int
   | VP_Upvalue ExecEnv Int
   | VP_Varargs ExecEnv Int
+  | VP_Registry Value
   | VP_None
 
 
@@ -185,6 +186,7 @@ showValuePath = flip go ""
   go (VP_CUpvalue p n) = go p . showString (".U["++show (n+1)++"]")
   go (VP_Upvalue _env n) = showString ("U["++show (n+1)++"]")
   go (VP_Varargs _env n) = showString ("{...}["++show (n+1)++"]")
+  go VP_Registry{}       = showString "REGISTRY"
   go VP_None    = showString "none"
 
 
@@ -250,6 +252,9 @@ getValue vp0 = do res <- runExceptionT (getVal vp0)
            case drop n varargs of
              r:_ -> return r
              []  -> raise ()
+
+      VP_Registry registry -> return registry
+
       VP_None -> raise ()
 
 
@@ -266,6 +271,7 @@ setValue vp v =
     VP_Upvalue  env n  -> setUVal n env
     VP_Varargs env n   -> setVArg n env
                                     -- or put the var-args in a reference.
+    VP_Registry{}      -> return () -- not currently supported
     VP_None            -> return ()
 
 
