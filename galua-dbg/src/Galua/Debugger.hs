@@ -31,6 +31,10 @@ module Galua.Debugger
   , setPathValue
 
   , FunVisName(..)
+
+  , ExecEnvId(..)
+  , exportExecEnvId
+  , importExecEnvId
   ) where
 
 import           Galua(setupLuaState)
@@ -59,6 +63,7 @@ import qualified Data.Sequence as Seq
 import           Data.Word(Word64)
 import           Data.Text(Text)
 import qualified Data.Text as Text
+import           Data.Text.Read(decimal)
 import           Data.Text.Encoding(decodeUtf8)
 
 import           Data.ByteString (ByteString)
@@ -338,6 +343,57 @@ setValue vp v =
            _       -> varargs
 
 
+--------------------------------------------------------------------------------
+
+-- | Identifies an execution environment>
+-- This is used when we resolve name references.
+
+data ExecEnvId = StackFrameExecEnv !Integer
+                 -- ^ Exportable id of a stack frame
+
+               | ThreadExecEnv !Int
+                 -- ^ Reference id of a thread object
+
+                 deriving Show
+
+exportExecEnvId :: ExecEnvId -> Text
+exportExecEnvId eid =
+  Text.pack $
+  case eid of
+    StackFrameExecEnv n -> "s_" ++ show n
+    ThreadExecEnv n     -> "t_" ++ show n
+
+importExecEnvId :: Text -> Maybe ExecEnvId
+importExecEnvId txt =
+  case Text.splitAt 2 txt of
+    ("s_", s) | Just n <- num s -> Just (StackFrameExecEnv n)
+    ("t_", s) | Just n <- num s -> Just (ThreadExecEnv n)
+    _ -> Nothing
+  where
+  num s = case decimal s of
+            Right (a,more) | Text.null more -> Just a
+            _ -> Nothing
+
+findExecEnv :: Debugger -> ExecEnvId -> IO (Maybe ExecEnv)
+findExecEnv dbg eid =
+  whenStable dbg True $
+  case eid of
+    StackFrameExecEnv sid ->
+      do ExportableState { expClosed } <- readIORef (dbgExportable dbg)
+         case Map.lookup sid expClosed of
+           Just (ExportableStackFrame _ env) -> return (Just env)
+           _ -> return Nothing
+
+    ThreadExecEnv tid ->
+      runAllocWith (dbgNames dbg) $
+        do mb <- lookupRef tid
+           case mb of
+             Nothing  -> return Nothing
+             Just ref -> (Just . stExecEnv) <$> readRef ref
+
+
+
+
 
 
 
@@ -426,7 +482,7 @@ data Source = Source { srcName  :: Maybe String
 
 -- | Syntax high-lighting for a source file.
 lexSourceFile :: Maybe String -> ByteString -> Source
-lexSourceFile srcName bytes = Source { srcName, srcLines }
+lexSourceFile srcName bytes = Source { srcName, srcLines, srcNames }
   where (srcLines,srcNames) = lexChunk (fromMaybe "" srcName) bytes
 
 -- | Keep track of the source code for loaded modules.

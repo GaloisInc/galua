@@ -246,7 +246,8 @@ expandExportable dbg n =
           for mb $ \thing ->
             case thing of
               ExportableValue p v -> expandValue funs p v
-              ExportableStackFrame pc env -> exportExecEnv funs pc env
+              ExportableStackFrame pc env ->
+                exportExecEnv funs pc (Just (StackFrameExecEnv n)) env
 
   where
   Debugger { dbgSources } = dbg
@@ -376,7 +377,8 @@ exportThread funs mbNext tRef =
      let curPC = case mbNext of
                    Just (Goto x) -> x
                    _             -> stPC
-     env   <- exportExecEnv funs curPC stExecEnv
+     let eid = Just $ ThreadExecEnv $ referenceId tRef
+     env   <- exportExecEnv funs curPC eid stExecEnv
      stack <- mapM (exportStackFrameShort funs) (toList stStack)
      hs    <- mapM (exportHandler funs) stHandlers
      cur   <- exportCallStackFrameShort funs curPC stExecEnv
@@ -679,8 +681,8 @@ getFunctionName funs fid = renderVisName <$> Map.lookup fid (allFunNames funs)
 
 -- | Assumes that we are paused, so reading the IO refs will give a consistent
 -- view of the machine state.
-exportExecEnv :: Chunks -> Int -> ExecEnv -> ExportM JS.Value
-exportExecEnv funs pc
+exportExecEnv :: Chunks -> Int -> Maybe ExecEnvId -> ExecEnv -> ExportM JS.Value
+exportExecEnv funs pc eid
   env@ExecEnv { execStack, execUpvals
               , execFunction, execVarargs } =
 
@@ -691,7 +693,7 @@ exportExecEnv funs pc
          (code,locNames,upNames) =
             case execFunction of
               LuaFunction fid fun ->
-                ( Just (exportFun funs True fid)
+                ( Just (exportFun funs eid fid)
                 , lookupLocalName fun pc . Reg
                 , \x -> debugInfoUpvalues (funcDebug fun) Vector.!? x
                 )
@@ -743,17 +745,17 @@ funIdParent (FunId (_:xs)) = Just (FunId xs)
 -- | Merge together the source lines of a function with their corresponding
 -- opcodes.
 -- XXX: Only works when there is debug info
-exportFun :: Chunks -> Bool -> FunId -> Maybe JS.Value
-exportFun funs withNameRefs fid0 =
+exportFun :: Chunks -> Maybe ExecEnvId -> FunId -> Maybe JS.Value
+exportFun funs eid fid0 =
   do fi@(_,f0) <- lookupFun funs fid0
      let subs = subFunLines f0
 
      return $ JS.object
-       [ "chunk"  .= getRoot fid0
-       , "name"   .= getFunctionName funs fid0
-       , "parent" .= fmap exportFID (funIdParent fid0)
-       , "namesRefs" .= withNameRefs
-       , "lines"  .=
+       [ "chunk"    .= getRoot fid0
+       , "name"     .= getFunctionName funs fid0
+       , "parent"   .= fmap exportFID (funIdParent fid0)
+       , "context"  .= fmap exportExecEnvId eid
+       , "lines" .=
            [ JS.object
               [ "line"    .= lNum
               , "text"    .= l

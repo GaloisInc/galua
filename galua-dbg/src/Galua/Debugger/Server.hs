@@ -158,7 +158,12 @@ snapWatch dbg =
 snapWatchName :: Debugger -> Snap ()
 snapWatchName dbg =
   do nid <- nameIdParam "id"
-     liftIO $ putStrLn $ "Now we should start watching: " ++ show nid
+     txt <- textParam "context"
+     case importExecEnvId txt of
+       Nothing -> badInput "Invalid context identifier: `context`"
+       Just eid ->
+         do liftIO $ putStrLn $ "Now we should start watching: " ++
+                                                    show (eid,nid)
 
 snapSetValue :: Debugger -> Snap ()
 snapSetValue dbg =
@@ -225,7 +230,7 @@ snapGetFunction :: Debugger -> Snap ()
 snapGetFunction st =
   do fid <- funIdParam "fid"
      sources <- liftIO (readIORef (dbgSources st))
-     case exportFun sources False fid of
+     case exportFun sources Nothing fid of
        Just js -> sendJSON js
        _       -> notFound
 

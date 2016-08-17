@@ -50,11 +50,11 @@ function focusCurLine() {
 
 function drawFunction(dbgState, here, f) {
   here.empty()
-  jQuery.each(f.lines, drawLine(dbgState,f.namesRefs,f.chunk,here))
+  jQuery.each(f.lines, drawLine(dbgState,f.context,f.chunk,here))
 }
 
 
-function drawLine(dbgState,showNameRefs,chunkId,here) {
+function drawLine(dbgState,context,chunkId,here) {
 
   // This is how we identify a location to the server
   function mkOpKey(fid,c) {
@@ -204,7 +204,7 @@ function drawLine(dbgState,showNameRefs,chunkId,here) {
                  .text(t.lexeme)
                  .addClass(t.token)
 
-        if (showNameRefs) {
+        if (context !== null) {
           jQuery.each(t.names, function(ix,cl) {
             it.addClass('exp'+cl)
           })
@@ -215,7 +215,7 @@ function drawLine(dbgState,showNameRefs,chunkId,here) {
             }, function() {
               $('.exp' + t.name).removeClass('gal_highlight_name')
             }).click(function () {
-                 jQuery.post('/watchName', { id: t.name })
+                 jQuery.post('/watchName', { context: context, id: t.name })
                        .fail(disconnected)
                return false
             })
