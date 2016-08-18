@@ -215,7 +215,10 @@ function drawLine(dbgState,context,chunkId,here) {
             }, function() {
               $('.exp' + t.name).removeClass('gal_highlight_name')
             }).click(function () {
-                 jQuery.post('/watchName', { context: context, id: t.name })
+                 jQuery.post('/watchName', { eid: context.eid
+                                           , pc: context.pc
+                                           , id: t.name
+                                           })
                        .fail(disconnected)
                return false
             })

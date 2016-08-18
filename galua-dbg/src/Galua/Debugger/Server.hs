@@ -9,11 +9,12 @@ import           Galua.Debugger
 import           Galua.Debugger.View
                   (exportDebugger,watchExportable,expandExportable,
                       analyze,
-                      exportFun,importBreakLoc,exportBreakLoc)
+                      exportFun,importBreakLoc,exportBreakLoc,exportV)
 import           Galua.Debugger.EmbedDirectory (embedDirectory)
 import qualified Galua.Value as G
 import           Galua.Number(parseNumber)
 import           Galua.LuaString
+import           Galua.Names.Eval(NotFound(..))
 
 import           Config
 import           Config.Lens
@@ -29,7 +30,7 @@ import           Control.Monad.IO.Class(liftIO)
 
 import           Control.Applicative((<|>))
 import           Control.Monad(void)
-import           Control.Exception (throwIO, catch)
+import           Control.Exception (throwIO, catch, try)
 import           Control.Concurrent(forkIO)
 import           Data.ByteString(ByteString)
 import qualified Data.ByteString as BS
@@ -158,12 +159,15 @@ snapWatch dbg =
 snapWatchName :: Debugger -> Snap ()
 snapWatchName dbg =
   do nid <- nameIdParam "id"
-     txt <- textParam "context"
+     txt <- textParam   "eid"
+     pc  <- natParam    "pc"
      case importExecEnvId txt of
-       Nothing -> badInput "Invalid context identifier: `context`"
+       Nothing -> badInput "Invalid context identifier: `eid`"
        Just eid ->
-         do liftIO $ putStrLn $ "Now we should start watching: " ++
-                                                    show (eid,nid)
+         do mb <- liftIO $ try $ resolveName dbg eid (fromInteger pc) nid
+            case mb of
+              Left (NotFound err) -> liftIO (putStrLn err)
+              Right v -> sendJSON =<< liftIO (exportV dbg v)
 
 snapSetValue :: Debugger -> Snap ()
 snapSetValue dbg =

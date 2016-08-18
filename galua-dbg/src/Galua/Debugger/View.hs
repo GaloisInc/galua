@@ -1,6 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, OverloadedStrings, NamedFieldPuns #-}
 module Galua.Debugger.View
   ( exportDebugger, exportFun, expandExportable, watchExportable
+  , exportV -- MAYBE NOT
   , importBreakLoc
   , exportBreakLoc
   , analyze
@@ -89,6 +90,8 @@ lookupThing :: Integer -> ExportM (Maybe Exportable)
 lookupThing n = ExportM $ do ExportableState { expClosed } <- get
                              return (Map.lookup n expClosed)
 
+
+
 --------------------------------------------------------------------------------
 
 tag :: String -> JS.Pair
@@ -125,6 +128,10 @@ exportDebugger dbg =
   where Debugger { dbgSources, dbgExportable, dbgIdleReason,
                    dbgStateVM, dbgWatches, dbgBreakOnError } = dbg
 
+exportV :: Debugger -> Value -> IO JS.Value
+exportV dbg v =
+  do chunks <- readIORef (dbgSources dbg)
+     runExportM dbg (exportValue chunks VP_None v)
 
 exportIdleReason :: Chunks -> IdleReason -> ExportM JS.Value
 exportIdleReason funs r =
@@ -247,7 +254,7 @@ expandExportable dbg n =
             case thing of
               ExportableValue p v -> expandValue funs p v
               ExportableStackFrame pc env ->
-                exportExecEnv funs pc (Just (StackFrameExecEnv n)) env
+                exportExecEnv funs pc (StackFrameExecEnv n) env
 
   where
   Debugger { dbgSources } = dbg
@@ -377,7 +384,7 @@ exportThread funs mbNext tRef =
      let curPC = case mbNext of
                    Just (Goto x) -> x
                    _             -> stPC
-     let eid = Just $ ThreadExecEnv $ referenceId tRef
+     let eid = ThreadExecEnv (referenceId tRef)
      env   <- exportExecEnv funs curPC eid stExecEnv
      stack <- mapM (exportStackFrameShort funs) (toList stStack)
      hs    <- mapM (exportHandler funs) stHandlers
@@ -681,7 +688,7 @@ getFunctionName funs fid = renderVisName <$> Map.lookup fid (allFunNames funs)
 
 -- | Assumes that we are paused, so reading the IO refs will give a consistent
 -- view of the machine state.
-exportExecEnv :: Chunks -> Int -> Maybe ExecEnvId -> ExecEnv -> ExportM JS.Value
+exportExecEnv :: Chunks -> Int -> ExecEnvId -> ExecEnv -> ExportM JS.Value
 exportExecEnv funs pc eid
   env@ExecEnv { execStack, execUpvals
               , execFunction, execVarargs } =
@@ -693,7 +700,7 @@ exportExecEnv funs pc eid
          (code,locNames,upNames) =
             case execFunction of
               LuaFunction fid fun ->
-                ( Just (exportFun funs eid fid)
+                ( Just (exportFun funs (Just (pc,eid)) fid)
                 , lookupLocalName fun pc . Reg
                 , \x -> debugInfoUpvalues (funcDebug fun) Vector.!? x
                 )
@@ -745,7 +752,7 @@ funIdParent (FunId (_:xs)) = Just (FunId xs)
 -- | Merge together the source lines of a function with their corresponding
 -- opcodes.
 -- XXX: Only works when there is debug info
-exportFun :: Chunks -> Maybe ExecEnvId -> FunId -> Maybe JS.Value
+exportFun :: Chunks -> Maybe (Int,ExecEnvId) -> FunId -> Maybe JS.Value
 exportFun funs eid fid0 =
   do fi@(_,f0) <- lookupFun funs fid0
      let subs = subFunLines f0
@@ -754,7 +761,12 @@ exportFun funs eid fid0 =
        [ "chunk"    .= getRoot fid0
        , "name"     .= getFunctionName funs fid0
        , "parent"   .= fmap exportFID (funIdParent fid0)
-       , "context"  .= fmap exportExecEnvId eid
+       , "context"  .= (case eid of
+                          Nothing -> JS.Null
+                          Just (pc,eid') ->
+                            JS.object [ "pc" .= pc
+                                      , "eid" .= exportExecEnvId eid'
+                                      ])
        , "lines" .=
            [ JS.object
               [ "line"    .= lNum

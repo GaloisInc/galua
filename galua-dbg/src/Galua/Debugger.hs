@@ -35,6 +35,7 @@ module Galua.Debugger
   , ExecEnvId(..)
   , exportExecEnvId
   , importExecEnvId
+  , resolveName
   ) where
 
 import           Galua(setupLuaState)
@@ -46,12 +47,15 @@ import           Galua.Mach
 import           Galua.Stepper
 import           Galua.Reference
 import           Galua.Value
+import           Galua.Names.Eval
+import           Galua.Names.Find(LocatedExprName(..))
 import qualified Galua.Util.SizedVector as SV
 
 import           Language.Lua.Bytecode(Function(..))
 import           Language.Lua.Bytecode.Debug
                     (lookupLineNumber,inferSubFunctionNames,deepLineNumberMap)
 import           Language.Lua.Bytecode.FunId
+import           Language.Lua.Annotated.Lexer(SourceRange(..),SourcePos(..))
 
 import           Data.Maybe (catMaybes)
 import           Data.Map (Map)
@@ -86,6 +90,7 @@ import            Control.Concurrent
                     , threadDelay, killThread
                     )
 import           Control.Concurrent(Chan,newChan,isEmptyChan,readChan,writeChan)
+import           Control.Monad.IO.Class(liftIO)
 import           Control.Monad(when,forever)
 import           MonadLib(ExceptionT,runExceptionT,raise,lift)
 
@@ -374,25 +379,54 @@ importExecEnvId txt =
             Right (a,more) | Text.null more -> Just a
             _ -> Nothing
 
-findExecEnv :: Debugger -> ExecEnvId -> IO (Maybe ExecEnv)
+findExecEnv :: Debugger -> ExecEnvId -> IO ExecEnv
 findExecEnv dbg eid =
   whenStable dbg True $
   case eid of
     StackFrameExecEnv sid ->
       do ExportableState { expClosed } <- readIORef (dbgExportable dbg)
          case Map.lookup sid expClosed of
-           Just (ExportableStackFrame _ env) -> return (Just env)
-           _ -> return Nothing
+           Just (ExportableStackFrame _ env) -> return env
+           _ -> nameResolveException ("Invalid stack frame: " ++ show sid)
 
     ThreadExecEnv tid ->
       runAllocWith (dbgNames dbg) $
         do mb <- lookupRef tid
            case mb of
-             Nothing  -> return Nothing
-             Just ref -> (Just . stExecEnv) <$> readRef ref
+             Nothing  -> liftIO $ nameResolveException "Invalid thread."
+             Just ref -> stExecEnv <$> readRef ref
 
+resolveName :: Debugger -> ExecEnvId -> Int -> NameId -> IO Value
+resolveName dbg eid pc nid =
+  do eenv   <- findExecEnv dbg eid
+     chunks <- readIORef (dbgSources dbg)
 
+     (fid,func) <- case execFunction eenv of
+                     LuaFunction fid func -> return (fid,func)
+                     _ -> nameResolveException "Not in a Lua function."
 
+     chunk <- case getRoot fid of
+                Nothing   -> nameResolveException "Empty function?"
+                Just cid  ->
+                  case Map.lookup cid (topLevelChunks chunks) of
+                    Nothing -> nameResolveException "Invalid context."
+                    Just c  -> return c
+
+     name <- case Map.lookup nid (srcNames (chunkSource chunk)) of
+               Nothing -> nameResolveException "Invalid name idnentifier."
+               Just e  -> return e
+
+     let ln = sourcePosLine $ sourceFrom $ exprPos name
+     pc_n <- case lookup fid =<< Map.lookup ln (chunkLineInfo chunk) of
+               Just (o : _) -> return o
+               _ -> nameResolveException "Failed to identify op-code for name."
+
+     let resEnv = NameResolveEnv { nrUpvals   = execUpvals eenv
+                                 , nrStack    = execStack eenv
+                                 , nrFunction = func
+                                 }
+
+     exprToValue resEnv pc pc_n (exprName name)
 
 
 
@@ -479,6 +513,7 @@ data Source = Source { srcName  :: Maybe String
                      , srcLines :: Vector Line
                      , srcNames :: Map NameId LocatedExprName
                      }
+
 
 -- | Syntax high-lighting for a source file.
 lexSourceFile :: Maybe String -> ByteString -> Source

@@ -40,6 +40,7 @@ library
                        Galua.Micro.Translate.JoinBlocks
 
                        Galua.Names.Find
+                       Galua.Names.Eval
 
                        Galua.Util.Cache
                        Galua.Util.Table

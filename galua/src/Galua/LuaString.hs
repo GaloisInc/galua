@@ -7,6 +7,7 @@ module Galua.LuaString
   , peekLuaString0
   , peekLuaString
   , luaStringLen
+  , unsafeFromByteString
   ) where
 
 import Control.Monad (unless)
@@ -35,6 +36,12 @@ toByteString (LuaString bs) = bs
 fromByteString :: ByteString -> IO LuaString
 fromByteString bs = U.unsafeUseAsCStringLen bs peekLuaString
 -- peekLuaString copies which makes this use of unsafeUseAsCStringLen safe
+
+-- | This is not suitable for most things---in particular it should never
+-- be passed out to Lua.  We use it when we are querrying the current state,
+-- and we need to turn a ByteString to a LuaString temporarily.
+unsafeFromByteString :: ByteString -> LuaString
+unsafeFromByteString = LuaString
 
 -- | This function exposes the internal representation of the ByteString
 -- for export to C. The pointer should NOT be modified. The pointer will

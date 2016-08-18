@@ -14,7 +14,7 @@ import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
 import           Data.Foldable
 import qualified Data.Text as Text
-import           Data.Text.Encoding(encodeUtf8)
+import           Data.Text.Encoding(encodeUtf8,decodeUtf8)
 import           Language.Lua.Annotated.Lexer (SourceRange(..),showRange)
 import           Language.Lua.Annotated.Simplify
 import           Language.Lua.Annotated.Syntax
@@ -30,7 +30,7 @@ chunkLocations b = case resolve b of
 
 
 
-data ExprName = EIdent    Lua.Name
+data ExprName = EIdent    ByteString
               | ESelectFrom ExprName ExprIx -- value, index
               | EVarArg
 
@@ -46,7 +46,7 @@ type ExprIx = ExprName
 ppExprName :: ExprName -> String
 ppExprName x =
   case x of
-    EIdent (Lua.Name x) -> Text.unpack x
+    EIdent x            -> Text.unpack (decodeUtf8 x)
     EString x           -> show x
     ENumber (Int x)     -> show x
     ENumber (Double x)  -> show x
@@ -140,7 +140,7 @@ instance Resolve (FunName SourceRange) where
       (labels, locations) =
         unzip [ (EString (encodeUtf8 x), mkRange a) | Name a x <- fields' ]
 
-      things = scanl ESelectFrom (EIdent (Lua.Name name)) labels
+      things = scanl ESelectFrom (EIdent (encodeUtf8 name)) labels
 
       mkRange s =
         SourceRange
@@ -217,5 +217,5 @@ instance Resolve (Var SourceRange) where
         where sel o = ESelectFrom o (EString (encodeUtf8 x))
 
 instance Resolve (Name SourceRange) where
-  resolve (Name a x) = emit a (pure (EIdent (Lua.Name x)))
+  resolve (Name a x) = emit a (pure (EIdent (encodeUtf8 x)))
 

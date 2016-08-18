@@ -6,9 +6,9 @@ packages:
 - location: galua-analysis
 - location: lib/dwarf-tools
 - location: lib/language-lua
+- location: lib/lua-bc
 resolver: lts-6.12
 extra-deps:
 - config-value-0.5
 - config-value-getopt-0.1.0.0
-- lua-bc-0.1
 - elf-0.27

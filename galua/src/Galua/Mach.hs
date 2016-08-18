@@ -291,6 +291,18 @@ data ExecEnv = ExecEnv
   , execChildTime :: {-# UNPACK #-} !Clock.TimeSpec
   }
 
+-- | Get the function id for this stack frame.
+execFunId :: ExecEnv -> Maybe FunId
+execFunId env =
+  case execFunction env of
+    LuaFunction fid _ -> Just fid
+    _                 -> Nothing
+
+-- | Get the chunk id for this exec env, if any
+execChunk :: ExecEnv -> Maybe Int
+execChunk env = getRoot =<< execFunId env
+
+
 data ApiCallStatus
   = ApiCallActive !ApiCall !NextStep
   | ApiCallAborted !ApiCall
