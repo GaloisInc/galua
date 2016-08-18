@@ -1,10 +1,14 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, OverloadedStrings #-}
 
 module Galua.Overloading where
 
-import           Control.Monad.IO.Class(liftIO)
+import           Control.Monad.IO.Class(MonadIO(liftIO))
+import           Control.Monad.Trans.Reader(ReaderT(..), ask)
 import qualified Data.ByteString as B
 import           Data.String(fromString)
+import           Data.IORef (IORef, readIORef)
+import           Data.Map (Map)
+import qualified Data.Map as Map
 
 import           Galua.Mach
 import           Galua.Number
@@ -17,12 +21,40 @@ import           Galua.LuaString
 -- Metamethod resolution
 ------------------------------------------------------------------------
 
+class MonadIO m => MetatableMonad m where
+  getTypeMetatables :: m (IORef (Map ValueType (Reference Table)))
+
+instance MetatableMonad Mach where
+  getTypeMetatables = getsMachEnv machMetatablesRef
+
+instance MonadIO m => MetatableMonad (WithMetatables m) where
+  getTypeMetatables = WithMetatables ask
+
+newtype WithMetatables m a = WithMetatables
+  (ReaderT (IORef (Map ValueType (Reference Table))) m a)
+  deriving (Functor, Applicative, Monad, MonadIO)
+
+withMetatables ::
+  MonadIO m =>
+  IORef (Map ValueType (Reference Table)) ->
+  WithMetatables m a -> m a
+withMetatables x (WithMetatables (ReaderT f)) = f x
+
+getTypeMetatable ::
+  MetatableMonad m =>
+  ValueType -> m (Maybe (Reference Table))
+getTypeMetatable typ =
+  do metatablesRef <- getTypeMetatables
+     metatables    <- liftIO (readIORef metatablesRef)
+     return (Map.lookup typ metatables)
+
+
 -- | Look up the metatable for a value
-valueMetatable :: Value -> Mach (Maybe (Reference Table))
+valueMetatable :: MetatableMonad m => Value -> m (Maybe (Reference Table))
 valueMetatable v =
   case v of
-    Table    t -> getTableMeta t
-    UserData u -> userDataMeta <$> readRef u
+    Table    t -> liftIO (getTableMeta t)
+    UserData u -> liftIO (userDataMeta <$> readRef u)
     _          -> getTypeMetatable (valueType v)
 
 -- | Set the metatable for a value. If the value is not a userdata
@@ -35,18 +67,27 @@ setMetatable mt v =
     _             -> setTypeMetatable (valueType v) mt
 
 -- | Look up the metamethod for a value
-valueMetamethod :: Value -> String {- ^ metamethod name -} -> Mach Value
+valueMetamethod ::
+  MetatableMonad m =>
+  Value ->
+  String {- ^ metamethod name -} ->
+  m Value
 valueMetamethod v event =
   do mbMetatable <- valueMetatable v
-     case mbMetatable of
+     liftIO $ case mbMetatable of
        Nothing -> return Nil
        Just metatable ->
-         do keyStr <- liftIO (fromByteString (fromString event))
+         do keyStr <- fromByteString (fromString event)
             getTableRaw metatable (String keyStr)
 
 -- | Look up a metamethod on the first value if it is set falling back to
 -- the second value.
-valueMetamethod2 :: Value -> Value -> String {- ^ metamethod name -} -> Mach Value
+valueMetamethod2 ::
+  MetatableMonad m =>
+  Value ->
+  Value ->
+  String {- ^ metamethod name -} ->
+  m Value
 valueMetamethod2 x y event =
   do m1 <- valueMetamethod x event
      case m1 of

@@ -37,7 +37,6 @@ import Language.Lua.Bytecode.FunId
 import qualified Galua.Util.SizedVector as SV
 
 import Galua.Arguments
-import Galua.CObjInfo(CObjInfo(..))
 import Galua.Mach
 import Galua.Number
 import Galua.Overloading

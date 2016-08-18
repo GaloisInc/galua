@@ -496,12 +496,6 @@ setTypeMetatable typ mb =
          Nothing        -> Map.delete typ
 
 
-getTypeMetatable :: ValueType -> Mach (Maybe (Reference Table))
-getTypeMetatable typ =
-  do metatablesRef <- getsMachEnv machMetatablesRef
-     metatables <- liftIO (readIORef metatablesRef)
-     return (Map.lookup typ metatables)
-
 luaError :: String -> Mach b
 luaError str =
   do s <- liftIO (fromByteString (packUtf8 str))
