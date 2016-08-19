@@ -1,18 +1,22 @@
-{-# LANGUAGE FlexibleInstances#-}
+{-# LANGUAGE FlexibleInstances, OverloadedStrings #-}
 -- | Identify expressions that refer to interesting names of things.
 module Galua.Names.Find
   ( chunkLocations
   , LocatedExprName(..)
   , ExprName(..)
+  , LocalName(..)
   , ppExprName
   , ppLocatedExprName
   ) where
 
 import           Control.Applicative
-import           Control.Monad (zipWithM_)
+import           Control.Monad(when)
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString.Lazy as LBS
+import           Data.Map (Map)
+import qualified Data.Map as Map
 import           Data.Foldable
+import           Data.Text (Text)
 import qualified Data.Text as Text
 import           Data.Text.Encoding(encodeUtf8,decodeUtf8)
 import           Language.Lua.Annotated.Lexer (SourceRange(..),showRange)
@@ -20,17 +24,28 @@ import           Language.Lua.Annotated.Simplify
 import           Language.Lua.Annotated.Syntax
 import           Language.Lua.StringLiteral(interpretStringLiteral)
 import qualified Language.Lua.Syntax as Lua
+import           Language.Lua.Bytecode(Reg(..),plusReg)
+import           Language.Lua.Bytecode.Pretty(pp,blankPPInfo)
 
 import Galua.Number
 
 
 chunkLocations :: Block SourceRange -> [LocatedExprName]
-chunkLocations b = case resolve b of
-                     M _ out -> out []
+chunkLocations b = case m emptyRW of
+                     (_,rw') -> computedNames rw'
+  where M m = resolve b
+
+
+data LocalName = LocalName
+  { localName   :: !ByteString  -- ^ Our name (mostly for debugging)
+  , localReg    :: !Reg         -- ^ What register is this var in
+  , localNumber :: !Int         -- ^ What local number are we?
+  } deriving (Eq,Show)
 
 
 
-data ExprName = EIdent    ByteString
+data ExprName = ELocal !LocalName
+              | ENonLocal !ByteString
               | ESelectFrom ExprName ExprIx -- value, index
               | EVarArg
 
@@ -44,9 +59,13 @@ data ExprName = EIdent    ByteString
 type ExprIx = ExprName
 
 ppExprName :: ExprName -> String
-ppExprName x =
-  case x of
-    EIdent x            -> Text.unpack (decodeUtf8 x)
+ppExprName y =
+  case y of
+    ELocal x            -> "(" ++ Text.unpack (decodeUtf8 (localName x)) ++
+                           " #" ++ show (localNumber x) ++
+                           ", " ++ show (pp blankPPInfo (localReg x)) ++
+                           ")"
+    ENonLocal x         -> Text.unpack (decodeUtf8 x)
     EString x           -> show x
     ENumber (Int x)     -> show x
     ENumber (Double x)  -> show x
@@ -70,26 +89,92 @@ ppLocatedExprName x =
   ppExprName (exprName x) ++ " " ++ showRange (exprPos x)
 
 
-data M a = M (Maybe a) ([LocatedExprName] -> [LocatedExprName])
+data M a = M (RW -> (Maybe a, RW))
+
+data RW = RW
+  { computedNames :: [LocatedExprName]
+  , nextLocal     :: !Int                       -- ^ Local counter
+  , nextReg       :: !Reg
+  , nameMap       :: Map ByteString LocalName
+  }
+
+emptyRW :: RW
+emptyRW = RW { computedNames = []
+             , nextLocal = 0
+             , nextReg = Reg 0
+             , nameMap = Map.empty
+             }
 
 instance Functor M where
   fmap = liftA
 
 instance Applicative M where
-  pure a                  = M (Just a) id
-  M f out1 <*> M x out2   = M (f <*> x) (out1 . out2)
+  pure a        = M (\rw -> (Just a, rw))
+  M mf <*> M mx = M (\rw -> let (f,rw1) = mf rw
+                                (x,rw2) = mx rw1
+                            in (f <*> x, rw2))
+
 
 emit :: SourceRange -> M ExprName -> M ExprName
-emit src (M mb out) =
-  case  mb of
-    Nothing -> M Nothing out
-    Just e  ->
-      let le = LocatedExprName { exprPos = src, exprName = e }
-      in M (Just e) ((le :) . out)
-
+emit src (M f) = M $ \rw ->
+  let (res,rw1) = f rw
+  in case res of
+       Nothing -> (Nothing, rw1)
+       Just e  ->
+         let le = LocatedExprName { exprPos = src, exprName = e }
+         in (Just e, rw1 { computedNames = le : computedNames rw1 })
 
 ignore :: M a
-ignore = M Nothing id
+ignore = M (\rw -> (Nothing,rw))
+
+
+declareLocal :: Text -> M ()
+declareLocal x = M (\rw ->
+  ( Just ()
+  , let l   = nextLocal rw
+        nm  = encodeUtf8 x
+        r   = nextReg rw
+        lnm = LocalName { localName   = nm
+                        , localNumber = l
+                        , localReg    = r
+                        }
+    in rw { nextLocal = l + 1
+          , nextReg   = plusReg r 1
+          , nameMap   = Map.insert nm lnm (nameMap rw)
+          }
+  ))
+
+declareInvisible :: Int -> M ()
+declareInvisible n = M (\rw -> (Just (), rw { nextLocal = n + nextLocal rw
+                                            , nextReg = plusReg (nextReg rw) n
+                                            }))
+
+newScope :: M a -> M a
+newScope (M f) = M (\rw ->
+  let curMap = nameMap rw
+      r      = nextReg rw
+  in case f rw of
+       (mb,rw1) -> (mb, rw1 { nameMap = curMap, nextReg = r }))
+
+newFun :: M a -> M a
+newFun (M f) = M $ \rw ->
+  case f emptyRW { computedNames = computedNames rw } of
+    (a,rw1) -> (a, rw { computedNames = computedNames rw1 })
+
+useName :: Name SourceRange -> M ExprName
+useName (Name r x) = emit r $ M $ \rw ->
+  ( Just $ case Map.lookup nm (nameMap rw) of
+             Just vi -> ELocal vi
+             Nothing -> ENonLocal nm
+  , rw
+  )
+  where
+  nm = encodeUtf8 x
+
+
+declareAndUse :: Name SourceRange -> M ExprName
+declareAndUse x@(Name _ t) = declareLocal t *> useName x
+
 
 
 
@@ -107,7 +192,7 @@ instance (Resolve a, Resolve b) => Resolve (a,b) where
 
 
 instance Resolve (Block SourceRange) where
-  resolve (Block _ stats mbReturn) = resolve (stats, mbReturn)
+  resolve (Block _ stats mbReturn) = newScope $ resolve (stats, mbReturn)
 
 instance Resolve (Stat SourceRange) where
   resolve s =
@@ -121,35 +206,54 @@ instance Resolve (Stat SourceRange) where
       While _  l r          -> resolve (l,r)
       Repeat _ l r          -> resolve (l,r)
       If _ xs ys            -> resolve (xs,ys)
-      ForRange _ i x y z b  -> resolve (i,(x,(y,(z,b))))
-      ForIn _ is xs b       -> resolve (is,(xs,b))
-      FunAssign _ n x       -> resolve (n,x)
-      LocalFunAssign _ n b  -> resolve (n,b)
-      LocalAssign _ xs b    -> resolve (xs,b)
+      ForRange _ i x y z b  -> resolve (x,(y,z)) *>
+                               newScope (declareInvisible 3 *>
+                                         declareAndUse i    *> resolve b)
+      ForIn _ is xs b       -> resolve xs *>
+                               newScope (declareInvisible 3 *>
+                                         traverse_ declareAndUse is *>
+                                         resolve b)
+      FunAssign _ n x       -> resolve n *>
+                               declareFun (isMethod n) x
+      LocalFunAssign _ n b  -> declareAndUse n *>
+                               declareFun False b
+      LocalAssign _ xs b    -> resolve b <*   -- Note the order here!
+                               traverse_ declareAndUse xs
       EmptyStat{}           -> ignore
+
+isMethod :: FunName a -> Bool
+isMethod (FunName _ _ _ (Just _)) = True
+isMethod _ = False
+
+declareFun :: Bool -> FunBody SourceRange -> M ExprName
+declareFun meth (FunBody _ xs hasVa block) =
+  newFun $ when meth (declareLocal "self") *>
+           traverse_ declareAndUse xs *>
+           resolve block
+
+
 
 instance Resolve (FunName SourceRange) where
   --name.field.field.field:method
-  resolve (FunName _ (Name nameA name) fields method) =
-     ignore <* zipWithA_ emit (nameA : locations) (map pure things)
+  resolve (FunName _ name@(Name nameA _) fields method) =
+    case method of
+      Nothing -> declareParams fields
+      Just m  -> declareParams (fields ++ [m])
+
     where
-      fields' = case method of
-                  Nothing -> fields
-                  Just m  -> fields ++ [m]
+    step thing (Name a x) = emit (mkRange a)
+                            $ (\e -> ESelectFrom e (label x)) <$> thing
 
-      (labels, locations) =
-        unzip [ (EString (encodeUtf8 x), mkRange a) | Name a x <- fields' ]
+    label x = EString (encodeUtf8 x)
 
-      things = scanl ESelectFrom (EIdent (encodeUtf8 name)) labels
+    declareParams ps = foldl step (emit nameA (useName name)) ps
 
-      mkRange s =
-        SourceRange
-          { sourceFrom = sourceFrom nameA
-          , sourceTo   = sourceTo s
-          }
 
-zipWithA_ :: Applicative f => (a -> b -> f c) -> [a] -> [b] -> f ()
-zipWithA_ f xs ys = sequenceA_ (zipWith f xs ys)
+    mkRange s =
+      SourceRange
+        { sourceFrom = sourceFrom nameA
+        , sourceTo   = sourceTo s
+        }
 
 instance Resolve (Exp SourceRange) where
   resolve expr =
@@ -163,18 +267,11 @@ instance Resolve (Exp SourceRange) where
                           Just ok -> pure (EString (LBS.toStrict ok))
                           Nothing -> ignore
       Vararg a       -> ignore <* emit a (pure EVarArg)
-      EFunDef _ b    -> resolve b
+      EFunDef _ (FunDef _ b) -> declareFun False b
       PrefixExp _ p  -> resolve p
       TableConst _ t -> resolve t
       Binop _ _ l r  -> resolve (l,r)
       Unop _ i e     -> EUni (sUnop i) <$> resolve e
-
-instance Resolve (FunDef SourceRange) where
-  resolve (FunDef _ x) = resolve x
-
-instance Resolve (FunBody SourceRange) where
-  resolve (FunBody _ xs hasVa block) = resolve block
-
 
 instance Resolve (Table SourceRange) where
   resolve (Table _ xs) = resolve xs
@@ -211,11 +308,9 @@ instance Resolve (FunArg SourceRange) where
 instance Resolve (Var SourceRange) where
   resolve v =
     case v of
-      VarName _ x      -> resolve x
+      VarName a x      -> emit a (useName x)
       Select a l r     -> emit a (ESelectFrom <$> resolve l <*> resolve r)
       SelectName a l (Name _ x) -> emit a (sel <$> resolve l)
         where sel o = ESelectFrom o (EString (encodeUtf8 x))
 
-instance Resolve (Name SourceRange) where
-  resolve (Name a x) = emit a (pure (EIdent (encodeUtf8 x)))
 

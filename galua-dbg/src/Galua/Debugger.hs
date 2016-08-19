@@ -55,7 +55,6 @@ import           Language.Lua.Bytecode(Function(..))
 import           Language.Lua.Bytecode.Debug
                     (lookupLineNumber,inferSubFunctionNames,deepLineNumberMap)
 import           Language.Lua.Bytecode.FunId
-import           Language.Lua.Annotated.Lexer(SourceRange(..),SourcePos(..))
 
 import           Data.Maybe (catMaybes)
 import           Data.Map (Map)
@@ -416,17 +415,12 @@ resolveName dbg eid pc nid =
                Nothing -> nameResolveException "Invalid name idnentifier."
                Just e  -> return e
 
-     let ln = sourcePosLine $ sourceFrom $ exprPos name
-     pc_n <- case lookup fid =<< Map.lookup ln (chunkLineInfo chunk) of
-               Just (o : _) -> return o
-               _ -> nameResolveException "Failed to identify op-code for name."
-
      let resEnv = NameResolveEnv { nrUpvals   = execUpvals eenv
                                  , nrStack    = execStack eenv
                                  , nrFunction = func
                                  }
 
-     exprToValue resEnv pc pc_n (exprName name)
+     exprToValue resEnv pc (exprName name)
 
 
 
