@@ -380,7 +380,6 @@ importExecEnvId txt =
 
 findExecEnv :: Debugger -> ExecEnvId -> IO ExecEnv
 findExecEnv dbg eid =
-  whenStable dbg True $
   case eid of
     StackFrameExecEnv sid ->
       do ExportableState { expClosed } <- readIORef (dbgExportable dbg)
@@ -397,6 +396,7 @@ findExecEnv dbg eid =
 
 resolveName :: Debugger -> ExecEnvId -> Int -> NameId -> IO Value
 resolveName dbg eid pc nid =
+  whenStable dbg False $
   do eenv   <- findExecEnv dbg eid
      chunks <- readIORef (dbgSources dbg)
 
