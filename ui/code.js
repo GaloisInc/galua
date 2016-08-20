@@ -209,7 +209,7 @@ function drawLine(dbgState,context,chunkId,here) {
             it.addClass('exp'+cl)
           })
 
-          if (t.name !== null) {
+         if (t.name !== null) {
             it.hover(function() {
               $('.exp' + t.name).addClass('gal_highlight_name')
             }, function() {
@@ -218,11 +218,18 @@ function drawLine(dbgState,context,chunkId,here) {
                  jQuery.post('/watchName', { eid: context.eid
                                            , pc: context.pc
                                            , id: t.name
-                                           })
+                                           }, renderResult)
                        .fail(disconnected)
+                  UIkit.modal($('#value-modal')).show()
                return false
             })
           }
+
+          function renderResult(x) {
+            $('#value-container')
+            .empty().append(drawValue(dbgState,x))
+          }
+
         }
 
         text.append(it)

@@ -30,7 +30,7 @@ import           Control.Monad.IO.Class(liftIO)
 
 import           Control.Applicative((<|>))
 import           Control.Monad(void)
-import           Control.Exception (throwIO, catch, try)
+import           Control.Exception (throwIO, catch)
 import           Control.Concurrent(forkIO)
 import           Data.ByteString(ByteString)
 import qualified Data.ByteString as BS
@@ -164,7 +164,7 @@ snapWatchName dbg =
      case importExecEnvId txt of
        Nothing -> badInput "Invalid context identifier: `eid`"
        Just eid ->
-         do mb <- liftIO $ try $ resolveName dbg eid (fromInteger pc) nid
+         do mb <- liftIO $ resolveName dbg eid (fromInteger pc) nid
             case mb of
               Left (NotFound err) -> liftIO (putStrLn err)
               Right v -> sendJSON =<< liftIO (exportV dbg v)

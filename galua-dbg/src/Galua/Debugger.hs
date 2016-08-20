@@ -91,6 +91,7 @@ import            Control.Concurrent
 import           Control.Concurrent(Chan,newChan,isEmptyChan,readChan,writeChan)
 import           Control.Monad.IO.Class(liftIO)
 import           Control.Monad(when,forever)
+import           Control.Exception(try)
 import           MonadLib(ExceptionT,runExceptionT,raise,lift)
 
 
@@ -394,9 +395,11 @@ findExecEnv dbg eid =
              Nothing  -> liftIO $ nameResolveException "Invalid thread."
              Just ref -> stExecEnv <$> readRef ref
 
-resolveName :: Debugger -> ExecEnvId -> Int -> NameId -> IO Value
+resolveName :: Debugger -> ExecEnvId -> Int -> NameId ->
+                IO (Either NotFound Value)
 resolveName dbg eid pc nid =
   whenStable dbg False $
+  try $
   do eenv   <- findExecEnv dbg eid
      chunks <- readIORef (dbgSources dbg)
 

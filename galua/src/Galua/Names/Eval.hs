@@ -49,7 +49,6 @@ exprToValue :: NameResolveEnv {-^ execution frame -}  ->
                ExprName                               ->
                IO Value
 exprToValue eenv pc expr =
-  (putStrLn $ "Resolving: " ++ ppExprName expr) >>
   case expr of
     ELocal x -> localVar eenv pc x
     ENonLocal x ->
