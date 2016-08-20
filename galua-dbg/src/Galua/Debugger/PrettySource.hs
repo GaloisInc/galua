@@ -173,14 +173,12 @@ instance ToJSON TokenType where
 -- | String and comment tokens may span multiple lines, so we split them
 -- into multiple tokens---one per line.
 splitTok :: LexToken -> [LexToken]
-splitTok t = case unfoldr split t of
-               [] -> [t]
-               xs -> xs
+splitTok = split
   where
   split tok =
     case Text.break (== '\n') (ltokLexeme tok) of
       (as,bs)
-        | Text.null bs -> Nothing
+        | Text.null bs -> if Text.null as then [] else [tok]
         | otherwise ->
           let rng  = ltokRange tok
               from = sourceFrom rng
@@ -203,7 +201,7 @@ splitTok t = case unfoldr split t of
                        , ltokRange  = SourceRange from' to
                        }
 
-          in Just (t1,t2)
+          in t1 : split t2
 
 
 token :: AnnotToken -> Token
