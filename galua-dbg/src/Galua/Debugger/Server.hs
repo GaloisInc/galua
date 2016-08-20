@@ -165,9 +165,13 @@ snapWatchName dbg =
        Nothing -> badInput "Invalid context identifier: `eid`"
        Just eid ->
          do mb <- liftIO $ resolveName dbg eid (fromInteger pc) nid
-            case mb of
-              Left (NotFound err) -> liftIO (putStrLn err)
-              Right v -> sendJSON =<< liftIO (exportV dbg v)
+            sendJSON =<< liftIO (
+              case mb of
+                Left (NotFound err) -> return $ JS.object [ "error" JS..= err ]
+                Right (n,v) ->
+                    do jv <- exportV dbg v
+                       return $ JS.object [ "name" JS..= n, "value" JS..= jv ]
+              )
 
 snapSetValue :: Debugger -> Snap ()
 snapSetValue dbg =

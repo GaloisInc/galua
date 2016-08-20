@@ -48,7 +48,7 @@ import           Galua.Stepper
 import           Galua.Reference
 import           Galua.Value
 import           Galua.Names.Eval
-import           Galua.Names.Find(LocatedExprName(..))
+import           Galua.Names.Find(LocatedExprName(..),ppExprName)
 import qualified Galua.Util.SizedVector as SV
 
 import           Language.Lua.Bytecode(Function(..))
@@ -396,7 +396,7 @@ findExecEnv dbg eid =
              Just ref -> stExecEnv <$> readRef ref
 
 resolveName :: Debugger -> ExecEnvId -> Int -> NameId ->
-                IO (Either NotFound Value)
+                IO (Either NotFound (String,Value))
 resolveName dbg eid pc nid =
   whenStable dbg False $
   try $
@@ -423,7 +423,9 @@ resolveName dbg eid pc nid =
                                  , nrFunction = func
                                  }
 
-     exprToValue resEnv pc (exprName name)
+     let en = exprName name
+     v <- exprToValue resEnv pc en
+     return (ppExprName en, v)
 
 
 

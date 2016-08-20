@@ -1,6 +1,7 @@
 module Galua.Names.Eval
   ( exprToValue, NameResolveEnv(..)
   , NotFound(..), nameResolveException
+  , Flavor(..)
   ) where
 
 import           Language.Lua.Syntax(Unop(..))
@@ -41,6 +42,9 @@ nameResolveException = bad
 
 bad :: String -> IO a
 bad msg = throwIO (NotFound msg)
+
+
+data Flavor = Local | UpValue | Global
 
 
 -- | Throws 'NotFound'

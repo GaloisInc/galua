@@ -226,8 +226,16 @@ function drawLine(dbgState,context,chunkId,here) {
           }
 
           function renderResult(x) {
-            $('#value-container')
-            .empty().append(drawValue(dbgState,x))
+            var h = $('#value-header').empty()
+            var c = $('#value-container').empty()
+            if (x.error) {
+              h.text("ERROR")
+              c.append(x.error)
+            } else {
+              h.append($("<span/>").addClass("code_line identifier")
+                                   .text(x.name))
+              c.append(drawValue(dbgState,x.value))
+            }
           }
 
         }

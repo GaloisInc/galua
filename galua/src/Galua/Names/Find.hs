@@ -61,10 +61,7 @@ type ExprIx = ExprName
 ppExprName :: ExprName -> String
 ppExprName y =
   case y of
-    ELocal x            -> "(" ++ Text.unpack (decodeUtf8 (localName x)) ++
-                           " #" ++ show (localNumber x) ++
-                           ", " ++ show (pp blankPPInfo (localReg x)) ++
-                           ")"
+    ELocal x            -> Text.unpack (decodeUtf8 (localName x))
     ENonLocal x         -> Text.unpack (decodeUtf8 x)
     EString x           -> show x
     ENumber (Int x)     -> show x
