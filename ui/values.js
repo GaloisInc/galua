@@ -135,21 +135,26 @@ function drawExpandCollapseIcon(dbgState, v, startExpanded) {
       .attr('data-uk-tooltip','')
       .css('cursor', 'pointer')
 
-  var here = $('<div/>').hide()
+  var here = $('<div/>')
 
-  if (open) {
-          here.slideDown()
-  } else {
-          here.slideUp()
+  if (!open) {
+          here.hide()
   }
 
   function showIt() {
+        open = true
+        here.slideDown()
+        expandIcon.removeClass('uk-icon-caret-down')
+                  .addClass('uk-icon-caret-up')
+                  .attr('title', 'Collapse')
+  }
 
-    here.slideDown()
-    expandIcon.removeClass('uk-icon-caret-down')
-              .addClass('uk-icon-caret-up')
-              .attr('title', 'Collapse')
-    open = true
+  function hideIt() {
+        open = false
+        here.slideUp()
+        expandIcon.removeClass('uk-icon-caret-up')
+                  .addClass('uk-icon-caret-down')
+                  .attr('title', 'Expand')
   }
 
   function doOpen() {
@@ -164,20 +169,14 @@ function drawExpandCollapseIcon(dbgState, v, startExpanded) {
 
   expandIcon.click(function() {
        if (open) {
-         here.slideUp()
-         expandIcon.removeClass('uk-icon-caret-up')
-                   .addClass('uk-icon-caret-down')
-                   .attr('title', 'Expand')
-         open = false
-         return
-       }
-
-       if (!downloaded) {
-         doOpen()
+         hideIt()
        } else {
-         showIt()
+         if (!downloaded) {
+           doOpen()
+         } else {
+           showIt()
+         }
        }
-
     })
 
   return { icon: expandIcon, dom: here }
