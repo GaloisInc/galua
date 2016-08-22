@@ -19,6 +19,7 @@ import           Data.Foldable
 import           Data.Text (Text)
 import qualified Data.Text as Text
 import           Data.Text.Encoding(encodeUtf8,decodeUtf8)
+import           Data.Char(isAlphaNum,isAlpha,isAscii)
 import           Language.Lua.Annotated.Lexer (SourceRange(..),showRange)
 import           Language.Lua.Annotated.Simplify
 import           Language.Lua.Annotated.Syntax
@@ -74,6 +75,17 @@ ppExprName y =
                       Lua.Len        -> "#"
                       Lua.Complement -> "~"
     EVarArg             -> "..."
+    ESelectFrom a (EString k)
+      | isValid bs -> ppExprName a ++ "." ++ bs
+      where
+      bs = Text.unpack $ decodeUtf8 k
+
+      isValid (x : xs) = validFirst x && all validRest xs
+      isValid [] = False
+
+      validFirst x = isAscii x && (x == '_' || isAlpha x)
+      validRest  x = isAscii x && (x == '_' || isAlphaNum x)
+
     ESelectFrom a b     -> ppExprName a ++ "[" ++ ppExprName b ++ "]"
 
 
