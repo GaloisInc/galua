@@ -234,7 +234,7 @@ function drawLine(dbgState,context,chunkId,here) {
             } else {
               h.append($("<span/>").addClass("code_line identifier")
                                    .text(x.name))
-              c.append(drawValue(dbgState,x.value))
+              c.append(drawValueEx(dbgState,x.value,true))
             }
           }
 

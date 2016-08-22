@@ -5,8 +5,11 @@ function drawFunNameToolTip(obj) {
   return file + line
 }
 
-
 function drawValue(dbgState,v) {
+        return drawValueEx(dbgState,v,false);
+}
+
+function drawValueEx(dbgState,v,startExpanded) {
 
   var label
 
@@ -77,7 +80,7 @@ function drawValue(dbgState,v) {
       label = $('<span/>').addClass('value').text(v.text)
   }
 
-  var x = drawCollapsed(dbgState, label, v)
+  var x = drawCollapsedEx(dbgState, label, v, startExpanded)
   return $('<span/>').append(x.small)
                      .append(x.big)
 }
@@ -118,20 +121,46 @@ function drawOrigin(o) {
 }
 
 
-function drawExpandCollapseIcon(dbgState, v) {
+function drawExpandCollapseIcon(dbgState, v, startExpanded) {
 
   var downloaded = false
-  var open       = false
+  var open       = startExpanded
+
+  var initialImage = open ? 'uk-icon-caret-up' : 'uk-icon-caret-down'
 
   var expandIcon = $('<i/>')
-      .addClass('uk-icon-caret-down uk-icon-hover uk-icon-small')
+      .addClass(initialImage + ' uk-icon-hover uk-icon-small')
       .attr('style','padding: 0.1em')
       .attr('title', 'Expand')
       .attr('data-uk-tooltip','')
       .css('cursor', 'pointer')
 
+  var here = $('<div/>').hide()
 
-  var here = $('<div/>').hide().slideUp()
+  if (open) {
+          here.slideDown()
+  } else {
+          here.slideUp()
+  }
+
+  function showIt() {
+
+    here.slideDown()
+    expandIcon.removeClass('uk-icon-caret-down')
+              .addClass('uk-icon-caret-up')
+              .attr('title', 'Collapse')
+    open = true
+  }
+
+  function doOpen() {
+          jQuery.post('/expand', { id: v.ref }, function(exp) {
+             here.append(renderExpanded(dbgState, exp))
+             showIt()
+             downloaded = true
+         }).fail(disconnected)
+  }
+
+  if (open) { doOpen() }
 
   expandIcon.click(function() {
        if (open) {
@@ -144,21 +173,11 @@ function drawExpandCollapseIcon(dbgState, v) {
        }
 
        if (!downloaded) {
-         jQuery.post('/expand', { id: v.ref }, function(exp) {
-             here.append(renderExpanded(dbgState, exp))
-             showIt()
-             downloaded = true
-         }).fail(disconnected)
-       } else showIt()
-
-       function showIt() {
-
-         here.slideDown()
-         expandIcon.removeClass('uk-icon-caret-down')
-                   .addClass('uk-icon-caret-up')
-                   .attr('title', 'Collapse')
-         open = true
+         doOpen()
+       } else {
+         showIt()
        }
+
     })
 
   return { icon: expandIcon, dom: here }
@@ -292,8 +311,12 @@ function drawAnalyzeIcon(dbgState, v) {
 }
 
 
-// A thing with a little down arrow, to get more info
 function drawCollapsed(dbgState, lab, v) {
+        return drawCollapsedEx(dbgState, lab, v, false);
+}
+
+// A thing with a little down arrow, to get more info
+function drawCollapsedEx(dbgState, lab, v, startExpanded) {
 
   var icons = []
   var here  = []
@@ -305,7 +328,7 @@ function drawCollapsed(dbgState, lab, v) {
     case 'table':
     case 'user_data':
     case 'closure':
-      var expand = drawExpandCollapseIcon(dbgState, v)
+      var expand = drawExpandCollapseIcon(dbgState, v, startExpanded)
       icons.push(expand.icon)
       here.push(expand.dom)
   }
