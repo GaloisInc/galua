@@ -146,6 +146,7 @@ lookupInTable key ref =
        Nil -> do m <- getTableMeta tab
                  case m of
                    Table newRef -> lookupInTable key newRef
+                   Nil -> return Nil
                    _ -> bad "Encountered a meta-table, which is not a table."
        v   -> return v
 
