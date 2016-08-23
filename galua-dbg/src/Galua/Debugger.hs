@@ -359,6 +359,9 @@ data ExecEnvId = StackFrameExecEnv !Integer
                | ThreadExecEnv !Int
                  -- ^ Reference id of a thread object
 
+               | ClosureEnvId !Int
+                 -- ^ Reference id of a closure object
+
                  deriving Show
 
 exportExecEnvId :: ExecEnvId -> Text
@@ -367,33 +370,79 @@ exportExecEnvId eid =
   case eid of
     StackFrameExecEnv n -> "s_" ++ show n
     ThreadExecEnv n     -> "t_" ++ show n
+    ClosureEnvId n      -> "c_" ++ show n
 
 importExecEnvId :: Text -> Maybe ExecEnvId
 importExecEnvId txt =
   case Text.splitAt 2 txt of
     ("s_", s) | Just n <- num s -> Just (StackFrameExecEnv n)
     ("t_", s) | Just n <- num s -> Just (ThreadExecEnv n)
-    _ -> Nothing
+    ("c_", s) | Just n <- num s -> Just (ClosureEnvId n)
+    _                           -> Nothing
   where
   num s = case decimal s of
-            Right (a,more) | Text.null more -> Just a
-            _ -> Nothing
+            Right (a,"") -> Just a
+            _            -> Nothing
 
-findExecEnv :: Debugger -> ExecEnvId -> IO ExecEnv
-findExecEnv dbg eid =
-  case eid of
-    StackFrameExecEnv sid ->
-      do ExportableState { expClosed } <- readIORef (dbgExportable dbg)
-         case Map.lookup sid expClosed of
-           Just (ExportableStackFrame _ env) -> return env
-           _ -> nameResolveException ("Invalid stack frame: " ++ show sid)
+findNameResolveEnv :: Debugger -> VM -> ExecEnvId -> IO (FunId, NameResolveEnv)
+findNameResolveEnv dbg vm eid =
+  do metaTabs <- readIORef $ machMetatablesRef $ vmMachineEnv vm
+     case eid of
+       StackFrameExecEnv sid ->
+         do ExportableState { expClosed } <- readIORef (dbgExportable dbg)
+            case Map.lookup sid expClosed of
+              Just (ExportableStackFrame _ env) ->
+                execEnvToNameResolveEnv metaTabs env
+              _ -> nameResolveException ("Invalid stack frame: " ++ show sid)
 
-    ThreadExecEnv tid ->
-      runAllocWith (dbgNames dbg) $
-        do mb <- lookupRef tid
-           case mb of
-             Nothing  -> liftIO $ nameResolveException "Invalid thread."
-             Just ref -> stExecEnv <$> readRef ref
+       ThreadExecEnv tid ->
+         runAllocWith (dbgNames dbg) $
+           do mb <- lookupRef tid
+              case mb of
+                Nothing  -> liftIO $ nameResolveException "Invalid thread."
+                Just ref ->
+                  do eenv <- stExecEnv <$> readRef ref
+                     liftIO $ execEnvToNameResolveEnv metaTabs eenv
+
+       ClosureEnvId cid ->
+         runAllocWith (dbgNames dbg) $
+           do mb <- lookupRef cid
+              case mb of
+                Nothing  -> liftIO $ nameResolveException "Invalid closure."
+                Just ref ->
+                  do closure <- readRef ref
+                     liftIO $ closureToResolveEnv metaTabs closure
+
+closureToResolveEnv ::
+  TypeMetatables -> Closure -> IO (FunId, NameResolveEnv)
+closureToResolveEnv metaTabs c =
+  do (fid,func) <- case cloFun c of
+                     LuaFunction fid func -> return (fid,func)
+                     _ -> nameResolveException "Not in a Lua function."
+     stack <- SV.new
+     let nre = NameResolveEnv
+                 { nrUpvals   = cloUpvalues c
+                 , nrStack    = stack
+                 , nrFunction = func
+                 , nrMetas    = metaTabs
+                 }
+     return (fid, nre)
+
+execEnvToNameResolveEnv ::
+  TypeMetatables -> ExecEnv -> IO (FunId, NameResolveEnv)
+execEnvToNameResolveEnv metaTabs eenv =
+  do (fid,func) <- case execFunction eenv of
+                     LuaFunction fid func -> return (fid,func)
+                     _ -> nameResolveException "Not in a Lua function."
+
+     let nre = NameResolveEnv
+                 { nrUpvals   = execUpvals eenv
+                 , nrStack    = execStack eenv
+                 , nrFunction = func
+                 , nrMetas    = metaTabs
+                 }
+
+     return (fid, nre)
 
 resolveName :: Debugger -> ExecEnvId -> Int -> NameId ->
                 IO (Either NotFound (String,Value))
@@ -401,12 +450,8 @@ resolveName dbg eid pc nid =
   whenStable dbg False $
   whenNotFinishied dbg (Left $ NotFound "Not executing") $ \vm _ ->
   try $
-  do eenv   <- findExecEnv dbg eid
-     chunks <- readIORef (dbgSources dbg)
-
-     (fid,func) <- case execFunction eenv of
-                     LuaFunction fid func -> return (fid,func)
-                     _ -> nameResolveException "Not in a Lua function."
+  do (fid, resEnv) <- findNameResolveEnv dbg vm eid
+     chunks        <- readIORef (dbgSources dbg)
 
      chunk <- case getRoot fid of
                 Nothing   -> nameResolveException "Empty function?"
@@ -419,12 +464,6 @@ resolveName dbg eid pc nid =
                Nothing -> nameResolveException "Invalid name idnentifier."
                Just e  -> return e
 
-     metaTabs <- readIORef $ machMetatablesRef $ vmMachineEnv vm
-     let resEnv = NameResolveEnv { nrUpvals   = execUpvals eenv
-                                 , nrStack    = execStack eenv
-                                 , nrFunction = func
-                                 , nrMetas    = metaTabs
-                                 }
 
      let en = exprName name
      v <- exprToValue resEnv pc en

@@ -26,12 +26,13 @@ import Galua.Util.SizedVector(SizedVector,getMaybe)
 import Galua.LuaString(unsafeFromByteString,fromByteString,luaStringLen)
 import Galua.Number(Number(..),numberToInt)
 import Galua.Names.Find
+import Galua.Mach (TypeMetatables)
 
 data NameResolveEnv = NameResolveEnv
   { nrFunction :: Function
   , nrStack    :: SizedVector (IORef Value)
   , nrUpvals   :: Vector (IORef Value)
-  , nrMetas    :: Map ValueType (Reference (Table Value))
+  , nrMetas    :: TypeMetatables
   }
 
 
