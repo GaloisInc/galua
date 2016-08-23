@@ -210,19 +210,24 @@ function drawLine(dbgState,context,chunkId,here) {
           })
 
          if (t.name !== null) {
+            it.addClass(t.name.active ? 'active' : 'inactive')
             it.hover(function() {
-              $('.exp' + t.name).addClass('gal_highlight_name')
+              $('.exp' + t.name.ref).addClass('gal_highlight_name')
             }, function() {
-              $('.exp' + t.name).removeClass('gal_highlight_name')
-            }).click(function () {
+              $('.exp' + t.name.ref).removeClass('gal_highlight_name')
+            })
+
+            if (t.name.active) {
+              it.click(function () {
                  jQuery.post('/watchName', { eid: context.eid
                                            , pc: context.pc
-                                           , id: t.name
+                                           , id: t.name.ref
                                            }, renderResult)
                        .fail(disconnected)
                   UIkit.modal($('#value-modal')).show()
                return false
-            })
+              })
+            }
           }
 
           function renderResult(x) {

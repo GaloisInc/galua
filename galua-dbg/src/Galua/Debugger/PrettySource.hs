@@ -2,6 +2,7 @@
 module Galua.Debugger.PrettySource
   ( Line, lexChunk, omittedLine
   , NameId(..), LocatedExprName
+  , lineToJSON
   ) where
 
 
@@ -11,12 +12,11 @@ import Language.Lua.Annotated.Lexer
 import Language.Lua.Annotated.Parser(parseTokens,chunk)
 import qualified Language.Lua.Token as L
 
-import Galua.Names.Find (chunkLocations,ExprName(..),LocatedExprName(..)
-                        ,ppExprName,ppLocatedExprName)
+import Galua.Names.Find (chunkLocations,LocatedExprName(..))
 
 
 import           Data.Function(on)
-import           Data.List(groupBy,sortBy,find,unfoldr)
+import           Data.List(groupBy,sortBy)
 import qualified Data.ByteString as BS
 import           Data.Vector (Vector)
 import qualified Data.Vector as Vector
@@ -60,7 +60,7 @@ lexChunk name bytes =
   tokens = llexNamedWithWhiteSpace name txt
 
   flatNames = case parseTokens chunk (dropWhiteSpace tokens) of
-                Left err  -> []
+                Left _err  -> []
                 Right b   -> chunkLocations b
 
   names = map (sortBy (compare `on` endIx))
@@ -139,15 +139,18 @@ addNames = go []
 
 
 
-instance ToJSON Line where
-  toJSON (Line xs) = toJSON xs
+lineToJSON :: (NameId -> Bool) -> Line -> JS.Value
+lineToJSON inScope (Line ts) = toJSON $ map (tokenToJSON inScope) ts
 
-instance ToJSON Token where
-  toJSON (Token x y t cs) = JS.object [ "token"   .= x
-                                      , "lexeme"  .= y
-                                      , "name"    .= t
-                                      , "names"   .= cs
-                                      ]
+tokenToJSON :: (NameId -> Bool) -> Token -> JS.Value
+tokenToJSON inScope (Token x y t cs) =
+  JS.object [ "token"   .= x
+            , "lexeme"  .= y
+            , "name"    .= (link <$> t)
+            , "names"   .= cs
+            ]
+  where
+  link z = JS.object [ "ref" .= z, "active" .= inScope z ]
 
 instance ToJSON NameId where
   toJSON (NameId x y) = toJSON (show x ++ "_" ++ show y)
@@ -186,11 +189,11 @@ splitTok = split
               len  = Text.length as
               ix   = sourcePosIndex from + len
               to'  = from { sourcePosColumn = sourcePosColumn from + len
-                          , sourcePosIndex  = sourcePosIndex from + len
+                          , sourcePosIndex  = ix
                           }
               from' = from { sourcePosColumn  = 1
                            , sourcePosLine    = sourcePosLine from + 1
-                           , sourcePosIndex   = sourcePosIndex from + len + 2
+                           , sourcePosIndex   = ix + 2
                              -- the char after the \n
                            }
 

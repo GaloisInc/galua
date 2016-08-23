@@ -1,6 +1,13 @@
 .gal_highlight_name {
-  background-color: #fe9;
   font-weight: bold;
+}
+
+.gal_highlight_name.active {
+  background-color: #fe9;
+}
+
+.gal_highlight_name.inactive {
+  background-color: pink;
 }
 
 .cur-line td {

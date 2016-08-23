@@ -2,6 +2,7 @@ module Galua.Names.Eval
   ( exprToValue, NameResolveEnv(..)
   , NotFound(..), nameResolveException
   , Flavor(..)
+  , nameInScope
   ) where
 
 import           Language.Lua.Syntax(Unop(..))
@@ -101,23 +102,38 @@ exprToValue eenv pc expr =
            Not  -> return $ Bool $ not $ valueBool v
 
 
+localNameInScope :: Function -> PC -> LocalName -> Bool
+localNameInScope func pc name =
+  case dbg Vector.!? localNumber name of
+    Nothing -> False
+    Just vi -> varInfoStart vi <= pc && pc < varInfoEnd vi
+  where
+  dbg = debugInfoVars $ funcDebug func
+
+nameInScope :: Function -> PC -> ExprName -> Bool
+nameInScope func pc name =
+  case name of
+    ELocal x        -> localNameInScope func pc x
+    ENonLocal _     -> True
+    ESelectFrom x y -> nameInScope func pc x && nameInScope func pc y
+    EVarArg         -> funcIsVararg func
+
+    EString _       -> True
+    ENumber _       -> True
+    EBool _         -> True
+    EUni _ e        -> nameInScope func pc e
+
+
 
 
 localVar :: NameResolveEnv {-^ execution frame -}      ->
             PC             {-^ cur pc -}               ->
             LocalName      {-^ info about the local -} ->
             IO Value
-localVar eenv pc name =
-  case dbg Vector.!? localNumber name of
-    Nothing -> bad "Invalid local name."
-    Just vi
-      | varInfoStart vi <= pc && pc < varInfoEnd vi ->
-        readReg eenv (localReg name)
-      | otherwise ->
-        bad ("Variable " ++ Text.unpack (decodeUtf8 (localName name))
-                                                      ++ " is not in scope.")
-  where
-  dbg = debugInfoVars $ funcDebug $ nrFunction eenv
+localVar eenv pc name
+  | localNameInScope (nrFunction eenv) pc name = readReg eenv (localReg name)
+  | otherwise = bad ("Variable " ++ Text.unpack (decodeUtf8 (localName name))
+                                                        ++ " is not in scope.")
 
 
 type PC   = Int

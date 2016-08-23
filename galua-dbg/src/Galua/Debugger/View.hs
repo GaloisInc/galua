@@ -9,7 +9,7 @@ module Galua.Debugger.View
 
 import Galua.CObjInfo(CObjInfo(..))
 import Galua.Debugger
-import Galua.Debugger.PrettySource (omittedLine)
+import Galua.Debugger.PrettySource (omittedLine,lineToJSON)
 import Galua.Debugger.Trie
 import Galua.Debugger.View.Utils
 import Galua.Mach
@@ -17,6 +17,8 @@ import Galua.Number
 import Galua.LuaString
 import Galua.Value
 import Galua.DlInfo
+import Galua.Names.Find(exprName)
+import Galua.Names.Eval(nameInScope)
 import Galua.Reference
 import Galua.Debugger.Console
 import Galua.Debugger.View.Analysis(exportResult)
@@ -749,13 +751,19 @@ funIdParent :: FunId -> Maybe FunId
 funIdParent (FunId []) = Nothing
 funIdParent (FunId (_:xs)) = Just (FunId xs)
 
+
 -- | Merge together the source lines of a function with their corresponding
 -- opcodes.
 -- XXX: Only works when there is debug info
 exportFun :: Chunks -> Maybe (Int,ExecEnvId) -> FunId -> Maybe JS.Value
 exportFun funs eid fid0 =
-  do fi@(_,f0) <- lookupFun funs fid0
+  do fi@(topSrc,f0) <- lookupFun funs fid0
      let subs = subFunLines f0
+         pc   = fromMaybe (-1) (fst <$> eid)
+         inScope nid = case Map.lookup nid (srcNames topSrc) of
+                         Nothing -> False
+                         Just nm -> nameInScope f0 pc (exprName nm)
+
 
      return $ JS.object
        [ "chunk"    .= getRoot fid0
@@ -770,7 +778,7 @@ exportFun funs eid fid0 =
        , "lines" .=
            [ JS.object
               [ "line"    .= lNum
-              , "text"    .= l
+              , "text"    .= lineToJSON inScope l
               , "opcodes" .= map exportOp (Map.toList ops)
               ] | (lNum,(l,ops)) <- insertOmitted $
                                     Map.toList $
