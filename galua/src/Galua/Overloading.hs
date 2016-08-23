@@ -22,21 +22,22 @@ import           Galua.LuaString
 ------------------------------------------------------------------------
 
 class MonadIO m => MetatableMonad m where
-  getTypeMetatables :: m (IORef (Map ValueType (Reference Table)))
+  getTypeMetatables :: m (Map ValueType (Reference Table))
 
 instance MetatableMonad Mach where
-  getTypeMetatables = getsMachEnv machMetatablesRef
+  getTypeMetatables = do ref <- getsMachEnv machMetatablesRef
+                         liftIO (readIORef ref)
 
 instance MonadIO m => MetatableMonad (WithMetatables m) where
   getTypeMetatables = WithMetatables ask
 
 newtype WithMetatables m a = WithMetatables
-  (ReaderT (IORef (Map ValueType (Reference Table))) m a)
+  (ReaderT (Map ValueType (Reference Table)) m a)
   deriving (Functor, Applicative, Monad, MonadIO)
 
 withMetatables ::
   MonadIO m =>
-  IORef (Map ValueType (Reference Table)) ->
+  Map ValueType (Reference Table) ->
   WithMetatables m a -> m a
 withMetatables x (WithMetatables (ReaderT f)) = f x
 
@@ -44,8 +45,7 @@ getTypeMetatable ::
   MetatableMonad m =>
   ValueType -> m (Maybe (Reference Table))
 getTypeMetatable typ =
-  do metatablesRef <- getTypeMetatables
-     metatables    <- liftIO (readIORef metatablesRef)
+  do metatables <- getTypeMetatables
      return (Map.lookup typ metatables)
 
 
