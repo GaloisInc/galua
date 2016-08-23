@@ -399,6 +399,7 @@ resolveName :: Debugger -> ExecEnvId -> Int -> NameId ->
                 IO (Either NotFound (String,Value))
 resolveName dbg eid pc nid =
   whenStable dbg False $
+  whenNotFinishied dbg (Left $ NotFound "Not executing") $ \vm _ ->
   try $
   do eenv   <- findExecEnv dbg eid
      chunks <- readIORef (dbgSources dbg)
@@ -418,9 +419,11 @@ resolveName dbg eid pc nid =
                Nothing -> nameResolveException "Invalid name idnentifier."
                Just e  -> return e
 
+     metaTabs <- readIORef $ machMetatablesRef $ vmMachineEnv vm
      let resEnv = NameResolveEnv { nrUpvals   = execUpvals eenv
                                  , nrStack    = execStack eenv
                                  , nrFunction = func
+                                 , nrMetas    = metaTabs
                                  }
 
      let en = exprName name
@@ -654,7 +657,7 @@ setIdleReason Debugger { .. } x = writeIORef dbgIdleReason x
 
 setPathValue :: Debugger -> Integer -> Value -> IO ()
 setPathValue dbg vid newVal =
-  whenStable dbg True $ whenNotFinishied dbg $ \_ _ ->
+  whenStable dbg True $ whenNotFinishied dbg () $ \_ _ ->
     do ExportableState { expClosed } <- readIORef dbgExportable
        case Map.lookup vid expClosed of
          Just (ExportableValue path _) -> setValue path newVal
@@ -703,7 +706,7 @@ stepOutOf dbg = startExec dbg True (StepOut Stop)
 goto :: Int -> Debugger -> IO ()
 goto pc dbg =
   whenIdle dbg $
-  whenNotFinishied dbg $ \vm _ ->
+  whenNotFinishied dbg () $ \vm _ ->
   writeIORef (dbgStateVM dbg) (Running vm (Goto pc))
 
 
@@ -953,12 +956,12 @@ startExec dbg blocking mode =
      when blocking (takeMVar mvar)
 
 -- | Execute the function, only if the debugger has not finished.
-whenNotFinishied :: Debugger -> (VM -> NextStep -> IO ()) -> IO ()
-whenNotFinishied dbg io =
+whenNotFinishied :: Debugger -> a -> (VM -> NextStep -> IO a) -> IO a
+whenNotFinishied dbg a io =
   do state <- readIORef (dbgStateVM dbg)
      case state of
        Running vm next -> io vm next
-       _               -> return ()
+       _               -> return a
 
 
 whenIdle :: Debugger -> IO () -> IO ()

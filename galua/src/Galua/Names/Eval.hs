@@ -10,6 +10,7 @@ import           Language.Lua.Bytecode
                     (UpIx(..),Reg(..),DebugInfo(..),VarInfo(..),Function(..))
 import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
+import           Data.Map(Map)
 import           Data.ByteString(ByteString)
 import           Data.IORef(IORef,readIORef)
 import           Data.Text.Encoding(decodeUtf8)
@@ -17,9 +18,10 @@ import qualified Data.Text as Text
 import           Data.Bits(complement)
 import           Control.Exception(Exception,throwIO)
 
-import Galua.Value(Value(..),valueBool)
+import Galua.Value(Value(..),valueBool,ValueType)
+import Galua.Overloading(valueMetamethod,withMetatables)
 import Galua.Reference(Reference,readRef)
-import Galua.Util.Table(Table,getTableMeta,getTableRaw,tableLen)
+import Galua.Util.Table(Table,getTableRaw,tableLen)
 import Galua.Util.SizedVector(SizedVector,getMaybe)
 import Galua.LuaString(unsafeFromByteString,fromByteString,luaStringLen)
 import Galua.Number(Number(..),numberToInt)
@@ -29,6 +31,7 @@ data NameResolveEnv = NameResolveEnv
   { nrFunction :: Function
   , nrStack    :: SizedVector (IORef Value)
   , nrUpvals   :: Vector (IORef Value)
+  , nrMetas    :: Map ValueType (Reference (Table Value))
   }
 
 
@@ -64,9 +67,10 @@ exprToValue eenv pc expr =
          case v of
            Table tr ->
              do i <- exprToValue eenv pc y
-                lookupInTable i tr
-           _ -> bad "Selection from a non-table."
+                lookupInTable eenv i tr
 
+           _ -> do i <- exprToValue eenv pc y
+                   indexFromMetaTable eenv True v i
 
     EVarArg   -> bad "XXX: lookup of var args is not yet implemented."
 
@@ -138,20 +142,33 @@ getGlobalEnv eenv =
            _       -> bad "Global environment is not a table."
     Nothing -> bad "Missing global environment."
 
-lookupInTable :: Value -> Reference (Table Value) -> IO Value
-lookupInTable key ref =
+lookupInTable :: NameResolveEnv -> Value -> Reference (Table Value) -> IO Value
+lookupInTable eenv key ref =
   do tab <- readRef ref
      res <- getTableRaw tab key
      case res of
-       Nil -> do m <- getTableMeta tab
-                 case m of
-                   Table newRef -> lookupInTable key newRef
-                   Nil -> return Nil
-                   _ -> bad "Encountered a meta-table, which is not a table."
+       Nil -> indexFromMetaTable eenv False (Table ref) key
        v   -> return v
 
+indexFromMetaTable :: NameResolveEnv -> Bool -> Value -> Value -> IO Value
+indexFromMetaTable eenv failOnNil v key =
+  do method <- withMetatables tabs (valueMetamethod v "__index")
+     case method of
+       Nil | failOnNil -> bad "Missing field."
+           | otherwise -> return Nil
+       Table r   -> lookupInTable eenv key r
+       Closure _ ->
+         bad "Accessing the value requires executing the meta-method."
+       _ -> indexFromMetaTable eenv True method key
+
+  where
+  tabs = nrMetas eenv
+
+
+
+
 readGlobal :: NameResolveEnv -> ByteString -> IO Value
-readGlobal eenv nm = lookupInTable key =<< getGlobalEnv eenv
+readGlobal eenv nm = lookupInTable eenv key =<< getGlobalEnv eenv
   where key = String (unsafeFromByteString nm)
 
 readUpValue :: NameResolveEnv -> UpIx -> IO Value
