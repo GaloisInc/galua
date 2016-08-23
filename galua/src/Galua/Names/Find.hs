@@ -303,9 +303,11 @@ instance Resolve (FunCall SourceRange) where
   resolve fc =
     case fc of
       NormalFunCall _ f x -> resolve (f,x)
-      MethodCall a obj (Name _ meth) arg ->
-              emit a (sel <$> resolve obj) <* resolve arg
+      MethodCall a obj (Name b meth) arg ->
+              emit r (sel <$> resolve obj) <* resolve arg
         where sel o = ESelectFrom o (EString (encodeUtf8 meth))
+              r = SourceRange { sourceFrom = sourceFrom a
+                              , sourceTo   = sourceTo b }
 
 instance Resolve (FunArg SourceRange) where
   resolve fa =
