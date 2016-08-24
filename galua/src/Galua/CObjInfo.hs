@@ -50,8 +50,7 @@ addrName fp = if fp == nullFunPtr then "(entry)" else show fp
 
 getCFunInfo :: FunPtr a -> IO CObjInfo
 #if defined ( LUA_USE_LINUX )
-getCFunInfo fptr = return (noFunInfo fptr)
-{-
+getCFunInfo fptr =
   do exe <- readSymbolicLink "/proc/self/exe"
      bytes <- BS.readFile exe
      let elf = parseElf bytes
@@ -83,7 +82,6 @@ getCFunInfo fptr = return (noFunInfo fptr)
                                Just n  -> n `seq` Just (show n)
                 }
      return $! obj
--}
 
 #elif defined ( LUA_USE_MACOSX )
 getCFunInfo fptr =
