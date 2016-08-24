@@ -444,7 +444,7 @@ execEnvToNameResolveEnv metaTabs eenv =
 
      return (fid, nre)
 
-resolveName :: Debugger -> ExecEnvId -> Int -> NameId ->
+resolveName :: Debugger -> ExecEnvId -> Maybe Int -> NameId ->
                 IO (Either NotFound (String,Value))
 resolveName dbg eid pc nid =
   whenStable dbg False $

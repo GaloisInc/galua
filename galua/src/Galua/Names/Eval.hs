@@ -11,6 +11,7 @@ import           Language.Lua.Bytecode
                     (UpIx(..),Reg(..),DebugInfo(..),VarInfo(..),Function(..))
 import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
+import           Data.Maybe(fromMaybe)
 import           Data.Map(Map)
 import           Data.ByteString(ByteString)
 import           Data.IORef(IORef,readIORef)
@@ -54,7 +55,7 @@ data Flavor = Local | UpValue | Global
 
 -- | Throws 'NotFound'
 exprToValue :: NameResolveEnv {-^ execution frame -}  ->
-               PC             {-^ cur pc -}           ->
+               Maybe PC       {-^ cur pc -}           ->
                ExprName                               ->
                IO Value
 exprToValue eenv pc expr =
@@ -102,32 +103,33 @@ exprToValue eenv pc expr =
            Not  -> return $ Bool $ not $ valueBool v
 
 
-localNameInScope :: Function -> PC -> LocalName -> Bool
-localNameInScope func pc name =
-  case dbg Vector.!? localNumber name of
-    Nothing -> False
-    Just vi -> varInfoStart vi <= pc && pc < varInfoEnd vi
+localNameInScope :: Function -> Maybe PC -> LocalName -> Bool
+localNameInScope func mbPc name =
+  fromMaybe False $
+  do pc <- mbPc
+     vi <-  dbg Vector.!? localNumber name
+     return (varInfoStart vi <= pc && pc < varInfoEnd vi)
   where
   dbg = debugInfoVars $ funcDebug func
 
-nameInScope :: Function -> PC -> ExprName -> Bool
-nameInScope func pc name =
+nameInScope :: Function -> Maybe PC -> ExprName -> Bool
+nameInScope func mbPc name =
   case name of
-    ELocal x        -> localNameInScope func pc x
+    ELocal x        -> localNameInScope func mbPc x
     ENonLocal _     -> True
-    ESelectFrom x y -> nameInScope func pc x && nameInScope func pc y
+    ESelectFrom x y -> nameInScope func mbPc x && nameInScope func mbPc y
     EVarArg         -> funcIsVararg func
 
     EString _       -> True
     ENumber _       -> True
     EBool _         -> True
-    EUni _ e        -> nameInScope func pc e
+    EUni _ e        -> nameInScope func mbPc e
 
 
 
 
 localVar :: NameResolveEnv {-^ execution frame -}      ->
-            PC             {-^ cur pc -}               ->
+            Maybe PC       {-^ cur pc -}               ->
             LocalName      {-^ info about the local -} ->
             IO Value
 localVar eenv pc name

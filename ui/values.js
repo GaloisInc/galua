@@ -227,8 +227,8 @@ function drawViewFunctionIcon(dbgState,v) {
          .attr('title', 'View source')
          .attr('data-uk-tooltip','')
          .click( function () {
-           var path = '/function'
-           jQuery.post(path, { fid: v.fid }, function(code) {
+           var path = '/closure'
+           jQuery.post(path, { fid: v.fid, id: v.id }, function(code) {
              drawFunctionInNewTab(dbgState,code)
            })
            .fail(disconnected)

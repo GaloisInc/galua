@@ -204,7 +204,7 @@ function drawLine(dbgState,context,chunkId,here) {
                  .text(t.lexeme)
                  .addClass(t.token)
 
-        if (context !== null) {
+        if (context.eid !== null) {
           jQuery.each(t.names, function(ix,cl) {
             it.addClass('exp'+cl)
           })

@@ -107,6 +107,7 @@ apiRoutes st =
   let cmd f   = f =<< liftIO (readIORef st)
       ioCmd f = liftIO (f =<< readIORef st)
   in [ ("/function", cmd snapGetFunction)
+     , ("/closure",  cmd snapGetClosure)
      , ("/view",     cmd snapGetState)
      , ("/poll",     cmd snapPoll)
 
@@ -160,11 +161,11 @@ snapWatchName :: Debugger -> Snap ()
 snapWatchName dbg =
   do nid <- nameIdParam "id"
      txt <- textParam   "eid"
-     pc  <- natParam    "pc"
+     pc  <- textParam    "pc"
      case importExecEnvId txt of
        Nothing -> badInput "Invalid context identifier: `eid`"
        Just eid ->
-         do mb <- liftIO $ resolveName dbg eid (fromInteger pc) nid
+         do mb <- liftIO $ resolveName dbg eid (readMaybe (Text.unpack pc)) nid
             sendJSON =<< liftIO (
               case mb of
                 Left (NotFound err) -> return $ JS.object [ "error" JS..= err ]
@@ -238,9 +239,20 @@ snapGetFunction :: Debugger -> Snap ()
 snapGetFunction st =
   do fid <- funIdParam "fid"
      sources <- liftIO (readIORef (dbgSources st))
-     case exportFun sources Nothing fid of
+     case exportFun sources Nothing Nothing fid of
        Just js -> sendJSON js
        _       -> notFound
+
+snapGetClosure :: Debugger -> Snap ()
+snapGetClosure st =
+  do fid <- funIdParam "fid"
+     cid <- natParam "id"
+     sources <- liftIO (readIORef (dbgSources st))
+     let env = ClosureEnvId (fromIntegral cid)
+     case exportFun sources Nothing (Just env) fid of
+       Just js -> sendJSON js
+       _       -> notFound
+
 
 snapAnalyze :: Debugger -> Snap ()
 snapAnalyze dbg =

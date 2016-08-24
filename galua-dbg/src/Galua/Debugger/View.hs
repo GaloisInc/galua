@@ -336,7 +336,10 @@ exportValue funs path val =
     Closure r  ->
       do MkClosure { cloFun } <- io (readRef r)
          let fs = exportFunctionValue funs (-1) cloFun
-         ref r (fs ++ [ tag "closure",     "text" .= prettyRef r ])
+         ref r (fs ++ [ tag "closure"
+                      , "text" .= prettyRef r
+                      , "id"   .= show (referenceId r)
+                      ])
 
     UserData r ->
       do mbName <- io $ do MkUserData{ userDataMeta } <- readRef r
@@ -702,7 +705,7 @@ exportExecEnv funs pc eid
          (code,locNames,upNames) =
             case execFunction of
               LuaFunction fid fun ->
-                ( Just (exportFun funs (Just (pc,eid)) fid)
+                ( Just (exportFun funs (Just pc) (Just eid) fid)
                 , lookupLocalName fun pc . Reg
                 , \x -> debugInfoUpvalues (funcDebug fun) Vector.!? x
                 )
@@ -755,26 +758,22 @@ funIdParent (FunId (_:xs)) = Just (FunId xs)
 -- | Merge together the source lines of a function with their corresponding
 -- opcodes.
 -- XXX: Only works when there is debug info
-exportFun :: Chunks -> Maybe (Int,ExecEnvId) -> FunId -> Maybe JS.Value
-exportFun funs eid fid0 =
+exportFun :: Chunks -> Maybe Int -> Maybe ExecEnvId -> FunId -> Maybe JS.Value
+exportFun funs mbPc mbEid fid0 =
   do fi@(topSrc,f0) <- lookupFun funs fid0
      let subs = subFunLines f0
-         pc   = fromMaybe (-1) (fst <$> eid)
-         inScope nid = case Map.lookup nid (srcNames topSrc) of
-                         Nothing -> False
-                         Just nm -> nameInScope f0 pc (exprName nm)
+         inScope nid = fromMaybe False $
+                       do nm <- Map.lookup nid (srcNames topSrc)
+                          return (nameInScope f0 mbPc (exprName nm))
 
 
      return $ JS.object
        [ "chunk"    .= getRoot fid0
        , "name"     .= getFunctionName funs fid0
        , "parent"   .= fmap exportFID (funIdParent fid0)
-       , "context"  .= (case eid of
-                          Nothing -> JS.Null
-                          Just (pc,eid') ->
-                            JS.object [ "pc" .= pc
-                                      , "eid" .= exportExecEnvId eid'
-                                      ])
+       , "context"  .= JS.object [ "pc"  .= mbPc
+                                 , "eid" .= (exportExecEnvId <$> mbEid)
+                                 ]
        , "lines" .=
            [ JS.object
               [ "line"    .= lNum
