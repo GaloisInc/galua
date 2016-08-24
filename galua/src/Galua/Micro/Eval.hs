@@ -1,5 +1,5 @@
 {-# LANGUAGE RecordWildCards, FlexibleInstances, MultiWayIf #-}
-module Galua.Micro.Eval where
+module Galua.Micro.Eval (runStmtAt,Next(..)) where
 
 import           Data.IORef(IORef,newIORef,modifyIORef',modifyIORef,readIORef,
                             writeIORef)
@@ -19,12 +19,12 @@ import           Language.Lua.Bytecode.FunId
 
 import           Galua.Reference(Reference,NameM,readRef,RefLoc(..),CodeLoc(..))
 import           Galua.Value
+import           Galua.FunValue
 import           Galua.Number(Number(..),wordshiftL,wordshiftR,nummod,
                               numberPow,numberDiv)
 import           Galua.LuaString
                    (LuaString,toByteString,fromByteString,luaStringLen)
 import           Galua.Micro.AST
-import           Galua.Micro.Translate(translate)
 
 data V = VRef {-# UNPACK #-} !(IORef Value)
        | VVal Value
@@ -33,7 +33,7 @@ data V = VRef {-# UNPACK #-} !(IORef Value)
 type MetaTables = IORef (Map ValueType (Reference Table))
 
 data Frame = Frame { regs         :: !(IOVector V)
-                   , regsTMP      :: !(IORef (Map (Int,Int) V))
+                   , regsTMP      :: !(IORef (Map (Int,Int) Value))
                    , argRegRef    :: !(IORef [Value])
                    , listRegRef   :: !(IORef [Value])
                    , upvals       :: !(Vector (IORef Value))
@@ -45,10 +45,10 @@ data Frame = Frame { regs         :: !(IOVector V)
                    }
 
 data Next = EnterBlock BlockName
-          | RaiseError Value
           | Continue
           | MakeCall (Reference Closure)
-          | MakeTailCall (Reference Closure)
+          | MakeTailCall (Reference Closure) [Value]
+          | RaiseError Value
           | ReturnWith [Value]
 
 class IsValue t where
@@ -101,7 +101,9 @@ setReg Frame { .. } reg v0 =
   liftIO $
   case reg of
     Reg (OP.Reg r) -> IOVector.write regs r val
-    TMP a b        -> modifyIORef' regsTMP (Map.insert (a,b) val)
+    TMP a b        -> case toValue v0 of
+                        VVal v -> modifyIORef' regsTMP (Map.insert (a,b) v)
+                        VRef _ -> error "[bug] reference in a TMP register"
 
   where
   val = toValue v0
@@ -114,7 +116,7 @@ getReg Frame { .. } reg =
     Reg (OP.Reg r) -> IOVector.read regs r
     TMP a b -> do m <- readIORef regsTMP
                   case Map.lookup (a,b) m of
-                    Just v  -> return v
+                    Just v  -> return (VVal v)
                     Nothing -> crash ("Read from bad reg: " ++ show (pp' reg))
 
 
@@ -311,7 +313,8 @@ runStmt f@Frame { .. } pc stmt =
 
     TailCall clo ->
       do fun <- isFunction =<< getReg f clo
-         return (MakeTailCall fun)
+         vs  <- getListReg f
+         return (MakeTailCall fun vs)
 
     Return ->
       do vs <- getListReg f
@@ -322,7 +325,8 @@ runStmt f@Frame { .. } pc stmt =
     NewClosure res proto us ->
       do rs <- mapM (isReference <=< getExpr f) us
          fun <- case subFuns Vector.!? proto of
-                  Just fn -> return (LuaFunction (subFun ourFID proto) fn)
+                  Just fn ->
+                        return (luaFunction (subFun ourFID proto) fn)
                   Nothing -> crash ("Missing function: " ++ show proto)
          let refLoc = RefLoc { refLocSite   = InLua ourFID pc
                              , refLocCaller = ourCaller
@@ -475,62 +479,12 @@ runStmt f@Frame { .. } pc stmt =
     Comment _    -> return Continue
 
 
---------------------------------------------------------------------------------
-
-
 runStmtAt :: NameM m => Frame -> Vector BlockStmt -> Int -> m Next
 runStmtAt f curBlock pc =
   case curBlock Vector.!? pc of
     Just stmt -> runStmt f pc stmt
     Nothing   -> crash ("Invalid PC: " ++ show pc)
 
-
-run :: NameM m => Frame -> Vector BlockStmt -> Int -> m (Either Value [Value])
-run f curBlock pc =
-  do next <- runStmtAt f curBlock pc
-     case next of
-       Continue -> run f curBlock (pc + 1)
-       EnterBlock l ->
-         case Map.lookup l (ourCode f) of
-           Just b  -> run f b 0
-           Nothing -> crash ("Missing block: " ++ show l)
-       RaiseError e -> return (Left e)
-       ReturnWith xs -> return (Right xs)
-       MakeTailCall fun ->
-         do vs <- getListReg f
-            let loc = InLua (ourFID f) pc
-            runFunction loc (metaTables f) fun vs
-       MakeCall fun ->
-         do vs <- getListReg f
-            let loc = InLua (ourFID f) pc
-            ans <- runFunction loc (metaTables f) fun vs
-            case ans of
-              Left err -> return (Left err)
-              Right as ->
-                do setListReg f as
-                   run f curBlock (pc + 1)
-
-runFunction ::
-  NameM m => CodeLoc -> MetaTables -> Reference Closure -> [Value] ->
-                                        m (Either Value [Value])
-runFunction ourCaller metaTables r vs =
-  do clo <- readRef r
-     case cloFun clo of
-       LuaFunction ourFID fun ->
-         do let stackSize = OP.funcMaxStackSize fun
-            regs <- liftIO (IOVector.replicate stackSize (VVal Nil))
-            regsTMP <- liftIO (newIORef Map.empty)
-            argRegRef <- liftIO (newIORef vs)
-            listRegRef <- liftIO (newIORef [])
-            let upvals  = cloUpvalues clo
-                subFuns = OP.funcProtos fun
-                ourCode = functionCode (translate fun)
-                f = Frame { .. }
-            case Map.lookup EntryBlock ourCode of
-              Just b  -> run f b 0
-              Nothing -> crash "Function entry point is missing."
-
-       CFunction {} -> crash "We don't know how to call C functions (yet?)."
 
 
 

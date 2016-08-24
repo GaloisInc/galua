@@ -6,7 +6,7 @@ import           Control.Monad.IO.Class(MonadIO(liftIO))
 import           Control.Monad.Trans.Reader(ReaderT(..), ask)
 import qualified Data.ByteString as B
 import           Data.String(fromString)
-import           Data.IORef (IORef, readIORef)
+import           Data.IORef (readIORef)
 import           Data.Map (Map)
 import qualified Data.Map as Map
 

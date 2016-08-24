@@ -47,6 +47,7 @@ import           Galua.Mach
 import           Galua.Stepper
 import           Galua.Reference
 import           Galua.Value
+import           Galua.FunValue
 import           Galua.Names.Eval
 import           Galua.Names.Find(LocatedExprName(..),ppExprName)
 import qualified Galua.Util.SizedVector as SV
@@ -416,8 +417,8 @@ findNameResolveEnv dbg vm eid =
 closureToResolveEnv ::
   TypeMetatables -> Closure -> IO (FunId, NameResolveEnv)
 closureToResolveEnv metaTabs c =
-  do (fid,func) <- case cloFun c of
-                     LuaFunction fid func -> return (fid,func)
+  do (fid,func) <- case luaOpCodes (cloFun c) of
+                     Just (fid,func) -> return (fid,func)
                      _ -> nameResolveException "Not in a Lua function."
      stack <- SV.new
      let nre = NameResolveEnv
@@ -431,8 +432,8 @@ closureToResolveEnv metaTabs c =
 execEnvToNameResolveEnv ::
   TypeMetatables -> ExecEnv -> IO (FunId, NameResolveEnv)
 execEnvToNameResolveEnv metaTabs eenv =
-  do (fid,func) <- case execFunction eenv of
-                     LuaFunction fid func -> return (fid,func)
+  do (fid,func) <- case luaOpCodes (execFunction eenv) of
+                     Just (fid,func) -> return (fid,func)
                      _ -> nameResolveException "Not in a Lua function."
 
      let nre = NameResolveEnv
@@ -676,8 +677,8 @@ checkBreak d@Debugger { dbgBreaks, dbgBreakOnError } vm next =
 
   checkStaticBreak =
     do th <- readRef (vmCurThread vm)
-       case execFunction (stExecEnv th) of
-         LuaFunction fid _ ->
+       case funValueName (execFunction (stExecEnv th)) of
+         LuaFID fid ->
            do breaks <- readIORef dbgBreaks
               case next of
                 Goto pc | (pc, fid) `Set.member` breaks ->
@@ -909,8 +910,8 @@ doStepMode dbg vm next mode firstStep =
   getLineNumber pc =
     do th <- readRef (vmCurThread vm)
        return $!
-         case execFunction (stExecEnv th) of
-           LuaFunction _ func | Just l' <- lookupLineNumber func pc -> l'
+         case luaOpCodes (execFunction (stExecEnv th)) of
+           Just (_,func) | Just l' <- lookupLineNumber func pc -> l'
            _ -> 0
 
   done = do r <- readIORef (dbgIdleReason dbg)

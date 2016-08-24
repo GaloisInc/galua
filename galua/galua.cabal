@@ -26,6 +26,8 @@ library
                        Galua.Number
                        Galua.Overloading
                        Galua.Reference
+                       Galua.FunValue
+                       Galua.ValueType
                        Galua.Value
                        Galua.LuaString
                        Galua.Stepper

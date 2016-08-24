@@ -34,6 +34,7 @@ import           Language.Lua.Bytecode.Parser
 
 import           Galua.Reference
 import           Galua.Value
+import           Galua.FunValue(cFunction,luaFunction)
 import           Galua.LuaString
 import           Galua.CObjInfo(CObjInfo,getCFunInfo)
 import           Galua.Util.Stack(Stack)
@@ -294,9 +295,9 @@ data ExecEnv = ExecEnv
 -- | Get the function id for this stack frame.
 execFunId :: ExecEnv -> Maybe FunId
 execFunId env =
-  case execFunction env of
-    LuaFunction fid _ -> Just fid
-    _                 -> Nothing
+  case funValueName (execFunction env) of
+    LuaFID fid -> Just fid
+    _          -> Nothing
 
 -- | Get the chunk id for this exec env, if any
 execChunk :: ExecEnv -> Maybe Int
@@ -323,7 +324,7 @@ newThreadExecEnv =
      time  <- Clock.getTime Clock.ProcessCPUTime
      return ExecEnv { execStack    = stack
                     , execUpvals   = Vector.empty
-                    , execFunction = CFunction blankCFunName
+                    , execFunction = cFunction blankCFunName
                     , execVarargs  = var
                     , execApiCall  = api
                     , execClosure  = Nil
@@ -422,9 +423,9 @@ machRefLoc =
                    Just (CallFrame pc env _ _,_) -> mkLoc env pc
                    Nothing -> MachSetup -- XXX: or can this happen?
 
-  mkLoc env pc = case execFunction env of
-                   CFunction nm      -> InC nm
-                   LuaFunction fid _ -> InLua fid pc
+  mkLoc env pc = case funValueName (execFunction env) of
+                   CFID nm    -> InC nm
+                   LuaFID fid -> InLua fid pc
 
 
 
@@ -640,7 +641,7 @@ chunkToClosure menv name bytes env =
             modNum   <- liftIO $ atomicModifyIORef' (machNextChunkId menv)
                                $ \r -> (r + 1, r)
             let fid = rootFun modNum
-            clo <- machNewClosure (LuaFunction fid func') upvalues
+            clo <- machNewClosure (luaFunction fid func') upvalues
             liftIO (machOnChunkLoad (machConfig menv) name bytes modNum func)
             return (Right clo)
 

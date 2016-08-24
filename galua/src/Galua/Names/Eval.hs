@@ -12,7 +12,6 @@ import           Language.Lua.Bytecode
 import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
 import           Data.Maybe(fromMaybe)
-import           Data.Map(Map)
 import           Data.ByteString(ByteString)
 import           Data.IORef(IORef,readIORef)
 import           Data.Text.Encoding(decodeUtf8)
@@ -20,7 +19,7 @@ import qualified Data.Text as Text
 import           Data.Bits(complement)
 import           Control.Exception(Exception,throwIO)
 
-import Galua.Value(Value(..),valueBool,ValueType)
+import Galua.Value(Value(..),valueBool)
 import Galua.Overloading(valueMetamethod,withMetatables)
 import Galua.Reference(Reference,readRef)
 import Galua.Util.Table(Table,getTableRaw,tableLen)

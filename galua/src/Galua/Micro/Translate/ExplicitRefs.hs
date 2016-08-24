@@ -182,7 +182,7 @@ refStmt stmt =
     Case e as d ->
       do e' <- readExpr e
          let alt (v,b) = do b' <- endBlock b
-                            return (v,b)
+                            return (v,b')
          as' <- mapM alt as
          d'  <- mapM endBlock d
          emit $ Case e' as' d'

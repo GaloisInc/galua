@@ -13,7 +13,6 @@ import           Data.Traversable
 import           Control.Monad.IO.Class
 import           Data.Foldable
 import           Data.IORef
-import           Foreign.Ptr
 
 execCFunction :: CFunName -> Mach a
 execCFunction cfun =

@@ -191,9 +191,9 @@ importTable t =
 importFunction :: C.Closure -> M A.FunV
 importFunction C.MkClosure { .. } =
   do rs <- mapM importUpVal (Vector.toList cloUpvalues)
-     let nm = case cloFun of
-                C.LuaFunction fid _ -> A.OneValue (A.LuaFunImpl fid)
-                C.CFunction ptr     -> A.OneValue (A.CFunImpl (C.cfunAddr ptr))
+     let nm = case C.funValueName cloFun of
+                C.LuaFID fid -> A.OneValue (A.LuaFunImpl fid)
+                C.CFID ptr   -> A.OneValue (A.CFunImpl (C.cfunAddr ptr))
      return A.FunV { functionUpVals = Map.fromList (zipWith mkRef [ 0 .. ] rs)
                    , functionFID    = nm
                    }

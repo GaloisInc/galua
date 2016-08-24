@@ -18,6 +18,7 @@ import qualified Galua.Util.SizedVector as SV
 import           Language.Lua.Bytecode
 import           Language.Lua.Bytecode.FunId
 import           Galua.Value
+import           Galua.FunValue
 import           Galua.Overloading
 import           Galua.Mach
 import           Galua.Number
@@ -249,7 +250,7 @@ execute pc =
        OP_CLOSURE tgt i ->
          do (fid,closureFunc) <- getProto i
             closureUpvals <- traverse getLValue (funcUpvalues closureFunc)
-            tgt =: (Closure <$> machNewClosure (LuaFunction fid closureFunc)
+            tgt =: (Closure <$> machNewClosure (luaFunction fid closureFunc)
                                                                 closureUpvals)
 
        OP_VARARG a b ->
@@ -305,9 +306,9 @@ forloopAsNumber label v =
 
 asLuaFunction :: FunctionValue -> Mach (FunId, Function)
 asLuaFunction run =
-  case run of
-    LuaFunction fid f -> return (fid,f)
-    _ -> interpThrow NonLuaFunction
+  case luaOpCodes run of
+    Just (fid,f) -> return (fid,f)
+    Nothing      -> interpThrow NonLuaFunction
 ------------------------------------------------------------------------
 -- Reference accessors
 ------------------------------------------------------------------------

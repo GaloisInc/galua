@@ -10,6 +10,7 @@ module Galua.Stepper
 
 import           Galua.Mach
 import           Galua.Value
+import           Galua.FunValue(funValueCode,FunCode(..))
 import           Galua.Reference
 import           Galua.CallIntoC
 import           Galua.OpcodeInterpreter (execute)
@@ -129,9 +130,7 @@ bumpCallCounter :: Reference Closure -> VM -> IO ()
 bumpCallCounter clo vm =
   do fun <- readRef clo
      atomicModifyIORef' prof $ \counts ->
-       let key     = case cloFun fun of
-                       CFunction c       -> CFID   c
-                       LuaFunction fid _ -> LuaFID fid
+       let key     = funValueName (cloFun fun)
            counts' = inline Map.alter inc key counts
            inc old = Just $! maybe 1 succ old
        in (counts', ())
@@ -384,8 +383,8 @@ enterClosure c vs = liftIO $
   do MkClosure { cloFun, cloUpvalues } <- readRef c
 
      let (stackElts, vas, start) =
-           case cloFun of
-             LuaFunction _ f ->
+           case funValueCode cloFun of
+             LuaOpCodes f ->
                   let n = funcMaxStackSize f
                       (normalArgs,extraArgs) = splitAt (funcNumParams f) vs
 
@@ -397,7 +396,7 @@ enterClosure c vs = liftIO $
 
                   in (stack, varargs, machGoto 0)
 
-             CFunction cfun -> (vs, [], execCFunction cfun)
+             CCode cfun -> (vs, [], execCFunction cfun)
 
      stack    <- SV.new
      traverse_ (SV.push stack <=< newIORef) stackElts

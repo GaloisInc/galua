@@ -27,7 +27,8 @@ import Data.IntMap (IntMap)
 import Language.Lua.Bytecode.FunId(FunId)
 import Galua.Util.Loc
 import {-# SOURCE #-} Galua.Mach (Thread)
-import {-# SOURCE #-} Galua.Value (CFunName,Closure, Value, UserData)
+import {-# SOURCE #-} Galua.Value (Closure, Value, UserData)
+import Galua.FunValue(CFunName)
 import Galua.Util.Table(Table)
 
 type WeakMap a = IntMap (Weak (IORef a))

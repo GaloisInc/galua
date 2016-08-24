@@ -24,7 +24,7 @@ module Galua.Value
 
   -- * Closures
   , Closure(..)
-  , FunctionValue(..)
+  , FunctionValue
   , Prim
   , PrimArgument(..)
   , newClosure
@@ -62,24 +62,20 @@ import           Data.Text.Encoding (decodeUtf8With,encodeUtf8)
 import           Data.Text.Encoding.Error (lenientDecode)
 import           Data.Vector (Vector)
 import           GHC.Generics (Generic)
-import           Foreign.Ptr (FunPtr, Ptr,nullFunPtr,ptrToIntPtr)
+import           Foreign.Ptr (FunPtr, Ptr,ptrToIntPtr)
 import           Foreign.ForeignPtr (ForeignPtr)
 import           Foreign.C.Types (CInt, CSize)
 import           Foreign.C.String (CString, CStringLen)
-import           Text.PrettyPrint(text)
 import           Data.Hashable(Hashable(..))
 
 import {-# SOURCE #-} Galua.Mach (Thread,Mach)
 
-import Language.Lua.Bytecode (Function(..))
-import Language.Lua.Bytecode.Pretty(PP(..))
-import Language.Lua.Bytecode.FunId
-
 import qualified Galua.Util.Table as Tab
 
 import Galua.Number
+import Galua.FunValue
+import Galua.ValueType
 import Galua.Reference
-import Galua.CObjInfo(CObjInfo,noFunInfo)
 import Galua.LuaString
 
 data Value
@@ -192,18 +188,6 @@ tableNext ref key = liftIO $ do t <- readRef ref
 -- Value types
 ------------------------------------------------------------------------
 
-data ValueType
-  = NumberType -- ^ integer and float are just representations of number
-  | StringType
-  | FunctionType
-  | TableType
-  | BoolType
-  | NilType
-  | UserDataType
-  | LightUserDataType
-  | ThreadType
-  deriving (Generic,Show,Eq,Ord)
-
 valueType :: Value -> ValueType
 valueType v =
   case v of
@@ -223,39 +207,12 @@ valueType v =
 
 
 
-data FunctionValue
-  = CFunction CFunName
-  | LuaFunction FunId Function
-
-data FunName = CFID CFunName | LuaFID FunId
-                deriving (Eq,Ord)
-
-funValueName :: FunctionValue -> FunName
-funValueName (CFunction   name  ) = CFID   name
-funValueName (LuaFunction name _) = LuaFID name
-
-data CFunName = CFunName
-  { cfunName :: CObjInfo
-  , cfunAddr :: CFun
-  }
-
-instance Eq CFunName where
-  x == y = cfunAddr x == cfunAddr y
-
-instance Ord CFunName where
-  compare x y = compare (cfunAddr x) (cfunAddr y)
-
-blankCFunName :: CFunName
-blankCFunName = CFunName { cfunName = noFunInfo nullFunPtr
-                         , cfunAddr = nullFunPtr }
-
 data Closure = MkClosure
   { cloFun      :: FunctionValue
   , cloUpvalues :: Vector (IORef Value)
   }
 
 type Prim = [Value] -> Mach [Value]
-type CFun = FunPtr (Ptr () -> IO CInt)
 
 data PrimArgument
   = PrimIntArg Integer
@@ -337,22 +294,6 @@ trimResult1 [] = Nil
 trimResult1 (x:_) = x
 
 --------------------------------------------------------------------------------
-
-instance PP ValueType where
-  pp _ ty = text (prettyValueType ty)
-
-prettyValueType :: ValueType -> String
-prettyValueType t =
-  case t of
-    StringType   -> "string"
-    NumberType   -> "number"
-    TableType    -> "table"
-    FunctionType -> "function"
-    BoolType     -> "boolean"
-    NilType      -> "nil"
-    UserDataType -> "userdata"
-    LightUserDataType -> "userdata"
-    ThreadType   -> "thread"
 
 
 

@@ -4,7 +4,6 @@ sole predecessor of B, then we can combine A and B into a single block.
 -}
 module Galua.Micro.Translate.JoinBlocks (joinBlocks) where
 
-import           Data.Set (Set)
 import qualified Data.Set as Set
 import           Data.Map (Map)
 import qualified Data.Map as Map

@@ -8,7 +8,7 @@ module Galua.Micro.AST
   ) where
 
 
-import           Galua.Value(ValueType(..))
+import           Galua.ValueType(ValueType(..))
 import qualified Language.Lua.Bytecode as OP
 import           Language.Lua.Bytecode (Constant(..))
 import           Language.Lua.Bytecode.Pretty(PP(..),blankPPInfo)

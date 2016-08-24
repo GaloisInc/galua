@@ -44,6 +44,7 @@ import Galua.CObjInfo
 import Galua.Reference
 import Galua.Value
 import Galua.LuaString
+import Galua.FunValue
 
 #include "lua.h"
 
@@ -267,7 +268,7 @@ lua_pushcclosure_hs l r func nup =
   do upvals <- popN args $ fromIntegral nup
      info   <- machLookupCFun func
      vs     <- liftIO $ mapM newIORef $ Vector.fromList upvals
-     c      <- machNewClosure (CFunction CFunName { cfunName = info
+     c      <- machNewClosure (cFunction CFunName { cfunName = info
                                                   , cfunAddr = func}) vs
      push args (Closure c)
 
@@ -282,9 +283,9 @@ lua_tocfunction_hs l r ix out =
      res <- case x of
               Closure cref ->
                 do c <- readRef cref
-                   case cloFun c of
-                     CFunction cfun -> return (cfunAddr cfun)
-                     _ -> return nullFunPtr
+                   case funValueName (cloFun c) of
+                     CFID cfun -> return (cfunAddr cfun)
+                     _         -> return nullFunPtr
               _ -> return nullFunPtr
      liftIO (poke out res)
 
@@ -298,9 +299,9 @@ lua_iscfunction_hs l r ix out =
      res <- case x of
               Closure cref ->
                 do c <- readRef cref
-                   case cloFun c of
-                     CFunction {} -> return 1
-                     _ -> return 0
+                   case funValueName (cloFun c) of
+                     CFID {} -> return 1
+                     _       -> return 0
               _ -> return 0
      liftIO (poke out res)
 
@@ -1271,8 +1272,9 @@ lua_getstack_hs l r level ar out =
      liftIO (poke out result)
 
 isNullCFunction :: FunctionValue -> Bool
-isNullCFunction (CFunction name) = cfunAddr name == nullFunPtr
-isNullCFunction _                = False
+isNullCFunction x = case funValueName x of
+                      CFID name -> cfunAddr name == nullFunPtr
+                      _         -> False
 
 ------------------------------------------------------------------------
 
@@ -1291,11 +1293,13 @@ lua_getinfo_hs l r whatPtr ar out =
 
      let luaWhat fid = if isRootFun fid then "main" else "Lua"
 
+     let funVal = execFunction execEnv
      liftIO $
-       case execFunction execEnv of
+       case (funValueName funVal) of
 
-         LuaFunction fid fun -> liftIO $
-           do when ('n' `elem` what) $
+         LuaFID fid -> liftIO $
+           do let Just (_,fun) = luaOpCodes funVal
+              when ('n' `elem` what) $
                 do pokeLuaDebugName            ar =<< newCAString ("(FID " ++ show fid ++ ")") -- track this
                    pokeLuaDebugNameWhat        ar =<< newCAString (luaWhat fid)
 
@@ -1319,7 +1323,7 @@ lua_getinfo_hs l r whatPtr ar out =
               poke out 1
 
 
-         CFunction cfun ->
+         CFID cfun ->
            do let funName = cfunName cfun
                   funNameStr = fromMaybe (cObjAddr funName) (cObjName funName)
 
@@ -1367,12 +1371,12 @@ getLocalFunArgs :: Int -> Ptr CString -> SV.SizedVector (IORef Value) -> Mach ()
 getLocalFunArgs n out args =
   do clo <- readRef =<< functionArgument (-1) args
      void (pop args)
-     liftIO $ case cloFun clo of
-       LuaFunction _ fun ->
+     liftIO $ case luaOpCodes (cloFun clo) of
+       Just (_,fun) ->
          case lookupLocalName fun 0 (Reg (n-1)) of
            Nothing -> poke out nullPtr
            Just bs -> poke out =<< newCAString (B8.unpack bs)--XXX: Leak
-       CFunction{} -> poke out nullPtr
+       _ -> poke out nullPtr
 
 getLocalStackArgs :: Int -> Ptr CString -> SV.SizedVector (IORef Value) -> Ptr LuaDebug -> Mach ()
 getLocalStackArgs n out args ar =
@@ -1382,8 +1386,8 @@ getLocalStackArgs n out args ar =
 
      let ix = fromIntegral n - 1
 
-     liftIO $ case execFunction execEnv of
-       LuaFunction _ func
+     liftIO $ case luaOpCodes (execFunction execEnv) of
+       Just (_,func)
          | Just name <- lookupLocalName func pc (Reg ix) ->
              do len <- SV.size stack
                 if 0 <= ix && ix < len
@@ -1421,11 +1425,13 @@ lua_getupvalue_hs l r funcindex n out =
            _ -> failure
 
 upvalueName :: FunctionValue -> Int -> String
-upvalueName CFunction{} _ = ""
-upvalueName (LuaFunction _ fun) n =
-  case debugInfoUpvalues (funcDebug fun) Vector.!? n of
-    Just bs -> B8.unpack bs
-    Nothing -> ""
+upvalueName fv n =
+  case luaOpCodes fv of
+    Just (_,fun) ->
+      case debugInfoUpvalues (funcDebug fun) Vector.!? n of
+        Just bs -> B8.unpack bs
+        Nothing -> ""
+    _ -> ""
 
 ------------------------------------------------------------------------
 
@@ -1442,8 +1448,8 @@ lua_setlocal_hs l r ar n out =
 
      let ix = fromIntegral n - 1
 
-     case execFunction execEnv of
-       LuaFunction _ func
+     case luaOpCodes (execFunction execEnv) of
+       Just (_,func)
          | Just name <- lookupLocalName func pc (Reg ix) ->
            do mb <- liftIO (SV.getMaybe stack ix)
               case mb of

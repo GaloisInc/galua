@@ -16,6 +16,7 @@ import Galua.Mach
 import Galua.Number
 import Galua.LuaString
 import Galua.Value
+import Galua.FunValue
 import Galua.DlInfo
 import Galua.Names.Find(exprName)
 import Galua.Names.Eval(nameInScope)
@@ -447,12 +448,12 @@ exportUserData path MkUserData { userDataMeta } =
 exportClosure :: Chunks -> ValuePath -> Closure -> ExportM JS.Value
 exportClosure funs path MkClosure { cloFun, cloUpvalues } =
   do (fs,uNames) <-
-        case cloFun of
-          LuaFunction _ func ->
+        case luaOpCodes cloFun of
+          Just (_,func)->
             return ([ tag "lua-fun" ], debugInfoUpvalues (funcDebug func))
 
 
-          CFunction _ -> return ([ tag "c-fun" ], Vector.empty)
+          _ -> return ([ tag "c-fun" ], Vector.empty)
 
      let exportU n v =
           do j <- exportValue funs (VP_CUpvalue path n) v
@@ -665,10 +666,10 @@ exportCObjInfo coi =
 
 exportFunctionValue :: Chunks -> Int -> FunctionValue -> [ JS.Pair ]
 exportFunctionValue funs pc fun =
-  case fun of
-    CFunction CFunName { cfunName } -> exportCObjInfo cfunName
+  case funValueName fun of
+    CFID CFunName { cfunName } -> exportCObjInfo cfunName
 
-    LuaFunction fid _ ->
+    LuaFID fid ->
       let vn = Map.lookup fid (allFunNames funs)
       in
       [ "type" .= str "Lua"
@@ -703,13 +704,13 @@ exportExecEnv funs pc eid
 
      let noCode = (Nothing, \_ -> Nothing, \_ -> Nothing)
          (code,locNames,upNames) =
-            case execFunction of
-              LuaFunction fid fun ->
+            case luaOpCodes (execFunction) of
+              Just (fid,fun) ->
                 ( Just (exportFun funs (Just pc) (Just eid) fid)
                 , lookupLocalName fun pc . Reg
                 , \x -> debugInfoUpvalues (funcDebug fun) Vector.!? x
                 )
-              CFunction{}       -> noCode
+              _ -> noCode
 
 
      regVs <- zipWithM (exportNamed (VP_Register env) locNames)
