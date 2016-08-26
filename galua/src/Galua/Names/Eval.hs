@@ -1,3 +1,4 @@
+{-# Language OverloadedStrings #-}
 module Galua.Names.Eval
   ( exprToValue, NameResolveEnv(..)
   , NotFound(..), nameResolveException
@@ -148,16 +149,20 @@ getUpValue fun nm = fmap UpIx
                   $ debugInfoUpvalues
                   $ funcDebug fun
 
--- XXX: For now we assume that the global environment is the first up value.
 -- We could check that its name is _ENV
 getGlobalEnv :: NameResolveEnv -> IO (Reference (Table Value))
 getGlobalEnv eenv =
-  case nrUpvals eenv Vector.!? 0 of
-    Just ref ->
-      do val <- readIORef ref
-         case val of
-           Table t -> return t
-           _       -> bad "Global environment is not a table."
+  case Vector.elemIndex
+         "_ENV"
+         (debugInfoUpvalues (funcDebug (nrFunction eenv))) of
+    Just i ->
+      case nrUpvals eenv Vector.!? i of
+        Just ref ->
+          do val <- readIORef ref
+             case val of
+               Table t -> return t
+               _       -> bad "Global environment is not a table."
+        Nothing -> bad "getGlobalEnv: Panic, upvalues don't match debug info."
     Nothing -> bad "Missing global environment."
 
 lookupInTable :: NameResolveEnv -> Value -> Reference (Table Value) -> IO Value
