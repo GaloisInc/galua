@@ -1,0 +1,37 @@
+name:                galua-spec
+version:             0.1.0.0
+synopsis:
+description:
+license:             ISC
+license-file:        LICENSE
+author:              Iavor S. Diatchki
+maintainer:          iavor.diatchki@gmail.com
+copyright:           Iavor S. Diatchki, 2016
+category:            Development
+build-type:          Simple
+extra-source-files:  ChangeLog.md
+cabal-version:       >=1.10
+
+library
+  exposed-modules:
+    Galua.Spec.AST,
+    Galua.Spec.Parser,
+    Galua.Spec.Parser.Lexer,
+    Galua.Spec.Parser.Layout,
+    Galua.Spec.Parser.Grammar,
+    Galua.Spec.Parser.Monad
+  -- other-modules:
+  build-depends:       base >=4.8 && <4.9,
+                       alex-tools >=0.1 && <0.2,
+                       array >=0.5 && <0.6,
+                       text, pretty
+  ghc-options:         -Wall
+  hs-source-dirs:      src
+  build-tools:         alex, happy
+  default-language:    Haskell2010
+
+executable test-parse
+  build-depends: base, galua-spec, text, pretty-show
+  main-is: Test.hs
+
+
