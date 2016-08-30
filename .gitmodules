@@ -8,3 +8,6 @@
 [submodule "lib/language-lua"]
 	path = lib/language-lua
 	url = https://github.com/glguy/language-lua
+[submodule "lib/alex-tools"]
+	path = lib/alex-tools
+	url = https://github.com/GaloisInc/alex-tools.git
