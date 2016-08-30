@@ -1,5 +1,9 @@
 packages:
   lib/hashtables
+  lib/dwarf-tools
+  lib/language-lua
+  lib/alex-tools
   galua
   galua-analysis
   galua-dbg
+  galua-spec

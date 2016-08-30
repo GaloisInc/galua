@@ -55,7 +55,7 @@ tokens :-
 alexGetByte :: AlexInput -> Maybe (Word8,AlexInput)
 alexGetByte = makeAlexGetByte $ \c -> fromIntegral (min 127 (fromEnum c))
 
-lexer :: Input -> () -> [Lexeme Token]
+lexer :: Input -> [Lexeme Token]
 lexer = $makeLexer simpleLexer
 
 data Token =

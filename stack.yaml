@@ -4,7 +4,9 @@ packages:
 - location: galua
 - location: galua-dbg
 - location: galua-analysis
+- location: galua-spec
 - location: lib/dwarf-tools
+- location: lib/alex-tools
 resolver: lts-6.13
 extra-deps:
 - config-value-0.5
