@@ -20,7 +20,6 @@ import Language.Lua.Bytecode(Function)
 import Language.Lua.Bytecode.FunId(FunId)
 
 import Galua.CObjInfo(CObjInfo,noFunInfo)
-import qualified Galua.Micro.AST as Micro
 
 
 type CFun = FunPtr (Ptr () -> IO CInt)
@@ -70,6 +69,3 @@ instance Ord CFunName where
 blankCFunName :: CFunName
 blankCFunName = CFunName { cfunName = noFunInfo nullFunPtr
                          , cfunAddr = nullFunPtr }
-
-
-

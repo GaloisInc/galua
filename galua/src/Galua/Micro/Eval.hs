@@ -90,8 +90,8 @@ instance IsValue (Reference Closure) where
 instance IsValue (Reference UserData) where
   toValue = toValue . UserData
 
-setListReg :: MonadIO m => Frame -> [Value] -> m ()
-setListReg Frame{..} = liftIO . writeIORef listRegRef
+-- setListReg :: MonadIO m => Frame -> [Value] -> m ()
+-- setListReg Frame{..} = liftIO . writeIORef listRegRef
 
 getListReg :: MonadIO m => Frame -> m [Value]
 getListReg Frame{..} = liftIO (readIORef listRegRef)

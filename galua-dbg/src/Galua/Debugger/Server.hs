@@ -29,9 +29,8 @@ import qualified Snap.Core as Snap
 import           Control.Monad.IO.Class(liftIO)
 
 import           Control.Applicative((<|>))
-import           Control.Monad(void)
 import           Control.Exception (throwIO, catch)
-import           Control.Concurrent(ThreadId, forkIO, newEmptyMVar, putMVar)
+import           Control.Concurrent(newEmptyMVar, putMVar)
 import           Control.Concurrent.Async (async)
 import           Data.ByteString(ByteString)
 import qualified Data.ByteString as BS

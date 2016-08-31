@@ -9,7 +9,6 @@ import           Data.Char (isDigit, isHexDigit, digitToInt)
 import           Data.Hashable(Hashable(..))
 import           GHC.Generics
 import           Numeric (readInt)
-import           Text.Read (readMaybe)
 import qualified Text.ParserCombinators.ReadP as RP
 
 import qualified Numeric.Extras as N

@@ -87,8 +87,7 @@ import           Data.IORef(IORef,readIORef,writeIORef,
 import           Control.Concurrent.Async (cancel, wait, Async)
 import            Control.Concurrent
                     ( MVar, newEmptyMVar, putMVar, takeMVar
-                    , forkIO, forkFinally
-                    , threadDelay, killThread
+                    , forkIO
                     , Chan,newChan,isEmptyChan,readChan,writeChan
                     )
 import           Control.Monad.IO.Class(liftIO)
@@ -635,7 +634,7 @@ newEmptyDebugger threadVar opts =
                  , machOnShutdown =
                      do a <- takeMVar threadVar
                         cancel a
-                        wait a
+                        _ <- wait a
                         return ()
                  }
 
@@ -653,7 +652,7 @@ newEmptyDebugger threadVar opts =
                         , dbgExportable, dbgStateVM
                         , dbgBreakOnError, dbgBrkAddOnLoad }
 
-     forkIO (runDebbugger dbg)
+     _ <- forkIO (runDebbugger dbg)
 
      return (cptr, dbg)
 
@@ -761,7 +760,7 @@ poll :: Debugger -> Word64 -> Int {- ^ Timeout in seconds -} -> IO Word64
 poll dbg _ secs =
   do mvar <- newEmptyMVar
      sendCommand dbg (AddClient mvar) False
-     timeout (secs * 1000000) (takeMVar mvar)
+     _ <- timeout (secs * 1000000) (takeMVar mvar)
      readIORef (dbgCommandCounter dbg)
 
 

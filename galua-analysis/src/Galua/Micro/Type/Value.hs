@@ -443,7 +443,8 @@ instance Lattice RegVal where
   addNewInfo v RegBottom             = Just v
   addNewInfo (RegRef r1) (RegRef r2) = RegRef <$> addNewInfo r1 r2
   addNewInfo (RegVal v1) (RegVal v2) = RegVal <$> addNewInfo v1 v2
-  addNewInfo x y = error "[bug] addNewInfo RegVal mixed referendes and values"
+  addNewInfo _ _ =
+    error "[bug] addNewInfo RegVal mixed referendes and values"
 
 
 

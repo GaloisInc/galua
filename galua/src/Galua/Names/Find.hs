@@ -26,7 +26,6 @@ import           Language.Lua.Annotated.Syntax
 import           Language.Lua.StringLiteral(interpretStringLiteral)
 import qualified Language.Lua.Syntax as Lua
 import           Language.Lua.Bytecode(Reg(..),plusReg)
-import           Language.Lua.Bytecode.Pretty(pp,blankPPInfo)
 
 import Galua.Number
 
@@ -235,7 +234,7 @@ isMethod (FunName _ _ _ (Just _)) = True
 isMethod _ = False
 
 declareFun :: Bool -> FunBody SourceRange -> M ExprName
-declareFun meth (FunBody _ xs hasVa block) =
+declareFun meth (FunBody _ xs _ block) =
   newFun $ when meth (declareLocal "self") *>
            traverse_ declareAndUse xs *>
            resolve block
