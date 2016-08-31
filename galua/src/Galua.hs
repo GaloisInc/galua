@@ -46,4 +46,5 @@ newLuaState =
 
   where cfg = MachConfig
                 { machOnChunkLoad     = \_ _ _ _ -> return ()
+                , machOnShutdown = return () -- TODO: free stable pointers
                 }

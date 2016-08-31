@@ -1584,9 +1584,10 @@ lua_topointer_hs l r ix out =
 
 ------------------------------------------------------------------------
 
--- type ApiLuaClose = EntryPoint (IO CInt)
--- 
--- foreign export ccall lua_close_hs :: ApiLuaClose
--- lua_close_hs :: ApiLuaClose
--- lua_close_hs l r = reentry "lua_close" [] l r $ \_args ->
---   return ()
+type ApiLuaClose = EntryPoint (IO CInt)
+
+foreign export ccall lua_close_hs :: ApiLuaClose
+lua_close_hs :: ApiLuaClose
+lua_close_hs l r = reentry "lua_close" [] l r $ \_args ->
+  do cfg <- getsMachEnv machConfig
+     liftIO (machOnShutdown cfg)

@@ -31,7 +31,7 @@ import           Control.Monad.IO.Class(liftIO)
 import           Control.Applicative((<|>))
 import           Control.Monad(void)
 import           Control.Exception (throwIO, catch)
-import           Control.Concurrent(forkIO)
+import           Control.Concurrent(ThreadId, forkIO, newEmptyMVar, putMVar)
 import           Data.ByteString(ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as B8
@@ -70,19 +70,21 @@ startServerC portOffset = startServer (fromIntegral portOffset)
 startServer :: Int -> IO (Ptr ())
 startServer portOffset =
   do config      <- getConfig
-     (cptr, dbg) <- newEmptyDebugger (dbgGaluaOptions config)
+     mvar        <- newEmptyMVar
+     (cptr, dbg) <- newEmptyDebugger mvar (dbgGaluaOptions config)
      st          <- newIORef dbg
 
      let routes = apiRoutes st
          snapConfig = incrementPort portOffset
                     $ dbgSnapConfig config
 
-     void $ forkIO $ httpServe snapConfig
+     threadId <- forkIO $ httpServe snapConfig
             $ Snap.route routes
           <|> serveDirectory "ui"
           <|> Snap.route [(path, sendFileBytes (B8.unpack path) content)
                                              | (path,content) <- staticContent]
           <|> Snap.path "" (Snap.redirect "index.html")
+     putMVar mvar threadId
 
      runNonBlock dbg
 

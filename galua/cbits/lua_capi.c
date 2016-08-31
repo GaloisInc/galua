@@ -713,6 +713,7 @@ size_t galua_writestring_nondbg(char *s, size_t l) {
 
 LUA_API
 void lua_close (lua_State *L) {
+        API_ENTRY(lua_close, L);
         hs_exit();
 }
 

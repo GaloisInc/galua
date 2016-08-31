@@ -5,7 +5,7 @@ packages:
 - location: galua-dbg
 - location: galua-analysis
 - location: lib/dwarf-tools
-resolver: lts-6.13
+resolver: lts-6.14
 extra-deps:
 - config-value-0.5
 - config-value-getopt-0.1.0.0

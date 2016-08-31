@@ -87,7 +87,7 @@ import           Data.IORef(IORef,readIORef,writeIORef,
 import            Control.Concurrent
                     ( MVar, newEmptyMVar, putMVar, takeMVar
                     , forkIO, forkFinally
-                    , threadDelay, killThread
+                    , threadDelay, killThread, ThreadId
                     )
 import           Control.Concurrent(Chan,newChan,isEmptyChan,readChan,writeChan)
 import           Control.Monad.IO.Class(liftIO)
@@ -611,8 +611,8 @@ addSourceFile brks breakRef sources mbName bytes cid fun =
       many -> choosePC (minimumBy (comparing (funNestDepth . fst)) many)
 
 
-newEmptyDebugger :: Options -> IO (Ptr (), Debugger)
-newEmptyDebugger opts =
+newEmptyDebugger :: MVar ThreadId -> Options -> IO (Ptr (), Debugger)
+newEmptyDebugger threadVar opts =
   do let chunks = Chunks { topLevelChunks = Map.empty
                          , allFunNames    = Map.empty
                          }
@@ -630,6 +630,9 @@ newEmptyDebugger opts =
                  { machOnChunkLoad = addSourceFile dbgBrkAddOnLoad
                                                    dbgBreaks
                                                    dbgSources
+                 , machOnShutdown =
+                        killThread =<< takeMVar threadVar
+                  -- Wait until the thread dies?
                  }
 
      (cptr, dbgNames, vm, next) <- setupLuaState cfg
@@ -646,7 +649,7 @@ newEmptyDebugger opts =
                         , dbgExportable, dbgStateVM
                         , dbgBreakOnError, dbgBrkAddOnLoad }
 
-     _ <- forkIO (runDebbugger dbg)
+     forkIO (runDebbugger dbg)
 
      return (cptr, dbg)
 
