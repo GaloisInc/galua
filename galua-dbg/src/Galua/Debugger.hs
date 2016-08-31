@@ -84,12 +84,13 @@ import           Data.IORef(IORef,readIORef,writeIORef,
                             modifyIORef,modifyIORef',newIORef,
                             atomicModifyIORef')
 
+import           Control.Concurrent.Async (cancel, wait, Async)
 import            Control.Concurrent
                     ( MVar, newEmptyMVar, putMVar, takeMVar
                     , forkIO, forkFinally
-                    , threadDelay, killThread, ThreadId
+                    , threadDelay, killThread
+                    , Chan,newChan,isEmptyChan,readChan,writeChan
                     )
-import           Control.Concurrent(Chan,newChan,isEmptyChan,readChan,writeChan)
 import           Control.Monad.IO.Class(liftIO)
 import           Control.Monad(when,forever)
 import           Control.Exception(try)
@@ -611,7 +612,7 @@ addSourceFile brks breakRef sources mbName bytes cid fun =
       many -> choosePC (minimumBy (comparing (funNestDepth . fst)) many)
 
 
-newEmptyDebugger :: MVar ThreadId -> Options -> IO (Ptr (), Debugger)
+newEmptyDebugger :: MVar (Async a) -> Options -> IO (Ptr (), Debugger)
 newEmptyDebugger threadVar opts =
   do let chunks = Chunks { topLevelChunks = Map.empty
                          , allFunNames    = Map.empty
@@ -631,8 +632,10 @@ newEmptyDebugger threadVar opts =
                                                    dbgBreaks
                                                    dbgSources
                  , machOnShutdown =
-                        killThread =<< takeMVar threadVar
-                  -- Wait until the thread dies?
+                     do a <- takeMVar threadVar
+                        cancel a
+                        wait a
+                        return ()
                  }
 
      (cptr, dbgNames, vm, next) <- setupLuaState cfg

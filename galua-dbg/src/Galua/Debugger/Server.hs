@@ -32,6 +32,7 @@ import           Control.Applicative((<|>))
 import           Control.Monad(void)
 import           Control.Exception (throwIO, catch)
 import           Control.Concurrent(ThreadId, forkIO, newEmptyMVar, putMVar)
+import           Control.Concurrent.Async (async)
 import           Data.ByteString(ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as B8
@@ -78,13 +79,13 @@ startServer portOffset =
          snapConfig = incrementPort portOffset
                     $ dbgSnapConfig config
 
-     threadId <- forkIO $ httpServe snapConfig
+     httpThread <- async $ httpServe snapConfig
             $ Snap.route routes
           <|> serveDirectory "ui"
           <|> Snap.route [(path, sendFileBytes (B8.unpack path) content)
                                              | (path,content) <- staticContent]
           <|> Snap.path "" (Snap.redirect "index.html")
-     putMVar mvar threadId
+     putMVar mvar httpThread
 
      runNonBlock dbg
 
