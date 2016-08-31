@@ -269,7 +269,7 @@ instance Resolve (Exp SourceRange) where
     case expr of
       Nil{}          -> ignore
       Bool _ b       -> pure (EBool b)
-      Number _ num   -> case parseNumber (Text.unpack num) of
+      Number _ _ num -> case parseNumber (Text.unpack num) of
                           Just n -> pure (ENumber n)
                           Nothing -> ignore
       String _ txt   -> case interpretStringLiteral (Text.unpack txt) of

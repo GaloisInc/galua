@@ -1,4 +1,9 @@
-module Galua.Spec.Parser where
+module Galua.Spec.Parser
+  ( module Galua.Spec.Parser
+  , Lexeme(..)
+  , SourceRange(..)
+  , SourcePos(..)
+  ) where
 
 import           Data.Text(Text)
 import qualified Data.Text.IO as Text
@@ -8,12 +13,12 @@ import Galua.Spec.AST(Spec)
 import Galua.Spec.Parser.Grammar(parseSpec)
 import Galua.Spec.Parser.Monad(runParser,ParseError)
 import Galua.Spec.Parser.Lexer
-         (lexer,initialInput,Lexeme(..),Token(..),SourceRange)
+         (lexer,initialInput,Lexeme(..),Token(..),SourceRange(..),SourcePos(..))
 import Galua.Spec.Parser.Layout(addLayoutTokens)
 
 -- | Construct a list of lexemes.  Preserves white space.
 lexText :: Text -> [ Lexeme Token ]
-lexText txt = lexer (initialInput txt) ()
+lexText txt = lexer (initialInput txt)
 
 -- | Parse a stream of lexemes.
 specFromTokens :: [ Lexeme Token ] -> Either ParseError (Spec SourceRange)

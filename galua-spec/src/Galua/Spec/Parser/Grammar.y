@@ -1,8 +1,7 @@
 {
-module Galua.Spec.Parser.Grammar (parseSpec) where
+module Galua.Spec.Parser.Grammar(parseSpec) where
 
 import Data.Either(partitionEithers)
-
 import Galua.Spec.AST
 import Galua.Spec.Parser.Lexer
 import Galua.Spec.Parser.Monad
@@ -96,11 +95,14 @@ class_member :: { Either (Parsed Name) (Parsed ValDecl) }
 
 
 val_decl                 :: { Parsed ValDecl }
-  : name ':' type           { ValDecl { valAnnot = $1 <-> $3
-                            , valName = $1, valType = $3, valMutable = False } }
-  | 'mutable' name ':' type { ValDecl { valAnnot = $1 <-> $4
-                            , valName = $2, valType = $4, valMutable = True  } }
-
+  : 'mutable' name ':' type   { ValDecl { valAnnot   = $1 <-> $4
+                                        , valName    = $2
+                                        , valType    = $4
+                                        , valMutable = True } }
+  |           name ':' type   { ValDecl { valAnnot   = $1 <-> $3
+                                        , valName    = $1
+                                        , valType    = $3
+                                        , valMutable = False } }
 
 
 type_name    :: { Parsed Name }
@@ -122,44 +124,36 @@ name         :: { Parsed Name }
 
 
 
-atype          :: { Parsed Type }
-  : 'boolean'     { tPrim $1 TBoolean }
-  | 'string'      { tPrim $1 TString  }
-  | 'number'      { tPrim $1 TNumber  }
-  | 'integer'     { tPrim $1 TInteger }
-  | 'nil'         { tPrim $1 TNil     }
-  | type_name     { Type { typeAnnot = range $1
-                         , typeCon   = TUser $1, typeParams = [] } }
-  | '{' type '}'  { Type { typeAnnot = $1 <-> $3
-                         , typeCon = TArray ($1 <-> $3), typeParams = [$2] } }
-  | '(' type ')'        { $2 }
-  | '(' ')'             { Type { typeAnnot  = $1 <-> $2
-                               , typeCon    = TTuple 0 ($1 <-> $2)
-                               , typeParams = []
-                               } }
-  | '(' tuple_types ')' { Type { typeAnnot  = $1 <-> $3
-                               , typeCon    = TTuple (length $2) ($1 <-> $3)
-                               , typeParams = $2
-                               } }
-
+atype                          :: { Parsed Type }
+  : 'boolean'                     { tPrim $1 TBoolean }
+  | 'string'                      { tPrim $1 TString  }
+  | 'number'                      { tPrim $1 TNumber  }
+  | 'integer'                     { tPrim $1 TInteger }
+  | 'nil'                         { tPrim $1 TNil     }
+  | type_name                     { tUser $1 }
+  | opt_mut '{' type '}'          { tArray $1 ($2 <-> $4) $3 }
+  | opt_mut '{' type ':' type '}' { tMap $1 ($2 <-> $6) $3 $5 }
+  | '(' type ')'                  { $2 }
+  | '(' ')'                       { tTuple ($1 <-> $2) [] }
+  | '(' tuple_types ')'           { tTuple ($1 <-> $3) $2 }
   -- XXX: RECORDS
 
-btype      :: { Parsed Type }
-  : atype     { $1 }
+opt_mut                        :: { Maybe SourceRange }
+  : 'mutable'                     { Just (range $1) }
+  | {- empty -}                   { Nothing }
 
-  | atype '?' { Type { typeAnnot = $1 <-> $2
-                     , typeCon = TMaybe (range $2), typeParams = [$1] } }
-  | atype '*' { Type { typeAnnot = $1 <-> $2
-                     , typeCon = TMany  (range $2), typeParams = [$1] } }
+btype                          :: { Parsed Type }
+  : atype                         { $1 }
+  | atype '?'                     { tMaybe $1 $2 }
+  | atype '*'                     { tMany $1 $2 }
 
-type             :: { Parsed Type }
-  : btype           { $1 }
-  | btype '->' type { Type { typeAnnot = $1 <-> $3
-                           , typeCon = TFun (range $2), typeParams = [$1,$3] } }
+type                           :: { Parsed Type }
+  : btype                         { $1 }
+  | btype '->' type               { tFun $1 $3 }
 
-tuple_types              :: { [ Parsed Type ] }
-  : type ',' type           { [ $1, $3 ] }
-  | type ',' tuple_types    { $1 : $3 }
+tuple_types                    :: { [ Parsed Type ] }
+  : type ',' type                 { [ $1, $3 ] }
+  | type ',' tuple_types          { $1 : $3 }
 
 
 sep(p,s)
@@ -184,8 +178,72 @@ type Parsed f = f SourceRange
 name :: Lexeme Token -> Parsed Name
 name l = Name { nameAnnot = range l, nameText = lexemeText l }
 
-tPrim :: Lexeme Token -> (SourceRange -> TCon SourceRange) -> Parsed Type
-tPrim a tc = Type { typeAnnot = r, typeCon = tc r, typeParams = [] }
-  where r = range a
+tPrim :: Lexeme Token -> TCon -> Parsed Type
+tPrim a tc = Type { typeAnnot = range a, typeCon = tc, typeParams = [] }
+
+tUser :: Parsed Name -> Parsed Type
+tUser x = Type { typeAnnot  = range x
+               , typeCon    = TUser x { nameAnnot = () }
+               , typeParams = []
+               }
+
+tMut :: Maybe SourceRange -> SourceRange -> Parsed Type
+tMut mut rng =
+  case mut of
+    Nothing -> Type { typeAnnot = range (sourceFrom rng)
+                    , typeCon = TMutable False
+                    , typeParams = [] }
+    Just r  -> Type { typeAnnot = r
+                    , typeCon = TMutable True
+                    , typeParams = [] }
+
+tArray :: Maybe SourceRange -> SourceRange -> Parsed Type -> Parsed Type
+tArray mut rng t =
+  Type { typeAnnot  = mut ?-> rng
+       , typeCon    = TArray
+       , typeParams = [tMut mut rng, t]
+       }
+
+tMap :: Maybe SourceRange -> SourceRange ->
+                    Parsed Type -> Parsed Type -> Parsed Type
+tMap mut rng k t =
+  Type { typeAnnot  = mut ?-> rng
+       , typeCon    = TMap
+       , typeParams = [tMut mut rng, k, t]
+       }
+
+tTuple :: SourceRange -> [Parsed Type] -> Parsed Type
+tTuple r ts =
+  Type { typeAnnot  = r
+       , typeCon    = TTuple (length ts)
+       , typeParams = ts
+       }
+
+tFun :: Parsed Type -> Parsed Type -> Parsed Type
+tFun s t =
+  Type { typeAnnot  = s <-> t
+       , typeCon    = TFun
+       , typeParams = [s,t]
+       }
+
+tMaybe :: Parsed Type -> Lexeme Token -> Parsed Type
+tMaybe t r =
+  Type { typeAnnot  = t <-> r
+       , typeCon    = TMaybe
+       , typeParams = [t]
+       }
+
+tMany :: Parsed Type -> Lexeme Token -> Parsed Type
+tMany t r =
+  Type { typeAnnot  = t <-> r
+       , typeCon    = TMany
+       , typeParams = [t]
+       }
+
+
+
+(?->) :: HasRange a => Maybe SourceRange -> a -> SourceRange
+Nothing ?-> y = range y
+Just x  ?-> y = x <-> y
 }
 

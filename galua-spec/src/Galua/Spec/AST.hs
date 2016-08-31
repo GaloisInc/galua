@@ -66,22 +66,26 @@ data NamespaceDecl a = NamespaceDecl
 
 data Type a = Type
   { typeAnnot   :: !a
-  , typeCon     :: !(TCon a)
+  , typeCon     :: !TCon
   , typeParams  :: ![Type a]
   } deriving Show
 
-data TCon a = TNil a
-            | TBoolean a
-            | TString a
-            | TInteger a
-            | TNumber a
-            | TArray a
-            | TTuple Int a
-            | TMaybe a
-            | TMany a
-            | TFun a
-            | TUser (Name a)
+data TCon   = TNil
+            | TBoolean
+            | TString
+            | TInteger
+            | TNumber
+            | TArray
+            | TMap
+            | TTuple Int
+            | TMaybe
+            | TMany
+            | TFun
+            | TMutable Bool
+            | TUser (Name ())
               deriving Show
+
+
 
 
 
@@ -133,36 +137,6 @@ instance Annotated (NamespaceDecl a) a where
 instance Annotated (Type a) a where
   getAnnot      = typeAnnot
   setAnnot a t  = t { typeAnnot = a }
-
-instance Annotated (TCon a) a where
-  getAnnot tc =
-    case tc of
-      TNil a      -> a
-      TBoolean a  -> a
-      TString a   -> a
-      TInteger a  -> a
-      TNumber a   -> a
-      TArray a    -> a
-      TTuple _ a  -> a
-      TMaybe a    -> a
-      TMany a     -> a
-      TFun a      -> a
-      TUser a     -> getAnnot a
-
-  setAnnot a tc =
-     case tc of
-      TNil _      -> TNil a
-      TBoolean _  -> TBoolean a
-      TString _   -> TString a
-      TInteger _  -> TInteger a
-      TNumber _   -> TNumber a
-      TArray _    -> TArray a
-      TTuple n _  -> TTuple n a
-      TMaybe _    -> TMaybe a
-      TMany _     -> TMany a
-      TFun _      -> TFun a
-      TUser n     -> TUser (setAnnot a n)
-
 
 instance HasRange (Type SourceRange) where
   range = getAnnot
@@ -216,22 +190,27 @@ instance Pretty (NamespaceDecl a) where
 prettyType :: Int -> Type a -> Doc
 prettyType prec Type { .. } =
   case typeCon of
-    TNil _      -> ar0 "nil"
-    TBoolean _  -> ar0 "boolean"
-    TString _   -> ar0 "string"
-    TInteger _  -> ar0 "integer"
-    TNumber _   -> ar0 "number"
-    TArray _    -> ar1 (braces . pretty)
-    TTuple n _  -> arN n (parens . hsep . punctuate comma . map pretty)
-    TMaybe _    -> ar1 $ \t   -> wrap 2 (prettyType 1 t <> text "?")
-    TMany _     -> ar1 $ \t   -> wrap 2 (prettyType 1 t <> text "*")
-    TFun _      -> ar2 $ \s t -> wrap 1 (prettyType 1 s <+> text "->" <+>
-                                         prettyType 0 t)
-    TUser x     -> ar0 (pretty x)
+    TNil          -> ar0 "nil"
+    TBoolean      -> ar0 "boolean"
+    TString       -> ar0 "string"
+    TInteger      -> ar0 "integer"
+    TNumber       -> ar0 "number"
+    TMutable b    -> ar0 (if b then "mutable"
+                               else if prec > 0 then empty else "immutable")
+    TArray        -> ar2 $ \m t -> prettyType 1 m <+> braces (pretty t)
+    TMap          -> ar3 $ \m s t -> prettyType 1 m <+>
+                                      braces (pretty s <+> colon <+> pretty t)
+    TTuple n      -> arN n (parens . hsep . punctuate comma . map pretty)
+    TMaybe        -> ar1 $ \t   -> wrap 2 (prettyType 1 t <> text "?")
+    TMany         -> ar1 $ \t   -> wrap 2 (prettyType 1 t <> text "*")
+    TFun          -> ar2 $ \s t -> wrap 1 (prettyType 1 s <+> text "->" <+>
+                                           prettyType 0 t)
+    TUser x       -> ar0 (pretty x)
   where
-  ar0 f   = prettyTypeApp typeAnnot 0 typeParams $ \_             -> f
-  ar1 f   = prettyTypeApp typeAnnot 1 typeParams $ \ ~(x : _)     -> f x
-  ar2 f   = prettyTypeApp typeAnnot 2 typeParams $ \ ~(x : y : _) -> f x y
+  ar0 f   = prettyTypeApp typeAnnot 0 typeParams $ \_                 -> f
+  ar1 f   = prettyTypeApp typeAnnot 1 typeParams $ \ ~(x : _)         -> f x
+  ar2 f   = prettyTypeApp typeAnnot 2 typeParams $ \ ~(x : y : _)     -> f x y
+  ar3 f   = prettyTypeApp typeAnnot 3 typeParams $ \ ~(x : y : z : _) -> f x y z
   arN n f = prettyTypeApp typeAnnot n typeParams f
 
   wrap n  = if prec < n then id else parens
@@ -240,9 +219,9 @@ prettyType prec Type { .. } =
 instance Pretty (Type a) where
   pretty = prettyType 0
 
-instance Pretty (TCon a) where
+instance Pretty TCon where
   pretty tc = pretty t
-    where t = Type { typeAnnot = getAnnot tc, typeCon = tc, typeParams = [] }
+    where t = Type { typeAnnot = (), typeCon = tc, typeParams = [] }
 
 prettyTypeApp :: a -> Int -> [Type a] -> ([Type a] -> Doc) -> Doc
 prettyTypeApp a n xs f
@@ -256,7 +235,8 @@ prettyTypeApp a n xs f
   err b      = text "!" <> prettyType 10 b
 
   prettyWild = Type { typeAnnot   = a
-                    , typeCon     = TUser Name { nameAnnot = a, nameText = "_" }
+                    , typeCon     = TUser Name { nameAnnot = ()
+                                               , nameText = "_" }
                     , typeParams  = []
                     }
 
