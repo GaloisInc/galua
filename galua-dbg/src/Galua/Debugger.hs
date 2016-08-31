@@ -95,6 +95,7 @@ import           Control.Monad.IO.Class(liftIO)
 import           Control.Monad(when,forever)
 import           Control.Exception(try)
 import           MonadLib(ExceptionT,runExceptionT,raise,lift)
+import           System.Timeout(timeout)
 
 
 {- The fields in this are mutable, so that the interpreter can modify them
@@ -757,16 +758,10 @@ goto pc dbg =
 
 
 poll :: Debugger -> Word64 -> Int {- ^ Timeout in seconds -} -> IO Word64
-poll dbg _ timeout =
+poll dbg _ secs =
   do mvar <- newEmptyMVar
      sendCommand dbg (AddClient mvar) False
-     tid <- -- we are forking here
-            do threadDelay (timeout * 10^(6::Int))
-               putMVar mvar ()
-             `forkFinally` \_ -> return ()
-
-     takeMVar mvar
-     killThread tid
+     timeout (secs * 1000000) (takeMVar mvar)
      readIORef (dbgCommandCounter dbg)
 
 
