@@ -1,8 +1,7 @@
 {
-module Galua.Spec.Parser.Grammar (parseSpec) where
+module Galua.Spec.Parser.Grammar(parseSpec) where
 
 import Data.Either(partitionEithers)
-import Data.Maybe(isJust)
 import Galua.Spec.AST
 import Galua.Spec.Parser.Lexer
 import Galua.Spec.Parser.Monad
@@ -96,15 +95,14 @@ class_member :: { Either (Parsed Name) (Parsed ValDecl) }
 
 
 val_decl                 :: { Parsed ValDecl }
-  : opt_mut name ':' type   { ValDecl { valAnnot   = $1 ?-> $4
-                                      , valName    = $2
-                                      , valType    = $4
-                                      , valMutable = isJust $1 } }
-
-opt_mut                  :: { Maybe SourceRange }
-  : 'mutable'               { Just (range $1) }
-  | {- empty -}             { Nothing }
-
+  : 'mutable' name ':' type   { ValDecl { valAnnot   = $1 <-> $4
+                                        , valName    = $2
+                                        , valType    = $4
+                                        , valMutable = True } }
+  |           name ':' type   { ValDecl { valAnnot   = $1 <-> $3
+                                        , valName    = $1
+                                        , valType    = $3
+                                        , valMutable = False } }
 
 
 type_name    :: { Parsed Name }
@@ -139,6 +137,10 @@ atype                          :: { Parsed Type }
   | '(' ')'                       { tTuple ($1 <-> $2) [] }
   | '(' tuple_types ')'           { tTuple ($1 <-> $3) $2 }
   -- XXX: RECORDS
+
+opt_mut                        :: { Maybe SourceRange }
+  : 'mutable'                     { Just (range $1) }
+  | {- empty -}                   { Nothing }
 
 btype                          :: { Parsed Type }
   : atype                         { $1 }
@@ -243,6 +245,5 @@ tMany t r =
 (?->) :: HasRange a => Maybe SourceRange -> a -> SourceRange
 Nothing ?-> y = range y
 Just x  ?-> y = x <-> y
-
 }
 

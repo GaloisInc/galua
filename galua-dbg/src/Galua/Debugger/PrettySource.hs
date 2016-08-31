@@ -261,7 +261,8 @@ tokenType tok =
     L.TokUntil       -> Keyword
     L.TokWhile       -> Keyword
 
-    L.TokNum         -> Literal
+    L.TokInt         -> Literal
+    L.TokFloat       -> Literal
     L.TokSLit        -> Literal
 
     L.TokIdent       -> Ident

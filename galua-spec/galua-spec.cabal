@@ -25,7 +25,7 @@ library
   build-depends:       base >=4.8 && <4.9,
                        alex-tools >=0.1 && <0.2,
                        array >=0.5 && <0.6,
-                       language-lua,
+                       language-lua >= 0.11,
                        text, pretty
   ghc-options:         -Wall
   hs-source-dirs:      src
