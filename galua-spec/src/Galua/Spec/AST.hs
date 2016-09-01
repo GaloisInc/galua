@@ -12,6 +12,7 @@ module Galua.Spec.AST
   , TCon(..)
   , Annotated(..)
   , Pretty(..)
+  , prettyType
   ) where
 
 import           Data.Text(Text)
@@ -64,11 +65,13 @@ data NamespaceDecl a = NamespaceDecl
   , namespaceMembers :: ![ValDecl a]
   } deriving Show
 
-data Type a = Type
-  { typeAnnot   :: !a
-  , typeCon     :: !TCon
-  , typeParams  :: ![Type a]
-  } deriving Show
+data Type a = TCon !a !TCon ![Type a]
+            | TVar !(TVar a)
+              deriving Show
+
+data TVar a = TV !a !Int !(Maybe Text)
+              deriving Show
+
 
 data TCon   = TNil
             | TBoolean
@@ -135,8 +138,17 @@ instance Annotated (NamespaceDecl a) a where
   setAnnot a n  = n { namespaceAnnot = a }
 
 instance Annotated (Type a) a where
-  getAnnot      = typeAnnot
-  setAnnot a t  = t { typeAnnot = a }
+  getAnnot ty = case ty of
+                  TCon a _ _ -> a
+                  TVar a     -> getAnnot a
+
+  setAnnot a ty = case ty of
+                    TCon _ tc ps -> TCon a tc ps
+                    TVar v       -> TVar (setAnnot a v)
+
+instance Annotated (TVar a) a where
+  getAnnot (TV a _ _)   = a
+  setAnnot a (TV _ x y) = TV a x y
 
 instance HasRange (Type SourceRange) where
   range = getAnnot
@@ -188,7 +200,8 @@ instance Pretty (NamespaceDecl a) where
       (map pretty namespaceMembers ++ map pretty namespaceNested)
 
 prettyType :: Int -> Type a -> Doc
-prettyType prec Type { .. } =
+prettyType _ (TVar x) = pretty x
+prettyType prec (TCon ta typeCon typeParams) =
   case typeCon of
     TNil          -> ar0 "nil"
     TBoolean      -> ar0 "boolean"
@@ -207,11 +220,11 @@ prettyType prec Type { .. } =
                                            prettyType 0 t)
     TUser x       -> ar0 (pretty x)
   where
-  ar0 f   = prettyTypeApp typeAnnot 0 typeParams $ \_                 -> f
-  ar1 f   = prettyTypeApp typeAnnot 1 typeParams $ \ ~(x : _)         -> f x
-  ar2 f   = prettyTypeApp typeAnnot 2 typeParams $ \ ~(x : y : _)     -> f x y
-  ar3 f   = prettyTypeApp typeAnnot 3 typeParams $ \ ~(x : y : z : _) -> f x y z
-  arN n f = prettyTypeApp typeAnnot n typeParams f
+  ar0 f   = prettyTypeApp ta 0 typeParams $ \_                 -> f
+  ar1 f   = prettyTypeApp ta 1 typeParams $ \ ~(x : _)         -> f x
+  ar2 f   = prettyTypeApp ta 2 typeParams $ \ ~(x : y : _)     -> f x y
+  ar3 f   = prettyTypeApp ta 3 typeParams $ \ ~(x : y : z : _) -> f x y z
+  arN n f = prettyTypeApp ta n typeParams f
 
   wrap n  = if prec < n then id else parens
 
@@ -220,8 +233,10 @@ instance Pretty (Type a) where
   pretty = prettyType 0
 
 instance Pretty TCon where
-  pretty tc = pretty t
-    where t = Type { typeAnnot = (), typeCon = tc, typeParams = [] }
+  pretty tc = pretty (TCon () tc [])
+
+instance Pretty (TVar a) where
+  pretty (TV _ x _) = "$" <> int x -- XXX
 
 prettyTypeApp :: a -> Int -> [Type a] -> ([Type a] -> Doc) -> Doc
 prettyTypeApp a n xs f
@@ -234,13 +249,8 @@ prettyTypeApp a n xs f
 
   err b      = text "!" <> prettyType 10 b
 
-  prettyWild = Type { typeAnnot   = a
-                    , typeCon     = TUser Name { nameAnnot = ()
-                                               , nameText = "_" }
-                    , typeParams  = []
-                    }
-
-
+  prettyWild = TCon a (TUser nm) []
+    where nm  = Name { nameAnnot = (), nameText = "_" }
 
 
 

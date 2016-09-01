@@ -179,67 +179,35 @@ name :: Lexeme Token -> Parsed Name
 name l = Name { nameAnnot = range l, nameText = lexemeText l }
 
 tPrim :: Lexeme Token -> TCon -> Parsed Type
-tPrim a tc = Type { typeAnnot = range a, typeCon = tc, typeParams = [] }
+tPrim a tc = TCon (range a) tc []
 
 tUser :: Parsed Name -> Parsed Type
-tUser x = Type { typeAnnot  = range x
-               , typeCon    = TUser x { nameAnnot = () }
-               , typeParams = []
-               }
+tUser x = TCon (range x) (TUser x { nameAnnot = () }) []
 
 tMut :: Maybe SourceRange -> SourceRange -> Parsed Type
 tMut mut rng =
   case mut of
-    Nothing -> Type { typeAnnot = range (sourceFrom rng)
-                    , typeCon = TMutable False
-                    , typeParams = [] }
-    Just r  -> Type { typeAnnot = r
-                    , typeCon = TMutable True
-                    , typeParams = [] }
+    Nothing -> TCon (range (sourceFrom rng)) (TMutable False) []
+    Just r  -> TCon r (TMutable True) []
 
 tArray :: Maybe SourceRange -> SourceRange -> Parsed Type -> Parsed Type
-tArray mut rng t =
-  Type { typeAnnot  = mut ?-> rng
-       , typeCon    = TArray
-       , typeParams = [tMut mut rng, t]
-       }
+tArray mut rng t = TCon (mut ?-> rng) TArray [tMut mut rng, t]
 
 tMap :: Maybe SourceRange -> SourceRange ->
                     Parsed Type -> Parsed Type -> Parsed Type
-tMap mut rng k t =
-  Type { typeAnnot  = mut ?-> rng
-       , typeCon    = TMap
-       , typeParams = [tMut mut rng, k, t]
-       }
+tMap mut rng k t = TCon (mut ?-> rng) TMap [tMut mut rng, k, t]
 
 tTuple :: SourceRange -> [Parsed Type] -> Parsed Type
-tTuple r ts =
-  Type { typeAnnot  = r
-       , typeCon    = TTuple (length ts)
-       , typeParams = ts
-       }
+tTuple r ts = TCon r (TTuple (length ts)) ts
 
 tFun :: Parsed Type -> Parsed Type -> Parsed Type
-tFun s t =
-  Type { typeAnnot  = s <-> t
-       , typeCon    = TFun
-       , typeParams = [s,t]
-       }
+tFun s t = TCon (s <-> t) TFun [s,t]
 
 tMaybe :: Parsed Type -> Lexeme Token -> Parsed Type
-tMaybe t r =
-  Type { typeAnnot  = t <-> r
-       , typeCon    = TMaybe
-       , typeParams = [t]
-       }
+tMaybe t r = TCon (t <-> r) TMaybe [t]
 
 tMany :: Parsed Type -> Lexeme Token -> Parsed Type
-tMany t r =
-  Type { typeAnnot  = t <-> r
-       , typeCon    = TMany
-       , typeParams = [t]
-       }
-
+tMany t r = TCon (t <-> r) TMany [t]
 
 
 (?->) :: HasRange a => Maybe SourceRange -> a -> SourceRange
