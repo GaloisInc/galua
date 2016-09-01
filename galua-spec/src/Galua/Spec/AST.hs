@@ -32,6 +32,13 @@ data Name a = Name
   , nameText  :: !Text
   } deriving Show
 
+{- XXX: This is required so that we can compare user-defined types
+for equality.  Perhaps we should distinguish between parsed
+names (which should not be compared) and the actual resolved names
+that we use during type inference. -}
+instance Eq (Name a) where
+  x == y = nameText x == nameText y
+
 data Decl a = DClass      !(ClassDecl a)
             | DType       !(TypeDecl a)
             | DNamespace  !(NamespaceDecl a)
@@ -83,7 +90,7 @@ data TCon   = TNil
             | TFun
             | TMutable Bool
             | TUser (Name ())
-              deriving Show
+              deriving (Show,Eq)
 
 
 
@@ -148,6 +155,8 @@ instance HasRange (Type SourceRange) where
 instance HasRange (Name SourceRange) where
   range = getAnnot
 
+--------------------------------------------------------------------------------
+-- Pretty Printing
 --------------------------------------------------------------------------------
 
 class Pretty t where

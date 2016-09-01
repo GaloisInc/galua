@@ -1,27 +1,44 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Galua.Spec.Lua where
 
-import Prelude hiding (EQ,GT,LT)
-import Language.Lua.Annotated.Syntax
-import Text.PrettyPrint
+import           Prelude hiding (EQ,GT,LT)
+import           Language.Lua.Annotated.Syntax
+import           Text.PrettyPrint
 import qualified Data.Text as Text
-import Control.Monad(liftM,ap)
+import           Control.Monad(liftM,ap)
+import           Data.Map ( Map )
+import qualified Data.Map as Map
 
 import Galua.Spec.AST (Pretty(..))
 import Galua.Spec.AST (TCon(..))
 import Galua.Spec.Parser(SourceRange(..))
 
-data Type   = TCon ![SourceRange] !TCon ![Type]
+
+xxxTODO = error
+
+--------------------------------------------------------------------------------
+-- Types and Constraints
+--------------------------------------------------------------------------------
+
+data Type   = TCon !SourceRange !TCon ![Type]
             | TVar !TVar
               deriving Show
 
-data TVar   = TV ![SourceRange] !Int
-              deriving Show
+data TVar   = TV !SourceRange !Int
+              deriving (Show)
+
+instance Eq TVar where
+  TV _ x == TV _ y = x == y
+
+instance Ord TVar where
+  compare (TV _ x) (TV _ y) = compare x y
+
 
 type Parsed f = f SourceRange
 
+
 tPrim :: TCon -> SourceRange -> Type
-tPrim tc a = TCon [a] tc []
+tPrim tc a = TCon a tc []
 
 tNil :: SourceRange -> Type
 tNil = tPrim TNil
@@ -39,9 +56,8 @@ tNumber :: SourceRange -> Type
 tNumber = tPrim TNumber
 
 tTuple :: SourceRange -> [Type] -> Type
-tTuple a ts = TCon [a] (TTuple (length ts)) ts
+tTuple a ts = TCon a (TTuple (length ts)) ts
 
---------------------------------------------------------------------------------
 
 data Constraint = Constraint SourceRange Ctr [Type]
 
@@ -86,9 +102,15 @@ c3 r c t1 t2 t3 = Constraint r c [t1,t2,t3]
 cEqType :: SourceRange -> Type -> Type -> Constraint
 cEqType r = c2 r C_EqType
 
+
+
+--------------------------------------------------------------------------------
+-- Pretty Printing
+--------------------------------------------------------------------------------
+
 instance Pretty Constraint where
   pretty (Constraint _ tc ts) =
-    case (tc, map (prettyType 1) ts) of
+    case (tc, prettyType 1 <$> ts) of
       (C_Add, [a,b,c])    -> infix3 "+" a b c
       (C_Sub, [a,b,c])    -> infix3 "-" a b c
       (C_Mul, [a,b,c])    -> infix3 "*" a b c
@@ -171,7 +193,7 @@ prettyType prec (TCon ta typeCon typeParams) =
 prettyTypeApp :: a -> Int -> [Type] -> ([Either Doc Type] -> Doc) -> Doc
 prettyTypeApp a n xs f
   | null bs   = ty
-  | otherwise = parens (ty <+> hsep (map err bs))
+  | otherwise = parens (ty <+> hsep (err <$> bs))
   where
   (as,bs)    = splitAt n xs
   ts         = take n (map Right as ++ repeat prettyWild)
@@ -184,6 +206,8 @@ prettyTypeApp a n xs f
 
 
 
+--------------------------------------------------------------------------------
+-- Inference
 --------------------------------------------------------------------------------
 
 class InferExpr e where
@@ -319,7 +343,14 @@ inferArgs args =
                         return [t]
     StringArg r _ -> return [ tString r ]
 
+
+
+
+
 --------------------------------------------------------------------------------
+-- Inference Monad
+--------------------------------------------------------------------------------
+
 
 newtype InferM a = IM (RW -> Either TypeError (a,RW))
 
@@ -346,20 +377,31 @@ data RW = RW
   , rwNextVar     :: !Int
   }
 
-type Subst = Int -- XXX
 
+
+--------------------------------------------------------------------------------
 
 -- | Generate a fresh type variable, with the given suggested name.
 newTVar :: SourceRange -> InferM Type
 newTVar r = IM (\s -> let i  = rwNextVar s
                           s1 = s { rwNextVar = i + 1 }
-                          x  = TVar (TV [r] i)
+                          x  = TVar (TV r i)
                       in s1 `seq` Right (x, s1))
 
+reportError :: TypeError -> InferM a
+reportError e = IM (\_ -> Left e)
 
+
+-- | Add a constraint.
 constraint :: Constraint -> InferM ()
-constraint c = IM (\s -> let s1 = s { rwConstraints = c : rwConstraints s1 }
-                         in s1 `seq` Right ((),s1))
+constraint (Constraint r C_EqType [t1,t2]) = unify r t1 t2
+constraint c = delay c
+
+-- | Store constraint to try solve later as we don't have enough
+-- information as to how to do it just yet.
+delay :: Constraint -> InferM ()
+delay c = IM (\s -> let s1 = s { rwConstraints = c : rwConstraints s1 }
+                    in s1 `seq` Right ((),s1))
 
 lookupVar :: SourceRange -> Parsed Name -> InferM Type
 lookupVar = undefined
@@ -367,5 +409,81 @@ lookupVar = undefined
 lookupVarArg :: SourceRange -> InferM Type
 lookupVarArg = undefined
 
-xxxTODO = error
+-- | Apply the accumulated substitution to sometihng.
+zonk :: ApSubst t => t -> InferM t
+zonk t = IM (\s -> let t1 = apSubst (rwSubst s) t
+                   in t1 `seq` Right (t1, s))
+
+
+-- | make two types the same.  The location points to the place
+-- in the source code that forced the types to be the same.
+unify :: SourceRange -> Type -> Type -> InferM ()
+unify r t1' t2' =
+  do z <- zonk (t1',t2')
+     case z of
+       (TVar x, t) -> bindVar r x t
+       (t, TVar x) -> bindVar r x t
+       (TCon _ c1 ts1, TCon _ c2 ts2)
+          | c1 == c2  -> unifyMany r ts1 ts2
+          | otherwise -> reportError errMsg
+  where
+  errMsg = "Type mismatch" -- XXX
+
+unifyMany :: SourceRange -> [Type] -> [Type] -> InferM ()
+unifyMany _ [] []             = return ()
+unifyMany r (x : xs) (y : ys) = unify r x y >> unifyMany r xs ys
+unifyMany _ _ _ = reportError "Arity mismatch" -- XXX
+
+-- | Replace a variable by a type.  Assumes that the substitution
+-- has already been applied to both.
+bindVar :: SourceRange -> TVar -> Type -> InferM ()
+bindVar r x t = IM (\s -> case suExtend r x t (rwSubst s) of
+                            Just su ->
+                              let s1 = s { rwSubst = su }
+                              in s1 `seq` Right ((),s1)
+                            Nothing -> Left "Recursive type" -- XXX
+                 )
+
+--------------------------------------------------------------------------------
+-- Substitutions
+--------------------------------------------------------------------------------
+
+-- | The source range is the location in the source code that cause the
+-- variable to be matched with the type.
+newtype Subst = Subst (Map TVar (SourceRange, Type))
+
+suEmpty :: Subst
+suEmpty = Subst Map.empty
+
+suExtend :: SourceRange -> TVar -> Type -> Subst -> Maybe Subst
+suExtend _ x (TVar y) su | x == y = Just su
+suExtend _ x t _ | occursIn t = Nothing
+  where occursIn (TVar y)      = x == y
+        occursIn (TCon _ _ ts) = occursIn `any` ts
+suExtend r x t (Subst mp) = Just (Subst (Map.insert x new mp1))
+  where
+  new   = (r,t)
+  small = Subst (Map.singleton x new)
+  mp1   = (\(r,t) -> (r, apSubst small t)) <$> mp
+
+
+class ApSubst t where
+  apSubst :: Subst -> t -> t
+
+instance ApSubst a => ApSubst [a] where
+  apSubst su = map (apSubst su)
+
+instance (ApSubst a, ApSubst b) => ApSubst (a,b) where
+  apSubst su (a,b) = (apSubst su a, apSubst su b)
+
+instance ApSubst Type where
+  apSubst su@(Subst mp) ty =
+    case ty of
+      TCon r tc ts -> TCon r tc (apSubst su ts)
+      TVar x -> case Map.lookup x mp of
+                  Nothing     -> ty
+                  Just (_,t1) -> t1
+
+instance ApSubst Constraint where
+  apSubst su (Constraint r c ts) = Constraint r c (apSubst su ts)
 
