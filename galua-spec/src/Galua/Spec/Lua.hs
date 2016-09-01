@@ -7,38 +7,44 @@ import Text.PrettyPrint
 import qualified Data.Text as Text
 import Control.Monad(liftM,ap)
 
-import Galua.Spec.AST (Pretty(..),prettyType)
-import qualified Galua.Spec.AST as Spec
-import Galua.Spec.AST (Type(..), TCon(..))
+import Galua.Spec.AST (Pretty(..))
+import Galua.Spec.AST (TCon(..))
 import Galua.Spec.Parser(SourceRange(..))
 
+data Type   = TCon ![SourceRange] !TCon ![Type]
+            | TVar !TVar
+              deriving Show
+
+data TVar   = TV ![SourceRange] !Int
+              deriving Show
+
 type Parsed f = f SourceRange
-type TC f     = f [SourceRange]
 
-tPrim :: TCon -> a -> Type a
-tPrim tc a = TCon a tc []
+tPrim :: TCon -> SourceRange -> Type
+tPrim tc a = TCon [a] tc []
 
-tNil :: a -> Type a
+tNil :: SourceRange -> Type
 tNil = tPrim TNil
 
-tBoolean :: a -> Type a
+tBoolean :: SourceRange -> Type
 tBoolean = tPrim TBoolean
 
-tString :: a -> Type a
+tString :: SourceRange -> Type
 tString = tPrim TString
 
-tInteger :: a -> Type a
+tInteger :: SourceRange -> Type
 tInteger = tPrim TInteger
 
-tNumber :: a -> Type a
+tNumber :: SourceRange -> Type
 tNumber = tPrim TNumber
 
-tTuple :: a -> [Type a] -> Type a
-tTuple a ts = TCon a (TTuple (length ts)) ts
+tTuple :: SourceRange -> [Type] -> Type
+tTuple a ts = TCon [a] (TTuple (length ts)) ts
 
 --------------------------------------------------------------------------------
 
-data Constraint = Constraint SourceRange Ctr [TC Type]
+data Constraint = Constraint SourceRange Ctr [Type]
+
 data Ctr  = C_Add
           | C_Sub
           | C_Mul
@@ -71,13 +77,13 @@ data Ctr  = C_Add
 
           | C_EqType
 
-c2 :: SourceRange -> Ctr -> TC Type -> TC Type -> Constraint
+c2 :: SourceRange -> Ctr -> Type -> Type -> Constraint
 c2 r c t1 t2 = Constraint r c [t1,t2]
 
-c3 :: SourceRange -> Ctr -> TC Type -> TC Type -> TC Type -> Constraint
+c3 :: SourceRange -> Ctr -> Type -> Type -> Type -> Constraint
 c3 r c t1 t2 t3 = Constraint r c [t1,t2,t3]
 
-cEqType :: SourceRange -> TC Type -> TC Type -> Constraint
+cEqType :: SourceRange -> Type -> Type -> Constraint
 cEqType r = c2 r C_EqType
 
 instance Pretty Constraint where
@@ -125,32 +131,85 @@ instance Pretty Constraint where
 instance Pretty (Name a) where
   pretty (Name _ x) = text (Text.unpack x)
 
+instance Pretty Type where
+  pretty = prettyType 0
+
+instance Pretty TVar where
+  pretty (TV _ x) = "$" <> int x
+
+prettyType :: Int -> Type -> Doc
+prettyType _ (TVar x) = pretty x
+prettyType prec (TCon ta typeCon typeParams) =
+  case typeCon of
+    TNil          -> ar0 "nil"
+    TBoolean      -> ar0 "boolean"
+    TString       -> ar0 "string"
+    TInteger      -> ar0 "integer"
+    TNumber       -> ar0 "number"
+    TMutable b    -> ar0 (if b then "mutable"
+                               else if prec > 0 then empty else "immutable")
+    TArray        -> ar2 $ \m t -> pp 1 m <+> braces (pp 0 t)
+    TMap          -> ar3 $ \m s t -> pp 1 m <+>
+                                      braces (pp 0 s <+> ":" <+> pp 0 t)
+    TTuple n      -> arN n (parens . hsep . punctuate comma . map (pp 0))
+    TMaybe        -> ar1 $ \t   -> wrap 2 (pp 1 t <> text "?")
+    TMany         -> ar1 $ \t   -> wrap 2 (pp 1 t <> text "*")
+    TFun          -> ar2 $ \s t -> wrap 1 (pp 1 s <+> text "->" <+> pp 0 t)
+    TUser x       -> ar0 (pretty x)
+  where
+  ar0 f   = prettyTypeApp ta 0 typeParams $ \_                 -> f
+  ar1 f   = prettyTypeApp ta 1 typeParams $ \ ~(x : _)         -> f x
+  ar2 f   = prettyTypeApp ta 2 typeParams $ \ ~(x : y : _)     -> f x y
+  ar3 f   = prettyTypeApp ta 3 typeParams $ \ ~(x : y : z : _) -> f x y z
+  arN n f = prettyTypeApp ta n typeParams f
+
+  wrap n  = if prec < n then id else parens
+
+  pp _ (Left x)  = x
+  pp n (Right t) = prettyType n t
+
+prettyTypeApp :: a -> Int -> [Type] -> ([Either Doc Type] -> Doc) -> Doc
+prettyTypeApp a n xs f
+  | null bs   = ty
+  | otherwise = parens (ty <+> hsep (map err bs))
+  where
+  (as,bs)    = splitAt n xs
+  ts         = take n (map Right as ++ repeat prettyWild)
+  ty         = f ts
+
+  err b      = text "!" <> prettyType 10 b
+
+  prettyWild = Left "_"
+
+
+
+
 --------------------------------------------------------------------------------
 
 class InferExpr e where
-  inferExpr :: Parsed e -> InferM (TC Type)
+  inferExpr :: Parsed e -> InferM Type
 
 instance InferExpr Exp where
   inferExpr expr =
     case expr of
-      Nil r       -> return (tNil [r])
-      Bool r _    -> return (tBoolean [r])
+      Nil r       -> return (tNil r)
+      Bool r _    -> return (tBoolean r)
       Number r nt _ ->
         case nt of
-          FloatNum -> return (tNumber [r])
-          IntNum   -> return (tInteger [r])
-      String r _ -> return (tString [r])
+          FloatNum -> return (tNumber r)
+          IntNum   -> return (tInteger r)
+      String r _ -> return (tString r)
 
       Vararg r          -> lookupVarArg r
 
-      EFunDef _ f       -> error "XXX: function"
+      EFunDef _ f       -> xxxTODO "XXX: function"
 
       PrefixExp _ pe    -> inferExpr pe
       TableConst _ t    -> inferExpr t
       Binop r op e1 e2  ->
         do t1 <- inferExpr e1
            t2 <- inferExpr e2
-           let bool = tBoolean [r]
+           let bool = tBoolean r
 
                overload c = do res <- newTVar r
                                constraint (c3 r c t1 t2 res)
@@ -197,7 +256,7 @@ instance InferExpr Exp where
                                   return res
            case op of
              Neg _          -> overload C_Neg
-             Not _          -> do let bool = tBoolean [r]
+             Not _          -> do let bool = tBoolean r
                                   constraint (cEqType r t bool)
                                   return bool
              Len _          -> overload C_Len
@@ -236,7 +295,7 @@ instance InferExpr FunCall where
         do t   <- inferExpr pe
            ts  <- inferArgs as
            res <- newTVar r
-           constraint (c3 r C_Call t (tTuple [ann as] ts) res)
+           constraint (c3 r C_Call t (tTuple (ann as) ts) res)
            return res
 
       MethodCall r pe m as ->
@@ -245,20 +304,20 @@ instance InferExpr FunCall where
            res  <- newTVar r
            fun  <- newTVar (ann m)
            constraint (c2 r (C_Project m) objT fun)
-           constraint (c3 r C_Call fun (tTuple [ann as] (objT : ts)) res)
+           constraint (c3 r C_Call fun (tTuple (ann as) (objT : ts)) res)
            return res
 
 instance InferExpr Table where
-  inferExpr (Table r fs) = error "XXX: Table"
+  inferExpr (Table r fs) = xxxTODO "XXX: Table"
 
 
-inferArgs :: Parsed FunArg -> InferM [TC Type]
+inferArgs :: Parsed FunArg -> InferM [Type]
 inferArgs args =
   case args of
     Args _ es     -> mapM inferExpr es
     TableArg _ ta -> do t <- inferExpr ta
                         return [t]
-    StringArg r _ -> return [ tString [r] ]
+    StringArg r _ -> return [ tString r ]
 
 --------------------------------------------------------------------------------
 
@@ -291,20 +350,22 @@ type Subst = Int -- XXX
 
 
 -- | Generate a fresh type variable, with the given suggested name.
-newTVar :: SourceRange -> InferM (TC Type)
-newTVar nm = undefined {-IM (\s -> let i  = rwNextVar s
-                           s1 = s { rwNextVar = i + 1 }
-                           x  = TVar (TV i nm)
-                       in s1 `seq` Right (x, s1))-}
+newTVar :: SourceRange -> InferM Type
+newTVar r = IM (\s -> let i  = rwNextVar s
+                          s1 = s { rwNextVar = i + 1 }
+                          x  = TVar (TV [r] i)
+                      in s1 `seq` Right (x, s1))
 
 
 constraint :: Constraint -> InferM ()
-constraint = undefined
+constraint c = IM (\s -> let s1 = s { rwConstraints = c : rwConstraints s1 }
+                         in s1 `seq` Right ((),s1))
 
-lookupVar :: SourceRange -> Parsed Name -> InferM (TC Type)
+lookupVar :: SourceRange -> Parsed Name -> InferM Type
 lookupVar = undefined
 
-lookupVarArg :: SourceRange -> InferM (TC Type)
+lookupVarArg :: SourceRange -> InferM Type
 lookupVarArg = undefined
 
+xxxTODO = error
 

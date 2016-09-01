@@ -66,11 +66,8 @@ data NamespaceDecl a = NamespaceDecl
   } deriving Show
 
 data Type a = TCon !a !TCon ![Type a]
-            | TVar !(TVar a)
               deriving Show
 
-data TVar a = TV !a !Int !(Maybe Text)
-              deriving Show
 
 
 data TCon   = TNil
@@ -140,15 +137,10 @@ instance Annotated (NamespaceDecl a) a where
 instance Annotated (Type a) a where
   getAnnot ty = case ty of
                   TCon a _ _ -> a
-                  TVar a     -> getAnnot a
 
   setAnnot a ty = case ty of
                     TCon _ tc ps -> TCon a tc ps
-                    TVar v       -> TVar (setAnnot a v)
 
-instance Annotated (TVar a) a where
-  getAnnot (TV a _ _)   = a
-  setAnnot a (TV _ x y) = TV a x y
 
 instance HasRange (Type SourceRange) where
   range = getAnnot
@@ -199,8 +191,9 @@ instance Pretty (NamespaceDecl a) where
     prettyBlock ("namespace" <+> pretty namespaceName)
       (map pretty namespaceMembers ++ map pretty namespaceNested)
 
+
+
 prettyType :: Int -> Type a -> Doc
-prettyType _ (TVar x) = pretty x
 prettyType prec (TCon ta typeCon typeParams) =
   case typeCon of
     TNil          -> ar0 "nil"
@@ -210,14 +203,13 @@ prettyType prec (TCon ta typeCon typeParams) =
     TNumber       -> ar0 "number"
     TMutable b    -> ar0 (if b then "mutable"
                                else if prec > 0 then empty else "immutable")
-    TArray        -> ar2 $ \m t -> prettyType 1 m <+> braces (pretty t)
-    TMap          -> ar3 $ \m s t -> prettyType 1 m <+>
-                                      braces (pretty s <+> colon <+> pretty t)
-    TTuple n      -> arN n (parens . hsep . punctuate comma . map pretty)
-    TMaybe        -> ar1 $ \t   -> wrap 2 (prettyType 1 t <> text "?")
-    TMany         -> ar1 $ \t   -> wrap 2 (prettyType 1 t <> text "*")
-    TFun          -> ar2 $ \s t -> wrap 1 (prettyType 1 s <+> text "->" <+>
-                                           prettyType 0 t)
+    TArray        -> ar2 $ \m t -> pp 1 m <+> braces (pp 0 t)
+    TMap          -> ar3 $ \m s t -> pp 1 m <+>
+                                      braces (pp 0 s <+> ":" <+> pp 0 t)
+    TTuple n      -> arN n (parens . hsep . punctuate comma . map (pp 0))
+    TMaybe        -> ar1 $ \t   -> wrap 2 (pp 1 t <> text "?")
+    TMany         -> ar1 $ \t   -> wrap 2 (pp 1 t <> text "*")
+    TFun          -> ar2 $ \s t -> wrap 1 (pp 1 s <+> text "->" <+> pp 0 t)
     TUser x       -> ar0 (pretty x)
   where
   ar0 f   = prettyTypeApp ta 0 typeParams $ \_                 -> f
@@ -228,6 +220,10 @@ prettyType prec (TCon ta typeCon typeParams) =
 
   wrap n  = if prec < n then id else parens
 
+  pp _ (Left x)  = x
+  pp n (Right t) = prettyType n t
+
+
 
 instance Pretty (Type a) where
   pretty = prettyType 0
@@ -235,22 +231,19 @@ instance Pretty (Type a) where
 instance Pretty TCon where
   pretty tc = pretty (TCon () tc [])
 
-instance Pretty (TVar a) where
-  pretty (TV _ x _) = "$" <> int x -- XXX
 
-prettyTypeApp :: a -> Int -> [Type a] -> ([Type a] -> Doc) -> Doc
+prettyTypeApp :: a -> Int -> [Type a] -> ([Either Doc (Type a)] -> Doc) -> Doc
 prettyTypeApp a n xs f
   | null bs   = ty
   | otherwise = parens (ty <+> hsep (map err bs))
   where
   (as,bs)    = splitAt n xs
-  ts         = take n (as ++ repeat prettyWild)
+  ts         = take n (map Right as ++ repeat prettyWild)
   ty         = f ts
 
   err b      = text "!" <> prettyType 10 b
 
-  prettyWild = TCon a (TUser nm) []
-    where nm  = Name { nameAnnot = (), nameText = "_" }
+  prettyWild = Left "_"
 
 
 
