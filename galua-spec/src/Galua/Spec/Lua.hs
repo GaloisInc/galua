@@ -1,17 +1,19 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, FlexibleInstances #-}
 module Galua.Spec.Lua where
 
 import           Prelude hiding (EQ,GT,LT)
 import           Language.Lua.Annotated.Syntax
 import           Text.PrettyPrint
 import qualified Data.Text as Text
-import           Control.Monad(liftM,ap)
+import           Control.Monad(liftM,ap,unless)
 import           Data.Map ( Map )
 import qualified Data.Map as Map
+import           Data.List(foldl')
 
 import Galua.Spec.AST (Pretty(..))
 import Galua.Spec.AST (TCon(..))
 import Galua.Spec.Parser(SourceRange(..))
+import Galua.Spec.Parser.Lexer((<->))
 
 
 xxxTODO = error
@@ -91,7 +93,13 @@ data Ctr  = C_Add
 
           | C_Call
 
-          | C_EqType
+          | C_Bool
+          | C_Number
+
+          | C_EqType    -- Nothing emits this directly?
+
+c1 :: SourceRange -> Ctr -> Type -> Constraint
+c1 r c t = Constraint r c [t]
 
 c2 :: SourceRange -> Ctr -> Type -> Type -> Constraint
 c2 r c t1 t2 = Constraint r c [t1,t2]
@@ -140,6 +148,9 @@ instance Pretty Constraint where
       (C_Project x, [a,b])-> returns (a <> "." <> pretty x) b
 
       (C_Call, [a,_,c])   -> returns (a <> parens (pretty (ts !! 1))) c
+
+      (C_Bool, [a])       -> "to_boolean" <+> a
+      (C_Number , [a,b])  -> returns ("to_number" <+> a) b
 
       (C_EqType,[a,b])    -> a <+> "=" <+> b
 
@@ -204,10 +215,115 @@ prettyTypeApp a n xs f
   prettyWild = Left "_"
 
 
+--------------------------------------------------------------------------------
+-- Inference: Statments
+--------------------------------------------------------------------------------
+
+-- Track scoping local variables
+-- Track scoping of labels
+--    A label is in scope in the block where it is defined
+--    - it may be shadowed in a sub-block
+--    - it is not in scope in nested functions.
+-- Types of local variables may change,
+-- but not types of globals or free variables (up values)
+
+class InferStmt t where
+  inferStmt :: t -> InferM ()
+
+instance InferStmt (Stat SourceRange) where
+  inferStmt stmt =
+    case stmt of
+      Assign r xs es        -> xxxTODO "ASSIGN"
+      LocalAssign r xs mbEs ->  xxxTODO "local Assign"
+
+      EmptyStat _           -> return ()
+
+      FunCall _ fc   -> inferStmt fc
+      Label _ _      -> return ()
+      Break r        -> inLoop r
+      Goto _ l       -> hasLabel l
+      Do r block     -> inferBlock block
+      While r e b    -> do t <- inferExpr e
+                           constraint (c1 r C_Bool t)
+                           loopBody (inferBlock b)
+      Repeat r b e   -> do startBlock
+                           loopBody (doInferBlock b)
+                           t <- inferExpr e
+                           constraint (c1 r C_Bool t)
+                           endBlock
+
+      If r alts mb   -> do mapM_ alt alts
+                           mapM_ inferBlock mb
+        where alt (e,b) = do t <- inferExpr e
+                             constraint (c1 r C_Bool t)
+                             inferBlock b
+      ForRange r x e1 e2 me3 b ->
+        do t1 <- numExpr e1
+           t2 <- numExpr e2
+           t3 <- case me3 of
+                   Nothing -> return (tInteger r)
+                   Just e3 -> numExpr e3
+           a  <- newTVar (ann x)
+           constraint (c3 r C_Add t1 t3 a)
+           loopBody $ do startBlock
+                         newLocal x a
+                         doInferBlock b
+                         endBlock
+        where
+        numExpr e = do t <- inferExpr e
+                       v <- newTVar (ann e)
+                       constraint (c2 r C_Number t v)
+                       return v
+
+      ForIn r xs es b -> xxxTODO "ForIn"
+
+      FunAssign r fn fb ->
+        do let (sel,isMeth) = funNameToSel fn
+           if not isMeth
+             then do let r' = ann fb
+                     inferStmt (Assign r [sel] [EFunDef r' (FunDef r' fb)])
+             else xxxTODO "method declaration"
+             -- this one is a bit tricky because we need to add the
+             -- implicit "self" parameter, which has the same type as the
+             -- object.
+             --
+             -- Also, we have to decide if we should allow definitions of new
+             -- globals or not: perhaps only at the top-level?
+             -- otherwise, we'd have to keep track of what new
+             -- functions were defined by a function call!
+
+      LocalFunAssign r x fb ->
+        do let r' = ann fb
+           t <- inferExpr (EFunDef r' (FunDef r' fb))
+           newLocal x t
+
+funNameToSel :: FunName SourceRange -> (Var SourceRange, Bool)
+funNameToSel (FunName r0 x s mb) = case mb of
+                                     Nothing -> (part1, False)
+                                     Just y  -> (gt part1 y, True)
+  where
+  part1   = foldl' gt (VarName (ann x) x) s
+  gt nm f = let r = r0 <-> ann f
+            in SelectName r (PEVar r nm) f
+
+
+instance InferStmt (FunCall SourceRange) where
+  inferStmt fc = do _ <- inferExpr fc
+                    return ()
+
+inferBlock :: Block SourceRange -> InferM ()
+inferBlock b = startBlock >> doInferBlock b >> endBlock
+
+-- | Assumes that start and end block are done by calelr
+doInferBlock :: Block SourceRange -> InferM ()
+doInferBlock = undefined
+
+
+
 
 
 --------------------------------------------------------------------------------
--- Inference
+-- Inference: Expressions
 --------------------------------------------------------------------------------
 
 class InferExpr e where
@@ -243,8 +359,8 @@ instance InferExpr Exp where
                relOp c  = do constraint (c2 r c t1 t2)
                              return bool
 
-               boolOp   = do constraint (cEqType r t1 bool)
-                             constraint (cEqType r t2 bool)
+               boolOp   = do constraint (c1 r C_Bool t1)
+                             constraint (c1 r C_Bool t2)
                              return bool
 
            case op of
@@ -280,9 +396,8 @@ instance InferExpr Exp where
                                   return res
            case op of
              Neg _          -> overload C_Neg
-             Not _          -> do let bool = tBoolean r
-                                  constraint (cEqType r t bool)
-                                  return bool
+             Not _          -> do constraint (c1 r C_Bool t)
+                                  return (tBoolean r)
              Len _          -> overload C_Len
              Complement _   -> overload C_Complement
 
@@ -408,6 +523,28 @@ lookupVar = undefined
 
 lookupVarArg :: SourceRange -> InferM Type
 lookupVarArg = undefined
+
+inLoop :: SourceRange -> InferM ()
+inLoop = undefined
+
+loopBody :: InferM a -> InferM a
+loopBody = undefined
+
+hasLabel :: Name SourceRange -> InferM ()
+hasLabel = undefined
+
+withLabels :: [Name SourceRange] -> InferM a -> InferM a
+withLabels = undefined
+
+-- | Declare a new local
+newLocal :: Name SourceRange -> Type -> InferM ()
+newLocal = undefined
+
+startBlock :: InferM ()
+startBlock = undefined
+
+endBlock :: InferM ()
+endBlock = undefined
 
 -- | Apply the accumulated substitution to sometihng.
 zonk :: ApSubst t => t -> InferM t
