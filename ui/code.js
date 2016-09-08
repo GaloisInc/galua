@@ -210,6 +210,7 @@ function drawLine(dbgState,context,chunkId,here) {
           })
 
          if (t.funid !== null) {
+              it.addClass('clickable_function');
               it.click(function () {
                 jQuery.post('/function', { fid: t.funid },
                     function(code) {

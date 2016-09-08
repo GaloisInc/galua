@@ -2,7 +2,7 @@
   font-weight: bold;
 }
 
-.gal_highlight_name.active {
+.gal_highlight_name.active, .clickable_function:hover {
   background-color: #fe9;
 }
 
