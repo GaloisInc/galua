@@ -20,20 +20,27 @@ import           Data.Text (Text)
 import qualified Data.Text as Text
 import           Data.Text.Encoding(encodeUtf8,decodeUtf8)
 import           Data.Char(isAlphaNum,isAlpha,isAscii)
-import           Language.Lua.Annotated.Lexer (SourceRange(..),showRange)
+import           Language.Lua.Annotated.Lexer (SourcePos,SourceRange(..),showRange)
 import           Language.Lua.Annotated.Simplify
 import           Language.Lua.Annotated.Syntax
 import           Language.Lua.StringLiteral(interpretStringLiteral)
 import qualified Language.Lua.Syntax as Lua
 import           Language.Lua.Bytecode(Reg(..),plusReg)
+import           Language.Lua.Bytecode.FunId(rootFun, subFun, FunId(..))
 
 import Galua.Number
 
 
-chunkLocations :: Block SourceRange -> [LocatedExprName]
-chunkLocations b = case m emptyRW of
-                     (_,rw') -> computedNames rw'
-  where M m = resolve b
+chunkLocations ::
+  Int {- ^ chunk ID -} ->
+  Block SourceRange ->
+  ([LocatedExprName], [FunId])
+chunkLocations i b =
+  (computedNames rw, reverse (computedFunctions rw))
+  where
+    M m    = resolve b
+    (_,rw) = m (rootFun i) emptyRW
+
 
 
 data LocalName = LocalName
@@ -88,44 +95,51 @@ ppExprName y =
     ESelectFrom a b     -> ppExprName a ++ "[" ++ ppExprName b ++ "]"
 
 
-data LocatedExprName = LocatedExprName { exprPos  :: SourceRange
-                                       , exprName :: ExprName
-                                       } deriving (Show,Eq)
+data LocatedExprName = LocatedExprName
+  { exprPos  :: SourceRange
+  , exprName :: ExprName
+  } deriving (Show,Eq)
 
 ppLocatedExprName :: LocatedExprName -> String
 ppLocatedExprName x =
   ppExprName (exprName x) ++ " " ++ showRange (exprPos x)
 
 
-data M a = M (RW -> (Maybe a, RW))
+newtype M a = M (FunId -> RW -> (Maybe a, RW))
 
 data RW = RW
   { computedNames :: [LocatedExprName]
+  , computedFunctions :: [FunId]
   , nextLocal     :: !Int                       -- ^ Local counter
+  , nextFunction  :: !Int                       -- ^ Local counter
   , nextReg       :: !Reg
   , nameMap       :: Map ByteString LocalName
   }
 
 emptyRW :: RW
-emptyRW = RW { computedNames = []
-             , nextLocal = 0
-             , nextReg = Reg 0
-             , nameMap = Map.empty
-             }
+emptyRW = RW
+  { computedNames = []
+  , computedFunctions = []
+  , nextLocal     = 0
+  , nextFunction  = 0
+  , nextReg       = Reg 0
+  , nameMap       = Map.empty
+  }
 
 instance Functor M where
   fmap = liftA
 
 instance Applicative M where
-  pure a        = M (\rw -> (Just a, rw))
-  M mf <*> M mx = M (\rw -> let (f,rw1) = mf rw
-                                (x,rw2) = mx rw1
-                            in (f <*> x, rw2))
+  pure a        = M (\_ rw -> (Just a, rw))
+  M mf <*> M mx = M (\funId rw ->
+                      let (f,rw1) = mf funId rw
+                          (x,rw2) = mx funId rw1
+                      in (f <*> x, rw2))
 
 
 emit :: SourceRange -> M ExprName -> M ExprName
-emit src (M f) = M $ \rw ->
-  let (res,rw1) = f rw
+emit src (M f) = M $ \funId rw ->
+  let (res,rw1) = f funId rw
   in case res of
        Nothing -> (Nothing, rw1)
        Just e  ->
@@ -133,11 +147,11 @@ emit src (M f) = M $ \rw ->
          in (Just e, rw1 { computedNames = le : computedNames rw1 })
 
 ignore :: M a
-ignore = M (\rw -> (Nothing,rw))
+ignore = M (\_ rw -> (Nothing,rw))
 
 
 declareLocal :: Text -> M ()
-declareLocal x = M (\rw ->
+declareLocal x = M (\_ rw ->
   ( Just ()
   , let l   = nextLocal rw
         nm  = encodeUtf8 x
@@ -153,24 +167,33 @@ declareLocal x = M (\rw ->
   ))
 
 declareInvisible :: Int -> M ()
-declareInvisible n = M (\rw -> (Just (), rw { nextLocal = n + nextLocal rw
-                                            , nextReg = plusReg (nextReg rw) n
-                                            }))
+declareInvisible n = M $ \_ rw ->
+  (Just (), rw { nextLocal = n + nextLocal rw
+               , nextReg = plusReg (nextReg rw) n
+               })
 
 newScope :: M a -> M a
-newScope (M f) = M (\rw ->
+newScope (M f) = M $ \funId rw ->
   let curMap = nameMap rw
       r      = nextReg rw
-  in case f rw of
-       (mb,rw1) -> (mb, rw1 { nameMap = curMap, nextReg = r }))
+  in case f funId rw of
+       (mb,rw1) -> (mb, rw1 { nameMap = curMap, nextReg = r })
 
 newFun :: M a -> M a
-newFun (M f) = M $ \rw ->
-  case f emptyRW { computedNames = computedNames rw } of
-    (a,rw1) -> (a, rw { computedNames = computedNames rw1 })
+newFun (M f) = M $ \funId rw ->
+  let newFunId = subFun funId (nextFunction rw) in
+  case f newFunId
+         emptyRW { computedNames = computedNames rw
+                 , nextFunction  = 0
+                 , computedFunctions = newFunId : computedFunctions rw
+                 } of
+    (a,rw1) -> (a, rw { computedNames     = computedNames rw1
+                      , computedFunctions = computedFunctions rw1
+                      , nextFunction      = nextFunction rw + 1
+                      })
 
 useName :: Name SourceRange -> M ExprName
-useName (Name r x) = emit r $ M $ \rw ->
+useName (Name r x) = emit r $ M $ \_ rw ->
   ( Just $ case Map.lookup nm (nameMap rw) of
              Just vi -> ELocal vi
              Nothing -> ENonLocal nm
@@ -221,9 +244,9 @@ instance Resolve (Stat SourceRange) where
                                newScope (declareInvisible 3 *>
                                          traverse_ declareAndUse is *>
                                          resolve b)
-      FunAssign _ n x       -> resolve n *>
+      FunAssign a n x       -> resolve n *>
                                declareFun (isMethod n) x
-      LocalFunAssign _ n b  -> declareAndUse n *>
+      LocalFunAssign a n b  -> declareAndUse n *>
                                declareFun False b
       LocalAssign _ xs b    -> resolve b <*   -- Note the order here!
                                traverse_ declareAndUse xs
@@ -235,9 +258,10 @@ isMethod _ = False
 
 declareFun :: Bool -> FunBody SourceRange -> M ExprName
 declareFun meth (FunBody _ xs _ block) =
-  newFun $ when meth (declareLocal "self") *>
-           traverse_ declareAndUse xs *>
-           resolve block
+  newFun $
+    when meth (declareLocal "self") *>
+    traverse_ declareAndUse xs *>
+    resolve block
 
 
 
@@ -275,7 +299,7 @@ instance Resolve (Exp SourceRange) where
                           Just ok -> pure (EString (LBS.toStrict ok))
                           Nothing -> ignore
       Vararg a       -> ignore <* emit a (pure EVarArg)
-      EFunDef _ (FunDef _ b) -> declareFun False b
+      EFunDef a (FunDef _ b) -> declareFun False b
       PrefixExp _ p  -> resolve p
       TableConst _ t -> resolve t
       Binop _ _ l r  -> resolve (l,r)

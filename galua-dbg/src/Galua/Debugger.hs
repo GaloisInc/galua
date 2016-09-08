@@ -516,7 +516,7 @@ addTopLevel mbName bytes cid fun Chunks { .. } =
     | otherwise                    = bytes
 
   newChunk =
-    ChunkInfo { chunkSource   = lexSourceFile mbName bytes'
+    ChunkInfo { chunkSource   = lexSourceFile cid mbName bytes'
               , chunkFunction = fun
               , chunkLineInfo = fmap (\xs -> [ (subFun path cid,n) | (path,n) <- xs ])
                                        $ deepLineNumberMap fun
@@ -559,9 +559,9 @@ data Source = Source { srcName  :: Maybe String
 
 
 -- | Syntax high-lighting for a source file.
-lexSourceFile :: Maybe String -> ByteString -> Source
-lexSourceFile srcName bytes = Source { srcName, srcLines, srcNames }
-  where (srcLines,srcNames) = lexChunk (fromMaybe "" srcName) bytes
+lexSourceFile :: Int -> Maybe String -> ByteString -> Source
+lexSourceFile chunkId srcName bytes = Source { srcName, srcLines, srcNames }
+  where (srcLines,srcNames) = lexChunk chunkId (fromMaybe "" srcName) bytes
 
 -- | Keep track of the source code for loaded modules.
 addSourceFile :: IORef CommandLineBreakPoints ->

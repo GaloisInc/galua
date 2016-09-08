@@ -209,6 +209,16 @@ function drawLine(dbgState,context,chunkId,here) {
             it.addClass('exp'+cl)
           })
 
+         if (t.funid !== null) {
+              it.click(function () {
+                jQuery.post('/function', { fid: t.funid },
+                    function(code) {
+                      drawFunctionInNewTab(dbgState, code)
+                    }).fail(disconnected)
+                   return false
+              })
+         }
+
          if (t.name !== null) {
             it.addClass(t.name.active ? 'active' : 'inactive')
             it.hover(function() {

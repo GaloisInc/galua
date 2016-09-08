@@ -11,9 +11,10 @@ import Language.Lua.Annotated.Lexer
           , dropWhiteSpace)
 import Language.Lua.Annotated.Parser(parseTokens,chunk)
 import qualified Language.Lua.Token as L
+import Language.Lua.Bytecode.FunId (FunId, funIdList)
 
 import Galua.Names.Find (chunkLocations,LocatedExprName(..))
-
+import Galua.Debugger.View.Utils (exportFID)
 
 import           Data.Function(on)
 import           Data.List(groupBy,sortBy)
@@ -33,7 +34,7 @@ import           Data.Aeson (ToJSON(..), (.=))
 newtype Line    = Line [Token]
                   deriving Show
 
-data Token      = Token TokenType Text (Maybe NameId) [NameId]
+data Token      = Token TokenType Text (Maybe NameId) [NameId] (Maybe FunId)
                   deriving Show
 
 data TokenType  = Keyword | Operator | Symbol | Ident | Literal
@@ -41,13 +42,14 @@ data TokenType  = Keyword | Operator | Symbol | Ident | Literal
                   deriving Show
 
 omittedLine :: Line
-omittedLine = Line [Token Comment "..." Nothing []]
+omittedLine = Line [Token Comment "..." Nothing [] Nothing]
 
-lexChunk :: String -> BS.ByteString -> (Vector Line, Map NameId LocatedExprName)
-lexChunk name bytes =
+lexChunk :: Int -> String -> BS.ByteString -> (Vector Line, Map NameId LocatedExprName)
+lexChunk chunkId name bytes =
     ( Vector.fromList
       $ map (Line . map token)
       $ groupBy ((==) `on` aTokLine)
+      $ addFunIds functionNames
       $ addNames names
       $ concatMap splitTok
       $ tokens
@@ -59,9 +61,10 @@ lexChunk name bytes =
 
   tokens = llexNamedWithWhiteSpace name txt
 
-  flatNames = case parseTokens chunk (dropWhiteSpace tokens) of
-                Left _err  -> []
-                Right b   -> chunkLocations b
+  (flatNames, functionNames) =
+    case parseTokens chunk (dropWhiteSpace tokens) of
+      Left _err -> ([],[])
+      Right b   -> chunkLocations chunkId b
 
   names = map (sortBy (compare `on` endIx))
         $ groupBy ((==) `on` startIx)
@@ -78,6 +81,9 @@ instance Rng LexToken where
 instance Rng LocatedExprName where
   getRange = exprPos
 
+instance Rng AnnotToken where
+  getRange (AnnotToken a _ _ _) = getRange a
+
 startIx :: Rng t => t -> Int
 startIx = sourcePosIndex . sourceFrom . getRange
 
@@ -85,10 +91,10 @@ endIx :: Rng t => t -> Int
 endIx = sourcePosIndex . sourceTo . getRange
 
 
-data AnnotToken = AnnotToken LexToken (Maybe NameId) [NameId]
+data AnnotToken = AnnotToken LexToken (Maybe NameId) [NameId] (Maybe FunId)
 
 aTokLine :: AnnotToken -> Int
-aTokLine (AnnotToken l _ _) = sourcePosLine (sourceFrom (ltokRange l))
+aTokLine = sourcePosLine . sourceFrom . getRange
 
 
 data NameId = NameId !Int !Int
@@ -97,12 +103,23 @@ data NameId = NameId !Int !Int
 nameId :: LocatedExprName -> NameId
 nameId e = NameId (startIx e) (endIx e)
 
+setFunId :: FunId -> AnnotToken -> AnnotToken
+setFunId funId (AnnotToken a b c _) = AnnotToken a b c (Just funId)
+
+addFunIds :: [FunId] -> [AnnotToken] -> [AnnotToken]
+addFunIds [] ys = ys
+addFunIds _  [] = [] -- not good, but keep going
+addFunIds xxs@(funId:xs) (y:ys)
+  | isFunction y = setFunId funId y : addFunIds xs ys
+  | otherwise = y : addFunIds xxs ys
+
+isFunction (AnnotToken t _ _ _) = ltokToken t == L.TokFunction
 
 addNames :: [ [LocatedExprName] ] -> [LexToken] -> [ AnnotToken ]
 addNames = go []
   where
 
-  annot t mb stack = AnnotToken t (nameId <$> mb) (map nameId stack)
+  annot t mb stack = AnnotToken t (nameId <$> mb) (map nameId stack) Nothing
 
   -- ensure top of the stack, if any, is active
   go (s : stack) ns (t : ts)
@@ -143,11 +160,12 @@ lineToJSON :: (NameId -> Bool) -> Line -> JS.Value
 lineToJSON inScope (Line ts) = toJSON $ map (tokenToJSON inScope) ts
 
 tokenToJSON :: (NameId -> Bool) -> Token -> JS.Value
-tokenToJSON inScope (Token x y t cs) =
+tokenToJSON inScope (Token x y t cs funId) =
   JS.object [ "token"   .= x
             , "lexeme"  .= y
             , "name"    .= (link <$> t)
             , "names"   .= cs
+            , "funid"   .= (exportFID <$> funId)
             ]
   where
   link z = JS.object [ "ref" .= z, "active" .= inScope z ]
@@ -208,7 +226,8 @@ splitTok = split
 
 
 token :: AnnotToken -> Token
-token (AnnotToken tok ns cs) = Token (tokenType tok) (ltokLexeme tok) ns cs
+token (AnnotToken tok ns cs funId) =
+  Token (tokenType tok) (ltokLexeme tok) ns cs funId
 
 tokenType :: LexToken -> TokenType
 tokenType tok =
