@@ -41,6 +41,9 @@ instance HasRange Name where
 instance Eq Name where
   x == y = nameText x == nameText y
 
+instance Ord Name where
+  compare x y = compare (nameText x) (nameText y)
+
 data Decl a = DClass      !(ClassDecl a)
             | DType       !(TypeDecl a)
             | DNamespace  !(NamespaceDecl a)

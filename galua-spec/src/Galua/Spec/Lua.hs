@@ -9,6 +9,8 @@ import qualified Data.Text as Text
 import           Control.Monad(liftM,ap,unless,zipWithM,forM)
 import           Data.Map ( Map )
 import qualified Data.Map as Map
+import           Data.Set ( Set )
+import qualified Data.Set as Set
 import           Data.List(foldl')
 import           Data.Maybe(fromMaybe)
 import           Data.Text(Text)
@@ -236,14 +238,20 @@ instance InferStmt (Stat SourceRange) where
       FunCall _ fc   -> inferStmt fc
       Label _ _      -> return ()
       Break r        -> inLoop r
-      Goto _ l       -> hasLabel l
+      Goto r l       -> hasLabel r l
       Do r block     -> inferBlock block
       While r e b    -> do t <- inferExpr e
                            loopBody (inferBlock b)
-      Repeat r b e   -> do startBlock
-                           loopBody (doInferBlock b)
-                           t <- inferExpr e
-                           endBlock
+      Repeat r b e   ->
+        inNewBlock $
+          do loopBody (doInferBlock b)
+             _t <- inferExpr e
+             -- XXX: we don't check anything for `t` because
+             -- any expression can be treated as a boolean.
+             -- Perhaps we should emit a constraint to
+             -- constrol if one wants to be more explicit?
+
+             return ()
 
       -- XXX: Support for "Maybe" via checking for null
       If r alts mb   -> do mapM_ alt alts
@@ -259,10 +267,8 @@ instance InferStmt (Stat SourceRange) where
                    Just e3 -> numExpr e3
            a  <- newTVar (ann x)
            constraint (c3 r C_Add t1 t3 a)
-           loopBody $ do startBlock
-                         newLocal x a
-                         doInferBlock b
-                         endBlock
+           loopBody $ inNewBlock $ do newLocal x a
+                                      doInferBlock b
         where
         numExpr e = do t <- inferExpr e
                        v <- newTVar (ann e)
@@ -309,7 +315,7 @@ instance InferStmt (FunCall SourceRange) where
                     return ()
 
 inferBlock :: Block SourceRange -> InferM ()
-inferBlock b = startBlock >> doInferBlock b >> endBlock
+inferBlock b = inNewBlock (doInferBlock b)
 
 -- | Assumes that start and end block are done by calelr
 doInferBlock :: Block SourceRange -> InferM ()
@@ -467,6 +473,12 @@ importName :: LuaName -> Name
 importName (Lua.Name x y) = Name { nameRange = x, nameText = y }
 
 
+importType :: AST.Type Parsed -> Type
+importType (TCon a tc ts) = TCon a tc (map importType ts)
+importType (TVar _)       = error "[bug] importType"
+
+
+
 
 
 --------------------------------------------------------------------------------
@@ -474,7 +486,7 @@ importName (Lua.Name x y) = Name { nameRange = x, nameText = y }
 --------------------------------------------------------------------------------
 
 
-newtype InferM a = IM (RW -> Either TypeError (a,RW))
+newtype InferM a = IM (RO -> RW -> Either TypeError (a,RW))
 
 type TypeError = Doc
 
@@ -482,50 +494,99 @@ instance Functor InferM where
   fmap = liftM
 
 instance Applicative InferM where
-  pure a = IM (\s -> Right (a,s))
+  pure a = IM (\_ s -> Right (a,s))
   (<*>)  = ap
 
 instance Monad InferM where
-  IM m >>= f = IM (\s -> case m s of
-                           Left err -> Left err
-                           Right (a,s1) -> let IM m1 = f a
-                                           in m1 s1)
+  IM m >>= f = IM (\r s -> case m r s of
+                             Left err -> Left err
+                             Right (a,s1) -> let IM m1 = f a
+                                             in m1 r s1)
+
+data RO = RO
+  { roLabels      :: Set Name
+    -- ^ Labels for jumping.
+
+  , roLoop        :: Bool
+    -- ^ Are we currently in a loop
+
+  , roUpvalues    :: !(Map Name Type)
+    -- ^ Names defined in enclosing *functions*
+
+  , roSpec        :: !(Spec Parsed)
+    -- ^ Typed of globals and namespaces.
+  }
 
 data RW = RW
   { rwSubst       :: !Subst
   , rwConstraints :: ![Constraint]
   , rwNextVar     :: !Int
-  , theSpec       :: !(Spec TypeChecked)
+
+
+  , rwOuterLocals :: ![Map Name Type]
+    -- ^ Types of locals in enclosing blocks, up to the root of the
+    -- current functions.
+
+  , rwLocals      :: !(Map Name Type)
+    -- ^ Types for variales defined in the current block
+
   }
 
 
-
-runInferM :: Spec TypeChecked -> InferM () -> Either TypeError [Constraint]
+runInferM :: Spec Parsed -> InferM () -> Either TypeError [Constraint]
 runInferM globs (IM f) =
-  case f rw of
+  case f ro rw of
     Left err    -> Left err
     Right (a,s) -> Right (map (apSubst (rwSubst s)) (rwConstraints s))
   where
+  ro = RO { roSpec      = globs
+          , roLoop      = False
+          , roLabels    = Set.empty
+          , roUpvalues  = Map.empty
+          }
+
   rw = RW { rwSubst       = suEmpty
           , rwConstraints = []
           , rwNextVar     = 0
-          , theSpec       = globs
+          , rwOuterLocals = []
+          , rwLocals      = Map.empty
           }
 
 
 
 --------------------------------------------------------------------------------
 
--- | Generate a fresh type variable, with the given suggested name.
+-- | Modify the state and return a result.  Cannot fail.
+state :: (RW -> (a,RW)) -> InferM a
+state f = IM (\_ s -> case f s of
+                        (a,s1) -> s1 `seq` Right (a,s1))
+
+-- | Modify the state, no interesting result. Cannot fail.
+state_ :: (RW -> RW) -> InferM ()
+state_ f = state (\s -> ((), f s))
+
+-- | Access the state, without modifying it.
+getState :: (RW -> a) -> InferM a
+getState f = IM (\_ s -> Right (f s, s))
+
+-- | Access the environment.
+getEnv :: (RO -> a) -> InferM a
+getEnv f = IM $ \ro s -> Right (f ro, s)
+
+-- | Modify the environment for the duration of a computation.
+inEnv :: (RO -> RO) -> InferM a -> InferM a
+inEnv f (IM m) = IM $ \ro s -> m (f ro) s
+
+-- | Generate a fresh type variable.  The range identifies the location
+-- of the entity whose type this variable stands for.
 newTVar :: SourceRange -> InferM Type
-newTVar r = IM (\s -> let i  = rwNextVar s
-                          s1 = s { rwNextVar = i + 1 }
-                          x  = TVar (TV r i)
-                      in s1 `seq` Right (x, s1))
+newTVar r = state $ \s -> let i  = rwNextVar s
+                              x  = TVar (TV r i)
+                          in (x, s { rwNextVar = i + 1 })
 
+-- | Report an error and abort.
 reportError :: TypeError -> InferM a
-reportError e = IM (\_ -> Left e)
-
+reportError e = IM (\_ _ -> Left e)
 
 -- | Add a constraint.
 constraint :: Constraint -> InferM ()
@@ -535,42 +596,50 @@ constraint c = delay c
 -- | Store constraint to try solve later as we don't have enough
 -- information as to how to do it just yet.
 delay :: Constraint -> InferM ()
-delay c = IM (\s -> let s1 = s { rwConstraints = c : rwConstraints s1 }
-                    in s1 `seq` Right ((),s1))
+delay c = state_ $ \s -> s { rwConstraints = c : rwConstraints s }
 
+-- | Lookup a name
 lookupVar :: SourceRange -> LuaName -> InferM Type
 lookupVar = xxxTODO "XXX"
 
 lookupVarArg :: SourceRange -> InferM Type
 lookupVarArg = xxxTODO "XXX"
 
+-- | Ensure that we are in a loop body.  If not, report an error.
 inLoop :: SourceRange -> InferM ()
-inLoop = xxxTODO "XXX"
+inLoop r =
+  do yes <- getEnv roLoop
+     unless yes $ reportError "`break` outside loop`" -- XXXX
 
+-- | Perform a computation, which is in a loop body.
 loopBody :: InferM a -> InferM a
-loopBody = xxxTODO "XXX"
+loopBody = inEnv (\ro -> ro { roLoop = True })
 
-hasLabel :: LuaName -> InferM ()
-hasLabel = xxxTODO "XXX"
+-- | Check the given label is in scope.  Report an error if not.
+hasLabel :: SourceRange -> LuaName -> InferM ()
+hasLabel r l =
+  do ls <- getEnv roLabels
+     unless (importName l `Set.member` ls) $
+       reportError "`goto` to undefined label"
 
+-- | Add some labels for the duration of a computation.
 withLabels :: [LuaName] -> InferM a -> InferM a
-withLabels = xxxTODO "XXX"
+withLabels ls' = inEnv (\ro -> ro { roLabels = Set.union ls (roLabels ro) })
+  where ls = Set.fromList (map importName ls')
 
--- | Declare a new local
+-- | Declare a new local in the current block.
+-- XXX Opinion: perhaps this should fail if there already is a local
+-- declared with the same name *in the current block*?
 newLocal :: LuaName -> Type -> InferM ()
-newLocal = xxxTODO "XXX"
+newLocal x t =
+  state_ $ \s -> s { rwLocals = Map.insert (importName x) t (rwLocals s) }
 
-startBlock :: InferM ()
-startBlock = xxxTODO "XXX"
-
-endBlock :: InferM ()
-endBlock = xxxTODO "XXX"
+inNewBlock :: InferM () -> InferM ()
+inNewBlock = xxxTODO "inNewBlock"
 
 -- | Apply the accumulated substitution to sometihng.
 zonk :: ApSubst t => t -> InferM t
-zonk t = IM (\s -> let t1 = apSubst (rwSubst s) t
-                   in t1 `seq` Right (t1, s))
-
+zonk t = getState ((`apSubst` t) . rwSubst)
 
 -- | make two types the same.  The location points to the place
 -- in the source code that forced the types to be the same.
@@ -594,12 +663,11 @@ unifyMany _ _ _ = reportError "Arity mismatch" -- XXX
 -- | Replace a variable by a type.  Assumes that the substitution
 -- has already been applied to both.
 bindVar :: SourceRange -> TV -> Type -> InferM ()
-bindVar r x t = IM (\s -> case suExtend r x t (rwSubst s) of
-                            Just su ->
-                              let s1 = s { rwSubst = su }
-                              in s1 `seq` Right ((),s1)
-                            Nothing -> Left "Recursive type" -- XXX
-                 )
+bindVar r x t =
+  do mb <- getState (suExtend r x t . rwSubst)
+     case mb of
+       Just su -> state_ (\s -> s { rwSubst = su })
+       Nothing -> reportError "Recursive type." -- XXX
 
 --------------------------------------------------------------------------------
 -- Substitutions
