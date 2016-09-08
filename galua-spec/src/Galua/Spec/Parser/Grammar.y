@@ -1,7 +1,9 @@
 {
-module Galua.Spec.Parser.Grammar(parseSpec) where
+{-# LANGUAGE TypeFamilies #-}
+module Galua.Spec.Parser.Grammar(Parsed,parseSpec) where
 
 import Data.Either(partitionEithers)
+import Data.Void(Void)
 import Galua.Spec.AST
 import Galua.Spec.Parser.Lexer
 import Galua.Spec.Parser.Monad
@@ -46,11 +48,11 @@ import Galua.Spec.Parser.Monad
 %%
 
 
-spec         :: { Parsed Spec }
+spec         :: { Spec Parsed }
   : block(decl) { Spec { specAnnot = fst $1, specDecls = snd $1 } }
 
 
-decl :: { Parsed Decl }
+decl :: { Decl Parsed }
 
   : 'class' type_name block(class_member)
 
@@ -74,7 +76,7 @@ decl :: { Parsed Decl }
 
 
 
-namespace_decl :: { Either (Parsed NamespaceDecl) (Parsed ValDecl) }
+namespace_decl :: { Either (NamespaceDecl Parsed) (ValDecl Parsed) }
 
   : 'namespace' name block(namespace_decl)
     { let (ns,vs) = partitionEithers (snd $3)
@@ -88,13 +90,13 @@ namespace_decl :: { Either (Parsed NamespaceDecl) (Parsed ValDecl) }
 
 
 
-class_member :: { Either (Parsed Name) (Parsed ValDecl) }
+class_member :: { Either Name (ValDecl Parsed) }
   : 'extends' type_name { Left $2  }
   | val_decl            { Right $1 }
 
 
 
-val_decl                 :: { Parsed ValDecl }
+val_decl                 :: { ValDecl Parsed }
   : 'mutable' name ':' type   { ValDecl { valAnnot   = $1 <-> $4
                                         , valName    = $2
                                         , valType    = $4
@@ -105,7 +107,7 @@ val_decl                 :: { Parsed ValDecl }
                                         , valMutable = False } }
 
 
-type_name    :: { Parsed Name }
+type_name    :: { Name }
   : IDENT       { name $1 }
   | 'class'     { name $1 }
   | 'namespace' { name $1 }
@@ -113,7 +115,7 @@ type_name    :: { Parsed Name }
   | 'type'      { name $1 }
   | 'mutable'   { name $1 }
 
-name         :: { Parsed Name }
+name         :: { Name }
   : type_name   { $1 }
   | 'boolean'   { name $1 }
   | 'string'    { name $1 }
@@ -124,7 +126,7 @@ name         :: { Parsed Name }
 
 
 
-atype                          :: { Parsed Type }
+atype                          :: { Type Parsed }
   : 'boolean'                     { tPrim $1 TBoolean }
   | 'string'                      { tPrim $1 TString  }
   | 'number'                      { tPrim $1 TNumber  }
@@ -142,16 +144,16 @@ opt_mut                        :: { Maybe SourceRange }
   : 'mutable'                     { Just (range $1) }
   | {- empty -}                   { Nothing }
 
-btype                          :: { Parsed Type }
+btype                          :: { Type Parsed }
   : atype                         { $1 }
   | atype '?'                     { tMaybe $1 $2 }
   | atype '*'                     { tMany $1 $2 }
 
-type                           :: { Parsed Type }
+type                           :: { Type Parsed }
   : btype                         { $1 }
   | btype '->' type               { tFun $1 $3 }
 
-tuple_types                    :: { [ Parsed Type ] }
+tuple_types                    :: { [ Type Parsed ] }
   : type ',' type                 { [ $1, $3 ] }
   | type ',' tuple_types          { $1 : $3 }
 
@@ -173,45 +175,53 @@ end_block                  :: { SourceRange }
 
 
 {
-type Parsed f = f SourceRange
+data Parsed
+type instance Annot Parsed = SourceRange
+type instance TVar  Parsed = Void
 
-name :: Lexeme Token -> Parsed Name
-name l = Name { nameAnnot = range l, nameText = lexemeText l }
+name :: Lexeme Token -> Name
+name l = Name { nameRange = range l, nameText = lexemeText l }
 
-tPrim :: Lexeme Token -> TCon -> Parsed Type
+tPrim :: Lexeme Token -> TCon -> Type Parsed
 tPrim a tc = TCon (range a) tc []
 
-tUser :: Parsed Name -> Parsed Type
-tUser x = TCon (range x) (TUser x { nameAnnot = () }) []
+tUser :: Name -> Type Parsed
+tUser x = TCon (range x) (TUser x) []
 
-tMut :: Maybe SourceRange -> SourceRange -> Parsed Type
+tMut :: Maybe SourceRange -> SourceRange -> Type Parsed
 tMut mut rng =
   case mut of
     Nothing -> TCon (range (sourceFrom rng)) (TMutable False) []
     Just r  -> TCon r (TMutable True) []
 
-tArray :: Maybe SourceRange -> SourceRange -> Parsed Type -> Parsed Type
+tArray :: Maybe SourceRange -> SourceRange -> Type Parsed -> Type Parsed
 tArray mut rng t = TCon (mut ?-> rng) TArray [tMut mut rng, t]
 
 tMap :: Maybe SourceRange -> SourceRange ->
-                    Parsed Type -> Parsed Type -> Parsed Type
+                    Type Parsed -> Type Parsed -> Type Parsed
 tMap mut rng k t = TCon (mut ?-> rng) TMap [tMut mut rng, k, t]
 
-tTuple :: SourceRange -> [Parsed Type] -> Parsed Type
+tTuple :: SourceRange -> [Type Parsed] -> Type Parsed
 tTuple r ts = TCon r (TTuple (length ts)) ts
 
-tFun :: Parsed Type -> Parsed Type -> Parsed Type
+tFun :: Type Parsed -> Type Parsed -> Type Parsed
 tFun s t = TCon (s <-> t) TFun [s,t]
 
-tMaybe :: Parsed Type -> Lexeme Token -> Parsed Type
+tMaybe :: Type Parsed -> Lexeme Token -> Type Parsed
 tMaybe t r = TCon (t <-> r) TMaybe [t]
 
-tMany :: Parsed Type -> Lexeme Token -> Parsed Type
+tMany :: Type Parsed -> Lexeme Token -> Type Parsed
 tMany t r = TCon (t <-> r) TMany [t]
 
 
 (?->) :: HasRange a => Maybe SourceRange -> a -> SourceRange
 Nothing ?-> y = range y
 Just x  ?-> y = x <-> y
+
+instance HasRange (Type Parsed) where
+  range (TCon a _ _) = a
+  range (TVar _)     = error "[bug] TVar in Parsed"
+
+
 }
 
