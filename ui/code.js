@@ -40,6 +40,9 @@ function drawFunctionInNewTab(dbgState, f) {
   $('#code_pane_control').append(newLink)
   $('#code_pane').append(newPane)
 
+  // not quite right, but not documented how to do better
+  UIkit.switcher($('#code_pane')).show(newPane)
+  newLink.addClass('uk-active')
 }
 
 function focusCurLine() {
@@ -210,6 +213,7 @@ function drawLine(dbgState,context,chunkId,here) {
           })
 
          if (t.funid !== null) {
+              it.addClass('clickable_function');
               it.click(function () {
                 jQuery.post('/function', { fid: t.funid },
                     function(code) {

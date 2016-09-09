@@ -1,18 +1,23 @@
-{-# LANGUAGE OverloadedStrings, FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings, FlexibleInstances, TypeFamilies #-}
 module Galua.Spec.Lua where
 
 import           Prelude hiding (EQ,GT,LT)
-import           Language.Lua.Annotated.Syntax
+import           Language.Lua.Annotated.Syntax hiding (Name)
+import qualified Language.Lua.Annotated.Syntax as Lua
 import           Text.PrettyPrint
 import qualified Data.Text as Text
-import           Control.Monad(liftM,ap,unless)
+import           Control.Monad(liftM,ap,unless,zipWithM,forM)
 import           Data.Map ( Map )
 import qualified Data.Map as Map
+import           Data.Set ( Set )
+import qualified Data.Set as Set
 import           Data.List(foldl')
+import           Data.Maybe(fromMaybe)
+import           Data.Text(Text)
 
-import Galua.Spec.AST (Pretty(..))
-import Galua.Spec.AST (TCon(..))
-import Galua.Spec.Parser(SourceRange(..))
+import Galua.Spec.AST hiding (Type)
+import qualified Galua.Spec.AST as AST
+import Galua.Spec.Parser(Parsed, SourceRange(..))
 import Galua.Spec.Parser.Lexer((<->))
 
 
@@ -22,28 +27,25 @@ xxxTODO = error
 -- Types and Constraints
 --------------------------------------------------------------------------------
 
-data Type   = TCon !SourceRange !TCon ![Type]
-            | TVar !TVar
-              deriving Show
+data TypeChecked
 
-data TVar   = TV !SourceRange !Int
-              deriving (Show)
+type instance Annot TypeChecked = SourceRange
+type instance TVar TypeChecked  = TV
+type Type                       = AST.Type TypeChecked
+type LuaName                    = Lua.Name SourceRange
 
-instance Eq TVar where
+data TV = TV !SourceRange !Int
+
+instance Eq TV where
   TV _ x == TV _ y = x == y
 
-instance Ord TVar where
+instance Ord TV where
   compare (TV _ x) (TV _ y) = compare x y
 
-
-type Parsed f = f SourceRange
 
 
 tPrim :: TCon -> SourceRange -> Type
 tPrim tc a = TCon a tc []
-
-tNil :: SourceRange -> Type
-tNil = tPrim TNil
 
 tBoolean :: SourceRange -> Type
 tBoolean = tPrim TBoolean
@@ -57,8 +59,12 @@ tInteger = tPrim TInteger
 tNumber :: SourceRange -> Type
 tNumber = tPrim TNumber
 
+-- | This is for function inputs and outputs
 tTuple :: SourceRange -> [Type] -> Type
 tTuple a ts = TCon a (TTuple (length ts)) ts
+
+tMaybe :: SourceRange -> Type -> Type
+tMaybe r t = TCon r TMaybe [t]
 
 
 data Constraint = Constraint SourceRange Ctr [Type]
@@ -89,14 +95,15 @@ data Ctr  = C_Add
           | C_Complement
 
           | C_Select
-          | C_Project (Name SourceRange)
+          | C_Project Name
 
           | C_Call
 
-          | C_Bool
           | C_Number
 
-          | C_EqType    -- Nothing emits this directly?
+          | C_Get !Int -- acces a particular function result or argument
+
+          | C_EqType
 
 c1 :: SourceRange -> Ctr -> Type -> Constraint
 c1 r c t = Constraint r c [t]
@@ -149,10 +156,11 @@ instance Pretty Constraint where
 
       (C_Call, [a,_,c])   -> returns (a <> parens (pretty (ts !! 1))) c
 
-      (C_Bool, [a])       -> "to_boolean" <+> a
-      (C_Number , [a,b])  -> returns ("to_number" <+> a) b
+      (C_Number, [a,b])  -> returns ("to_number" <+> a) b
 
-      (C_EqType,[a,b])    -> a <+> "=" <+> b
+      (C_Get n, [a,b])   -> returns ("get_" <> int n <+> a) b
+
+      (C_EqType,[a,b])   -> a <+> "=" <+> b
 
     where
     returns a b = a <+> "=" <+> b
@@ -161,58 +169,8 @@ instance Pretty Constraint where
     infix2 x a b   = a <+> x <+> b
     prefix1 x a    = x <> a
 
-instance Pretty (Name a) where
-  pretty (Name _ x) = text (Text.unpack x)
-
-instance Pretty Type where
-  pretty = prettyType 0
-
-instance Pretty TVar where
+instance Pretty TV where
   pretty (TV _ x) = "$" <> int x
-
-prettyType :: Int -> Type -> Doc
-prettyType _ (TVar x) = pretty x
-prettyType prec (TCon ta typeCon typeParams) =
-  case typeCon of
-    TNil          -> ar0 "nil"
-    TBoolean      -> ar0 "boolean"
-    TString       -> ar0 "string"
-    TInteger      -> ar0 "integer"
-    TNumber       -> ar0 "number"
-    TMutable b    -> ar0 (if b then "mutable"
-                               else if prec > 0 then empty else "immutable")
-    TArray        -> ar2 $ \m t -> pp 1 m <+> braces (pp 0 t)
-    TMap          -> ar3 $ \m s t -> pp 1 m <+>
-                                      braces (pp 0 s <+> ":" <+> pp 0 t)
-    TTuple n      -> arN n (parens . hsep . punctuate comma . map (pp 0))
-    TMaybe        -> ar1 $ \t   -> wrap 2 (pp 1 t <> text "?")
-    TMany         -> ar1 $ \t   -> wrap 2 (pp 1 t <> text "*")
-    TFun          -> ar2 $ \s t -> wrap 1 (pp 1 s <+> text "->" <+> pp 0 t)
-    TUser x       -> ar0 (pretty x)
-  where
-  ar0 f   = prettyTypeApp ta 0 typeParams $ \_                 -> f
-  ar1 f   = prettyTypeApp ta 1 typeParams $ \ ~(x : _)         -> f x
-  ar2 f   = prettyTypeApp ta 2 typeParams $ \ ~(x : y : _)     -> f x y
-  ar3 f   = prettyTypeApp ta 3 typeParams $ \ ~(x : y : z : _) -> f x y z
-  arN n f = prettyTypeApp ta n typeParams f
-
-  wrap n  = if prec < n then id else parens
-
-  pp _ (Left x)  = x
-  pp n (Right t) = prettyType n t
-
-prettyTypeApp :: a -> Int -> [Type] -> ([Either Doc Type] -> Doc) -> Doc
-prettyTypeApp a n xs f
-  | null bs   = ty
-  | otherwise = parens (ty <+> hsep (err <$> bs))
-  where
-  (as,bs)    = splitAt n xs
-  ts         = take n (map Right as ++ repeat prettyWild)
-  ty         = f ts
-
-  err b      = text "!" <> prettyType 10 b
-
-  prettyWild = Left "_"
 
 
 --------------------------------------------------------------------------------
@@ -230,33 +188,77 @@ prettyTypeApp a n xs f
 class InferStmt t where
   inferStmt :: t -> InferM ()
 
+
+-- local x,y,z = f ()
+-- local x,y,z = 1,2
+-- local x,y,z = 1, f ()
+
+-- local x,y,z = 1,2
+
+
+
 instance InferStmt (Stat SourceRange) where
   inferStmt stmt =
     case stmt of
       Assign r xs es        -> xxxTODO "ASSIGN"
-      LocalAssign r xs mbEs ->  xxxTODO "local Assign"
 
-      EmptyStat _           -> return ()
+        -- Types of locals may change as long as they are not shared
+        -- (i.e. captured by a closure)
+
+
+      LocalAssign r xs mbEs ->
+        do vs <- check xs (fromMaybe [] mbEs)
+           mapM_ (uncurry newLocal) vs
+
+        where
+        check [] (_ : _) = reportError "Too many expressions in assignment"
+                            -- XXX
+
+        check xs [e] =
+          do t  <- inferExpr e
+             let getV i v =
+                   do a <- newTVar (ann v)
+                      constraint (c2 (ann e) (C_Get i) t a)
+                      return (v,a)
+             zipWithM getV [ 0 .. ] xs
+
+
+        check xs [] = forM xs $ \v -> do a <- newTVar (ann v)
+                                         return (v, tMaybe r a)
+
+        check (x:xs) (e:es) =
+          do t <- inferExpr e
+             a <- newTVar (ann e)
+             constraint (c2 r (C_Get 0) t a)
+             more <- check xs es
+             return ((x,t):more)
+
+      EmptyStat _    -> return ()
 
       FunCall _ fc   -> inferStmt fc
       Label _ _      -> return ()
       Break r        -> inLoop r
-      Goto _ l       -> hasLabel l
+      Goto r l       -> hasLabel r l
       Do r block     -> inferBlock block
       While r e b    -> do t <- inferExpr e
-                           constraint (c1 r C_Bool t)
                            loopBody (inferBlock b)
-      Repeat r b e   -> do startBlock
-                           loopBody (doInferBlock b)
-                           t <- inferExpr e
-                           constraint (c1 r C_Bool t)
-                           endBlock
+      Repeat r b e   ->
+        inNewBlock $
+          do loopBody (doInferBlock b)
+             _t <- inferExpr e
+             -- XXX: we don't check anything for `t` because
+             -- any expression can be treated as a boolean.
+             -- Perhaps we should emit a constraint to
+             -- constrol if one wants to be more explicit?
 
+             return ()
+
+      -- XXX: Support for "Maybe" via checking for null
       If r alts mb   -> do mapM_ alt alts
                            mapM_ inferBlock mb
         where alt (e,b) = do t <- inferExpr e
-                             constraint (c1 r C_Bool t)
                              inferBlock b
+
       ForRange r x e1 e2 me3 b ->
         do t1 <- numExpr e1
            t2 <- numExpr e2
@@ -265,10 +267,8 @@ instance InferStmt (Stat SourceRange) where
                    Just e3 -> numExpr e3
            a  <- newTVar (ann x)
            constraint (c3 r C_Add t1 t3 a)
-           loopBody $ do startBlock
-                         newLocal x a
-                         doInferBlock b
-                         endBlock
+           loopBody $ inNewBlock $ do newLocal x a
+                                      doInferBlock b
         where
         numExpr e = do t <- inferExpr e
                        v <- newTVar (ann e)
@@ -283,6 +283,9 @@ instance InferStmt (Stat SourceRange) where
              then do let r' = ann fb
                      inferStmt (Assign r [sel] [EFunDef r' (FunDef r' fb)])
              else xxxTODO "method declaration"
+             -- A method declaratoin should match its declaration
+             -- in a class!
+
              -- this one is a bit tricky because we need to add the
              -- implicit "self" parameter, which has the same type as the
              -- object.
@@ -312,11 +315,11 @@ instance InferStmt (FunCall SourceRange) where
                     return ()
 
 inferBlock :: Block SourceRange -> InferM ()
-inferBlock b = startBlock >> doInferBlock b >> endBlock
+inferBlock b = inNewBlock (doInferBlock b)
 
 -- | Assumes that start and end block are done by calelr
 doInferBlock :: Block SourceRange -> InferM ()
-doInferBlock = undefined
+doInferBlock = xxxTODO "XXX"
 
 
 
@@ -327,17 +330,22 @@ doInferBlock = undefined
 --------------------------------------------------------------------------------
 
 class InferExpr e where
-  inferExpr :: Parsed e -> InferM Type
+  inferExpr :: e SourceRange -> InferM Type
 
 instance InferExpr Exp where
   inferExpr expr =
     case expr of
-      Nil r       -> return (tNil r)
+
+      Nil r       -> do a <- newTVar r
+                        return (tMaybe r a)
+
       Bool r _    -> return (tBoolean r)
+
       Number r nt _ ->
         case nt of
           FloatNum -> return (tNumber r)
           IntNum   -> return (tInteger r)
+
       String r _ -> return (tString r)
 
       Vararg r          -> lookupVarArg r
@@ -346,6 +354,8 @@ instance InferExpr Exp where
 
       PrefixExp _ pe    -> inferExpr pe
       TableConst _ t    -> inferExpr t
+
+      -- XXX: special cases for:  x /= nil `And` stuff?
       Binop r op e1 e2  ->
         do t1 <- inferExpr e1
            t2 <- inferExpr e2
@@ -359,8 +369,7 @@ instance InferExpr Exp where
                relOp c  = do constraint (c2 r c t1 t2)
                              return bool
 
-               boolOp   = do constraint (c1 r C_Bool t1)
-                             constraint (c1 r C_Bool t2)
+               boolOp   = do constraint (c2 r C_EqType t1 t2)
                              return bool
 
            case op of
@@ -396,8 +405,7 @@ instance InferExpr Exp where
                                   return res
            case op of
              Neg _          -> overload C_Neg
-             Not _          -> do constraint (c1 r C_Bool t)
-                                  return (tBoolean r)
+             Not _          -> return (tBoolean r)
              Len _          -> overload C_Len
              Complement _   -> overload C_Complement
 
@@ -414,6 +422,7 @@ instance InferExpr Var where
     case expr of
       VarName r x -> lookupVar r x
 
+      -- Arrays / maps
       Select r e i ->
         do te  <- inferExpr e
            ti  <- inferExpr i
@@ -421,10 +430,11 @@ instance InferExpr Var where
            constraint (c3 r C_Select te ti res)
            return res
 
+      -- Records / modules
       SelectName r e l ->
         do te <- inferExpr e
            res <- newTVar r
-           constraint (c2 r (C_Project l) te res)
+           constraint (c2 r (C_Project (importName l)) te res)
            return res
 
 instance InferExpr FunCall where
@@ -442,7 +452,7 @@ instance InferExpr FunCall where
            ts   <- inferArgs as
            res  <- newTVar r
            fun  <- newTVar (ann m)
-           constraint (c2 r (C_Project m) objT fun)
+           constraint (c2 r (C_Project (importName m)) objT fun)
            constraint (c3 r C_Call fun (tTuple (ann as) (objT : ts)) res)
            return res
 
@@ -450,13 +460,22 @@ instance InferExpr Table where
   inferExpr (Table r fs) = xxxTODO "XXX: Table"
 
 
-inferArgs :: Parsed FunArg -> InferM [Type]
+inferArgs :: FunArg SourceRange -> InferM [Type]
 inferArgs args =
   case args of
     Args _ es     -> mapM inferExpr es
     TableArg _ ta -> do t <- inferExpr ta
                         return [t]
     StringArg r _ -> return [ tString r ]
+
+
+importName :: LuaName -> Name
+importName (Lua.Name x y) = Name { nameRange = x, nameText = y }
+
+
+importType :: AST.Type Parsed -> Type
+importType (TCon a tc ts) = TCon a tc (map importType ts)
+importType (TVar _)       = error "[bug] importType"
 
 
 
@@ -467,7 +486,7 @@ inferArgs args =
 --------------------------------------------------------------------------------
 
 
-newtype InferM a = IM (RW -> Either TypeError (a,RW))
+newtype InferM a = IM (RO -> RW -> Either TypeError (a,RW))
 
 type TypeError = Doc
 
@@ -475,37 +494,99 @@ instance Functor InferM where
   fmap = liftM
 
 instance Applicative InferM where
-  pure a = IM (\s -> Right (a,s))
+  pure a = IM (\_ s -> Right (a,s))
   (<*>)  = ap
 
 instance Monad InferM where
-  IM m >>= f = IM (\s -> case m s of
-                           Left err -> Left err
-                           Right (a,s1) -> let IM m1 = f a
-                                           in m1 s1)
+  IM m >>= f = IM (\r s -> case m r s of
+                             Left err -> Left err
+                             Right (a,s1) -> let IM m1 = f a
+                                             in m1 r s1)
 
+data RO = RO
+  { roLabels      :: Set Name
+    -- ^ Labels for jumping.
 
+  , roLoop        :: Bool
+    -- ^ Are we currently in a loop
+
+  , roUpvalues    :: !(Map Name Type)
+    -- ^ Names defined in enclosing *functions*
+
+  , roSpec        :: !(Spec Parsed)
+    -- ^ Typed of globals and namespaces.
+  }
 
 data RW = RW
   { rwSubst       :: !Subst
   , rwConstraints :: ![Constraint]
   , rwNextVar     :: !Int
+
+
+  , rwOuterLocals :: ![Map Name Type]
+    -- ^ Types of locals in enclosing blocks, up to the root of the
+    -- current functions.
+
+  , rwLocals      :: !(Map Name Type)
+    -- ^ Types for variales defined in the current block
+
   }
+
+
+runInferM :: Spec Parsed -> InferM () -> Either TypeError [Constraint]
+runInferM globs (IM f) =
+  case f ro rw of
+    Left err    -> Left err
+    Right (a,s) -> Right (map (apSubst (rwSubst s)) (rwConstraints s))
+  where
+  ro = RO { roSpec      = globs
+          , roLoop      = False
+          , roLabels    = Set.empty
+          , roUpvalues  = Map.empty
+          }
+
+  rw = RW { rwSubst       = suEmpty
+          , rwConstraints = []
+          , rwNextVar     = 0
+          , rwOuterLocals = []
+          , rwLocals      = Map.empty
+          }
 
 
 
 --------------------------------------------------------------------------------
 
--- | Generate a fresh type variable, with the given suggested name.
+-- | Modify the state and return a result.  Cannot fail.
+state :: (RW -> (a,RW)) -> InferM a
+state f = IM (\_ s -> case f s of
+                        (a,s1) -> s1 `seq` Right (a,s1))
+
+-- | Modify the state, no interesting result. Cannot fail.
+state_ :: (RW -> RW) -> InferM ()
+state_ f = state (\s -> ((), f s))
+
+-- | Access the state, without modifying it.
+getState :: (RW -> a) -> InferM a
+getState f = IM (\_ s -> Right (f s, s))
+
+-- | Access the environment.
+getEnv :: (RO -> a) -> InferM a
+getEnv f = IM $ \ro s -> Right (f ro, s)
+
+-- | Modify the environment for the duration of a computation.
+inEnv :: (RO -> RO) -> InferM a -> InferM a
+inEnv f (IM m) = IM $ \ro s -> m (f ro) s
+
+-- | Generate a fresh type variable.  The range identifies the location
+-- of the entity whose type this variable stands for.
 newTVar :: SourceRange -> InferM Type
-newTVar r = IM (\s -> let i  = rwNextVar s
-                          s1 = s { rwNextVar = i + 1 }
-                          x  = TVar (TV r i)
-                      in s1 `seq` Right (x, s1))
+newTVar r = state $ \s -> let i  = rwNextVar s
+                              x  = TVar (TV r i)
+                          in (x, s { rwNextVar = i + 1 })
 
+-- | Report an error and abort.
 reportError :: TypeError -> InferM a
-reportError e = IM (\_ -> Left e)
-
+reportError e = IM (\_ _ -> Left e)
 
 -- | Add a constraint.
 constraint :: Constraint -> InferM ()
@@ -515,42 +596,50 @@ constraint c = delay c
 -- | Store constraint to try solve later as we don't have enough
 -- information as to how to do it just yet.
 delay :: Constraint -> InferM ()
-delay c = IM (\s -> let s1 = s { rwConstraints = c : rwConstraints s1 }
-                    in s1 `seq` Right ((),s1))
+delay c = state_ $ \s -> s { rwConstraints = c : rwConstraints s }
 
-lookupVar :: SourceRange -> Parsed Name -> InferM Type
-lookupVar = undefined
+-- | Lookup a name
+lookupVar :: SourceRange -> LuaName -> InferM Type
+lookupVar = xxxTODO "XXX"
 
 lookupVarArg :: SourceRange -> InferM Type
-lookupVarArg = undefined
+lookupVarArg = xxxTODO "XXX"
 
+-- | Ensure that we are in a loop body.  If not, report an error.
 inLoop :: SourceRange -> InferM ()
-inLoop = undefined
+inLoop r =
+  do yes <- getEnv roLoop
+     unless yes $ reportError "`break` outside loop`" -- XXXX
 
+-- | Perform a computation, which is in a loop body.
 loopBody :: InferM a -> InferM a
-loopBody = undefined
+loopBody = inEnv (\ro -> ro { roLoop = True })
 
-hasLabel :: Name SourceRange -> InferM ()
-hasLabel = undefined
+-- | Check the given label is in scope.  Report an error if not.
+hasLabel :: SourceRange -> LuaName -> InferM ()
+hasLabel r l =
+  do ls <- getEnv roLabels
+     unless (importName l `Set.member` ls) $
+       reportError "`goto` to undefined label"
 
-withLabels :: [Name SourceRange] -> InferM a -> InferM a
-withLabels = undefined
+-- | Add some labels for the duration of a computation.
+withLabels :: [LuaName] -> InferM a -> InferM a
+withLabels ls' = inEnv (\ro -> ro { roLabels = Set.union ls (roLabels ro) })
+  where ls = Set.fromList (map importName ls')
 
--- | Declare a new local
-newLocal :: Name SourceRange -> Type -> InferM ()
-newLocal = undefined
+-- | Declare a new local in the current block.
+-- XXX Opinion: perhaps this should fail if there already is a local
+-- declared with the same name *in the current block*?
+newLocal :: LuaName -> Type -> InferM ()
+newLocal x t =
+  state_ $ \s -> s { rwLocals = Map.insert (importName x) t (rwLocals s) }
 
-startBlock :: InferM ()
-startBlock = undefined
-
-endBlock :: InferM ()
-endBlock = undefined
+inNewBlock :: InferM () -> InferM ()
+inNewBlock = xxxTODO "inNewBlock"
 
 -- | Apply the accumulated substitution to sometihng.
 zonk :: ApSubst t => t -> InferM t
-zonk t = IM (\s -> let t1 = apSubst (rwSubst s) t
-                   in t1 `seq` Right (t1, s))
-
+zonk t = getState ((`apSubst` t) . rwSubst)
 
 -- | make two types the same.  The location points to the place
 -- in the source code that forced the types to be the same.
@@ -573,13 +662,12 @@ unifyMany _ _ _ = reportError "Arity mismatch" -- XXX
 
 -- | Replace a variable by a type.  Assumes that the substitution
 -- has already been applied to both.
-bindVar :: SourceRange -> TVar -> Type -> InferM ()
-bindVar r x t = IM (\s -> case suExtend r x t (rwSubst s) of
-                            Just su ->
-                              let s1 = s { rwSubst = su }
-                              in s1 `seq` Right ((),s1)
-                            Nothing -> Left "Recursive type" -- XXX
-                 )
+bindVar :: SourceRange -> TV -> Type -> InferM ()
+bindVar r x t =
+  do mb <- getState (suExtend r x t . rwSubst)
+     case mb of
+       Just su -> state_ (\s -> s { rwSubst = su })
+       Nothing -> reportError "Recursive type." -- XXX
 
 --------------------------------------------------------------------------------
 -- Substitutions
@@ -587,12 +675,12 @@ bindVar r x t = IM (\s -> case suExtend r x t (rwSubst s) of
 
 -- | The source range is the location in the source code that cause the
 -- variable to be matched with the type.
-newtype Subst = Subst (Map TVar (SourceRange, Type))
+newtype Subst = Subst (Map TV (SourceRange, Type))
 
 suEmpty :: Subst
 suEmpty = Subst Map.empty
 
-suExtend :: SourceRange -> TVar -> Type -> Subst -> Maybe Subst
+suExtend :: SourceRange -> TV -> Type -> Subst -> Maybe Subst
 suExtend _ x (TVar y) su | x == y = Just su
 suExtend _ x t _ | occursIn t = Nothing
   where occursIn (TVar y)      = x == y

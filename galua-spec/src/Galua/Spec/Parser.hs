@@ -3,6 +3,7 @@ module Galua.Spec.Parser
   , Lexeme(..)
   , SourceRange(..)
   , SourcePos(..)
+  , Parsed
   ) where
 
 import           Data.Text(Text)
@@ -10,7 +11,7 @@ import qualified Data.Text.IO as Text
 import           Control.Exception (throwIO)
 
 import Galua.Spec.AST(Spec)
-import Galua.Spec.Parser.Grammar(parseSpec)
+import Galua.Spec.Parser.Grammar(parseSpec,Parsed)
 import Galua.Spec.Parser.Monad(runParser,ParseError)
 import Galua.Spec.Parser.Lexer
          (lexer,initialInput,Lexeme(..),Token(..),SourceRange(..),SourcePos(..))
@@ -21,7 +22,7 @@ lexText :: Text -> [ Lexeme Token ]
 lexText txt = lexer (initialInput txt)
 
 -- | Parse a stream of lexemes.
-specFromTokens :: [ Lexeme Token ] -> Either ParseError (Spec SourceRange)
+specFromTokens :: [ Lexeme Token ] -> Either ParseError (Spec Parsed)
 specFromTokens = runParser parseSpec . addLayoutTokens . filter notWhite
   where
   notWhite t = case lexemeToken t of
@@ -29,12 +30,12 @@ specFromTokens = runParser parseSpec . addLayoutTokens . filter notWhite
                  _           -> True
 
 -- | Parse a text string.
-specFromText :: Text -> Either ParseError (Spec SourceRange)
+specFromText :: Text -> Either ParseError (Spec Parsed)
 specFromText = specFromTokens . lexText
 
 -- | Parse a file. Raises an exception on parse error
 -- (or problems reading the file).
-specFromFile :: FilePath -> IO (Spec SourceRange)
+specFromFile :: FilePath -> IO (Spec Parsed)
 specFromFile file =
   do txt <- Text.readFile file
      case specFromText txt of
