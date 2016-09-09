@@ -7,10 +7,7 @@ import Foreign.C
 import Foreign.Marshal.Unsafe
 
 foreign import capi unsafe "stdio.h snprintf"
-  snprint_dbl :: CString -> CSize -> CString -> CDouble -> IO CInt
-
-foreign import capi unsafe "stdio.h sprintf"
-  sprint_dbl  :: CString ->          CString -> CDouble -> IO CInt
+  snprintf_dbl :: CString -> CSize -> CString -> CDouble -> IO CInt
 
 doubleToHex :: Double -> String
 doubleToHex x =
@@ -19,10 +16,11 @@ doubleToHex x =
 
     do let cx = realToFrac x
 
-       -- determine output size (without nul)
-       n <- snprint_dbl nullPtr 0 fmt cx
+       -- determine output size
+       n <- snprintf_dbl nullPtr 0 fmt cx
+       let n1 = n+1 -- with nul
 
        -- generate the output
-       allocaArray (fromIntegral (n+1)) $ \ptr ->
-         do _ <- sprint_dbl ptr fmt cx
+       allocaArray (fromIntegral n1) $ \ptr ->
+         do _ <- snprintf_dbl ptr (fromIntegral n1) fmt cx
             peekCAString ptr
