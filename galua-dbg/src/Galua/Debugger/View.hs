@@ -68,6 +68,8 @@ import qualified System.Clock as Clock
 import           Foreign.C.String
 import           Foreign.Ptr (nullPtr, nullFunPtr)
 
+import           HexFloatFormat (doubleToHex)
+
 newtype ExportM a = ExportM (StateT ExportableState IO a)
                     deriving (Functor,Applicative,Monad)
 
@@ -326,7 +328,8 @@ exportValue funs path val =
     Bool b      -> simple [ tag "bool"
                           , "text" .= (if b then str "true" else "false") ]
 
-    Number b    -> simple [ tag "number", "text" .= numberToString b ]
+    Number b    -> simple [ tag "number", "text" .= numberToString b
+                                        , "alt"  .= hexNumber b ]
     String b'   -> let b = toByteString b'
                    in simple [ tag "string", "text" .= constructStringLiteral (L.fromStrict b)
                                            , "alt"  .= hexString b ]
@@ -869,3 +872,9 @@ showByte :: Word8 -> ShowS
 showByte x
   | x < 16 = showChar '0' . showHex x
   | otherwise = showHex x
+
+hexNumber :: Number -> String
+hexNumber (Double d) = doubleToHex d
+hexNumber (Int    i)
+  | i < 0     = "-0x"++showHex (-i) ""
+  | otherwise =  "0x"++showHex   i  ""
