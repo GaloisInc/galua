@@ -30,7 +30,6 @@ tokens :-
   "string"                    { lexeme KW_string              }
   "number"                    { lexeme KW_number              }
   "integer"                   { lexeme KW_integer             }
-  "nil"                       { lexeme KW_nil                 }
 
   "?"                         { lexeme KW_quest               }
   "*"                         { lexeme KW_star                }
@@ -69,7 +68,6 @@ data Token =
   | KW_string
   | KW_number
   | KW_integer
-  | KW_nil
 
   | KW_quest
   | KW_star

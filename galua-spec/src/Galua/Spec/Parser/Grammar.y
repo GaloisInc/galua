@@ -19,7 +19,6 @@ import Galua.Spec.Parser.Monad
   'string'    { Lexeme { lexemeToken = KW_string      } }
   'number'    { Lexeme { lexemeToken = KW_number      } }
   'integer'   { Lexeme { lexemeToken = KW_integer     } }
-  'nil'       { Lexeme { lexemeToken = KW_nil         } }
 
   '?'         { Lexeme { lexemeToken = KW_quest       } }
   '*'         { Lexeme { lexemeToken = KW_star        } }
@@ -119,7 +118,6 @@ name         :: { Parsed Name }
   | 'string'    { name $1 }
   | 'number'    { name $1 }
   | 'integer'   { name $1 }
-  | 'nil'       { name $1 }
 
 
 
@@ -129,7 +127,6 @@ atype                          :: { Parsed Type }
   | 'string'                      { tPrim $1 TString  }
   | 'number'                      { tPrim $1 TNumber  }
   | 'integer'                     { tPrim $1 TInteger }
-  | 'nil'                         { tPrim $1 TNil     }
   | type_name                     { tUser $1 }
   | opt_mut '{' type '}'          { tArray $1 ($2 <-> $4) $3 }
   | opt_mut '{' type ':' type '}' { tMap $1 ($2 <-> $6) $3 $5 }
