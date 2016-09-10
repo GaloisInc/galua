@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html>
+<head>
+<link type="text/css" href="libs/materialize-icons/style.css" rel="stylesheet">
+<link type="text/css" rel="stylesheet"
+      href="libs/materialize/css/materialize.min.css"
+      media="screen,projection"/>
+<script type="text/javascript" src="libs/jquery.min.js"></script>
+
+<script>
+$(document).ready(function() {
+  console.log('loaded')
+  $('#btn').click(function() {
+    console.log('clicked')
+    $('#the_tabs').tabs('select_tab', 'test2')
+  })
+
+  $('.modal-trigger').leanModal()
+
+})
+
+var tab_counter = 15
+
+function addTab() {
+  var new_content = $('<div/>')
+                    .attr('id', 'tab' + tab_counter)
+                    .text('This is tab ' + tab_counter)
+
+  $('#tab-content').append(new_content)
+
+  $('#tab-list').append($('<li/>')
+                        .addClass('tab col s12')
+                        .append($('<a/>')
+                                .attr('href', '#tab' + tab_counter)
+                                .text('tab ' + tab_counter)))
+                .tabs()
+
+  ++tab_counter
+}
+
+</script>
+
+</head>
+
+<body>
+<script type="text/javascript"
+        src="libs/materialize/js/materialize.min.js"></script>
+
+
+
+<!-- Navigation Menu -->
+<div class="navbar-fixed">
+  <nav>
+    <div class="nav-wrapper">
+    <ul class="right">
+      <li><a class="tooltipped" data-tooltip="Continue executing">
+          <i class="material-icons left">play_arrow</i></a></li>
+      <li><a href="#" class="tooltipped" data-tooltip="Step over">
+          <i class="material-icons">redo</i></a></li>
+      <li><a href="#" class="tooltipped" data-tooltip="Step into function">
+          <i class="material-icons">vertical_align_bottom</i></a></li>
+      <li><a href="#" class="tooltipped" data-tooltip="Step out of function">
+          <i class="material-icons">vertical_align_top</i></a></li>
+      <li><a href="#" class="tooltipped" data-tooltip="Pause execution">
+          <i class="material-icons">pause</i></a></li>
+      <li><a href="#settings-dialog" class="modal-trigger tooltipped"
+            data-tooltip="Adjust settings">
+          <i class="material-icons">settings</i></a></li>
+    </ul>
+    </div>
+  </nav>
+</div>
+
+
+<!-- Settings -->
+<div id="settings-dialog" class="modal bottom-sheet">
+  <div class="modal-content">
+    <ul class="collection with-header container">
+    <li class="collection-header"><h5>Settings<h5></li>
+    <li class="collection-item">Step by opcode, instead of line
+        <div id="step-by-opcode" class="switch secondary-content">
+        <label>Off<input type="checkbox"/><span class="lever"></span>On</label>
+        </div>
+    </li>
+    <li class="collection-item">Pause when exceptions are thrown
+        <div id="pause-on-error" class="switch secondary-content">
+        <label>Off<input type="checkbox"/><span class="lever"></span>On</label>
+        </div>
+    <li>
+    </ul>
+  </div>
+</div>
+
+
+
+
+
+<div class="row">
+
+<!-- Left Pane -->
+<div class="col s6">
+</div>
+
+
+<!-- Right Pane -->
+<div class="col s6">
+<ul class="collapsible" data-collapsible="expandable">
+    <li>
+      <div class="collapsible-header">Variables</div>
+      <div class="collapsible-body" id="variable-pane"></div>
+    </li>
+    <li>
+      <div class="collapsible-header">Stacks</div>
+      <div class="collapsible-body" id="stack-pane">
+      </div>
+    </li>
+    <li>
+      <div class="collapsible-header">Monitoring</div>
+      <div class="collapsible-body" id="monitoring-pane">
+      </div>
+    </li>
+    <li>
+      <div class="collapsible-header">Console</div>
+      <div class="collapsible-body" id="console-pane">
+      </div>
+    </li>
+    <li>
+      <div class="collapsible-header">Registry</div>
+      <div class="collapsible-body" id="registry-pane">
+      </div>
+    </li>
+  </ul>
+</div>
+</div>
+
+
+
+
+</body>
+</html>
+
+
