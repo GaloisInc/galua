@@ -376,6 +376,7 @@ function drawCollapsedEx(dbgState, lab, v, startExpanded) {
   // Alternative representation icon
   switch(v.tag) {
     case 'string':
+    case 'number':
       icons.push(drawAltRepIcon(v, lab, v.alt))
       break;
   }
