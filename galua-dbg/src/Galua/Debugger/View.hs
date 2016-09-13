@@ -121,17 +121,20 @@ exportDebugger dbg =
             jsIdle <- exportIdleReason funs idle
             return (jsWatches, jsSt, jsIdle)
 
+     cnt <- readIORef dbgCommandCounter
      return $ JS.object [ "sources" .= exportSources
                                           (Map.toList (topLevelChunks funs))
                         , "breakPoints" .= brks
                         , "state"       .= jsSt
-                        , "breakOnError" .= brkErr
+                        , "breakOnError".= brkErr
                         , "watches"     .= jsWatches
                         , "prints"      .= fmap exportPrintedLine outs
                         , "idle"        .= jsIdle
+                        , "stateCounter".= cnt
                         ]
   where Debugger { dbgSources, dbgExportable, dbgIdleReason,
-                   dbgStateVM, dbgWatches, dbgBreakOnError } = dbg
+                   dbgStateVM, dbgWatches, dbgBreakOnError,
+                   dbgCommandCounter } = dbg
 
 exportV :: Debugger -> Value -> IO JS.Value
 exportV dbg v =
