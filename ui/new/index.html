@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+<link rel="stylesheet" href="libs/materialize-icons/style.css">
+<link rel="stylesheet" href="libs/materialize/css/materialize.css">
+<link rel="stylesheet" href="code.css">
+</head>
+
+<body>
+
+<!-- Navigation Menu -->
+<div class="navbar-fixed">
+  <nav class="blue darken-2">
+    <div class="nav-wrapper">
+      <ul class="right">
+        <li><a id="status" class="white-text blue darken-2">&nbsp;</a></li>
+        <li><a class="tooltipped" data-tooltip="Continue executing">
+            <i class="material-icons">play_arrow</i></a></li>
+        <li><a class="tooltipped" data-tooltip="Step over">
+            <i class="material-icons">redo</i></a></li>
+        <li><a class="tooltipped" data-tooltip="Step into function">
+            <i class="material-icons">vertical_align_bottom</i></a></li>
+        <li><a class="tooltipped" data-tooltip="Step out of function">
+            <i class="material-icons">vertical_align_top</i></a></li>
+        <li><a class="tooltipped" data-tooltip="Pause execution">
+            <i class="material-icons">pause</i></a></li>
+        <li><a class="dropdown-button"
+               data-activates="browse-menu">Browse
+                    <i class="material-icons right">arrow_drop_down</i></a></li>
+        <li><a href="#settings-dialog" class="modal-trigger tooltipped"
+              data-tooltip="Adjust settings">
+            <i class="material-icons">settings</i></a></li>
+      </ul>
+    </div>
+  </nav>
+</div>
+
+
+<!-- Settings -->
+<div id="settings-dialog" class="modal bottom-sheet">
+  <div class="modal-content">
+    <ul class="collection with-header container">
+    <li class="collection-header"><h5>Settings<h5></li>
+    <li class="collection-item">Step by opcode, instead of line
+        <div id="step-by-opcode" class="switch secondary-content">
+        <label>Off<input type="checkbox"/><span class="lever"></span>On</label>
+        </div>
+    </li>
+    <li class="collection-item">Pause when exceptions are thrown
+        <div class="switch secondary-content"
+             onclick="return setBreakOnError()">
+        <label>Off<input id="pause-on-error" type="checkbox"/>
+                  <span class="lever"></span>
+               On</label>
+        </div>
+    <li>
+    </ul>
+  </div>
+</div>
+
+
+<div class="row">
+
+<!-- Code Pane -->
+<div class="col s6">
+  <div class="row">
+    <div class="col s12">
+      <ul id="code_tabs" class="tabs">
+      </ul>
+    </div>
+  </div>
+  <div id="code_panes">
+  </div>
+</div>
+
+
+<!-- Value Pane -->
+<div class="col s6">
+  <ul class="collapsible" data-collapsible="expandable">
+    <li>
+      <div class="collapsible-header"><h5>Variables<h5></div>
+      <div class="collapsible-body" id="variable-pane"></div>
+    </li>
+    <li>
+      <div class="collapsible-header"><h5>Stacks<h5></div>
+      <div class="collapsible-body" id="stack-pane">
+      askdjfsk
+      </div>
+    </li>
+    <li>
+      <div class="collapsible-header"><h5>Monitoring<h5></div>
+      <div class="collapsible-body" id="monitoring-pane">
+      askdjfsk
+      </div>
+    </li>
+    <li>
+      <div class="collapsible-header"><h5>Console<h5></div>
+      <div class="collapsible-body" id="console-pane">
+        <ul id="prints" class="collection">
+        <li class="collection-item grey-text">(empty)</li>
+        </ul>
+      </div>
+    </li>
+    <li>
+      <div class="collapsible-header"><h5>Registry<h5></div>
+      <div class="collapsible-body" id="registry-pane">
+     </div>
+    </li>
+  </ul>
+</div>
+
+</div>
+
+
+
+<!-- Menu for browsing things: Breakpoints, Functions, Profiling -->
+<ul id="browse-menu" class="dropdown-content">
+  <li><a href="#breakpoint-pane" class="modal-trigger">Breakpoints</a></li>
+  <li><a href="#function-pane"   class="modal-trigger">Functions</a></li>
+  <li><a href="#profiling-pane"  class="modal-trigger">Profiling</a></li>
+</ul>
+
+
+
+
+
+<!-- Breakpoint List -->
+<div id="breakpoint-pane" class="modal modal-fixed-footer">
+  <div class="modal-content">
+    <h5>Breakpoints</h5>
+    <div id="breakpoint-list" class="collection"></div>
+  </div>
+  <div class="modal-footer">
+    <div class="btn" onclick="clearBreakPoints()">Clear All</div>
+  </div>
+</div>
+
+
+<!-- Profiling Information -->
+<div id="profiling-pane" class="modal">
+  <div class="modal-content">
+  <h5>Profiling</h5>
+  <table class="highlight">
+    <thead>
+    <tr><th colspan="4">Function</th>
+        <th>Calls</th>
+        <th>Individual</th>
+        <th>Cumulative</th>
+    </tr>
+    </thead>
+    <tbody id="profiling-list">
+      <tr><td>C</td><td>Function</td><td>1</td><td>0.29</td><td>0.29</td></tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+
+
+<!-- Browising Functoins -->
+<div id="function-pane" class="modal">
+  <div class="modal-content">
+    <h5>Functions</h5>
+    <ul id="function-browser-list" class="collapsible"
+                                   data-collapsible="expandable">
+    </ul>
+  </div>
+</div>
+
+
+
+<script src="libs/jquery.js"></script>
+<script src="libs/materialize/js/materialize.min.js"></script>
+<script src="init.js"></script>
+<script src="debugger.js"></script>
+<script src="code.js"></script>
+</script>
+</body>
+</html>
+
+
