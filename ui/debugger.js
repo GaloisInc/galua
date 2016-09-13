@@ -375,7 +375,10 @@ function drawValueList(dbgState, which, vs) {
   }
 
   var vals = $('<table/>').addClass('uk-table uk-table-condensed')
-  if (title) vals.append($('<caption/>').text(title))
+  if (title) {
+          title += ' (' + vs.length + ')'
+          vals.append($('<caption/>').text(title))
+  }
 
   var lastNonNil = -1
   jQuery.each(vs,function(ix,val) {
