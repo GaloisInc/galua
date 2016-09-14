@@ -37,7 +37,10 @@ function newDebuggerState(d) {
 
   jQuery.each(d.breakPoints, function(ix,loc) { brks[loc.id] = true })
 
-  return { breakPoints: brks, programCounter: pc }
+  return { breakPoints:     brks
+         , programCounter:  pc
+         , fun_counter:     0
+         }
 }
 
 function setStatus(ty,msg) {
@@ -207,6 +210,7 @@ function drawProfiling(dbgState,stats) {
          jQuery.post('/function', { fid: entry.loc.fid },
                      function(code) {
                        drawFunctionInNewTab(dbgState, code)
+                       $('#profiling-pane').closeModal()
                      }).fail(disconnected)
          })
     }
@@ -215,7 +219,7 @@ function drawProfiling(dbgState,stats) {
 }
 
 function drawRegistry( dbgState, val) {
-  $('#registry-pane').append(drawValue(dbgState, val))
+  $('#registry-pane').empty().append(drawValue(dbgState, val))
 }
 
 
@@ -254,25 +258,20 @@ function drawDebugger() { return function (d) {
 
 /*
       mons.append(drawValueList(dbgState, 'watches', d.watches))
-
-      $('#thread_tabs').empty()
-      $('#thread_vars').empty()
-      $('#thread_stack').empty()
-      $('#thread_handlers').empty()
-      $('#thread_code').empty()
 */
+
       drawProfiling(dbgState, state.vm.stats)
       drawRegistry(dbgState)
-
-/*
       drawNewThread(dbgState, state.vm.thread)
-      var blocked = $('#blocked_threads').empty()
+
+      var blocked = $('#blocked_threads_pane').empty()
       jQuery.each(state.vm.blocked,function(ix,v) {
-        blocked.append($('<li/>').append(drawValue(dbgState,v)))
+        blocked.append($('<li/>')
+                       .addClass('collection-item')
+                       .append(drawValue(dbgState,v)))
       })
 
-      UIkit.switcher($('#thread_tabs')).show(1)
-
+/*
       if (d.idle.error !== undefined) {
         var badge = $('<div/>')
                     .addClass('uk-badge uk-badge-danger uk-margin-right')
@@ -303,6 +302,7 @@ function drawDebugger() { return function (d) {
 }}
 
 
+// XXX
 function drawValueList(dbgState, which, vs) {
 
   var title = '?'
@@ -314,7 +314,7 @@ function drawValueList(dbgState, which, vs) {
     case 'vas':     title = 'Varargs';  prefix = '...'; break
   }
 
-  var vals = $('<table/>').addClass('uk-table uk-table-condensed')
+  var vals = $('<table/>').addClass('highlight')
   if (title) vals.append($('<caption/>').text(title))
 
   var lastNonNil = -1
@@ -330,9 +330,10 @@ function drawValueList(dbgState, which, vs) {
     var row = $('<tr/>')
     vals.append(row)
     row.append($('<td/>')
-      .attr('title',altName)
-      .attr('data-uk-tooltip','{pos:\'top\'}')
-      .text(val.name === null ? altName : val.name))
+               .addClass('tooltipped')
+               .attr('data-tooltip', val.name === null ? altName : val.name)
+               .tooltip()
+              )
     row.append($('<td/>').append(drawValue(dbgState,val.val)))
   })
 

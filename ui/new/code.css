@@ -2,6 +2,19 @@
         width: 10em;
 }
 
+.galua-line-number {
+  font-size: 10px;
+  font-color: #999;
+}
+
+.galua-code-table {
+  height: 700px;
+  overflow: scroll;
+}
+.galua-code-table td {
+  border: 1px solid black;
+}
+
 .gal_highlight_name {
   font-weight: bold;
 }
@@ -20,17 +33,10 @@
 
 .code_line {
   white-space: pre;
-  font-size: 12px;
+  font-size:   12px;
   font-family: Consolas, monospace, serif;
 }
 
-.gal_code_box {
-  background-color: #eeeeee;
-  border: 1px solid #ddd;
-  border-radius: 3px;
-  margin-left: 5px;
-  padding: 3px;
-}
 
 .keyword {
   color: #2d7091;

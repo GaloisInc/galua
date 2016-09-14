@@ -1,0 +1,11 @@
+.galua_section_label {
+  font-style: italic;
+  float: right;
+  color: #999;
+}
+
+.galua_section_container {
+  padding: 1em;
+}
+
+

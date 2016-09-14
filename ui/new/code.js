@@ -1,72 +1,79 @@
-fun_tab_counter=0   // XXX
+function newCodeContainer(dbgState, name, id, parent) {
 
-function drawFunctionInNewTab(dbgState, f) {
-  console.log(f)
-
-//  var code = $('<table/>').addClass('code_box')
-//  drawFunction(dbgState, code, f) 
-  var code = $('<div/>')
-             .addClass('card-content')
-             .css('height','700px')
-             .css('overflow','scroll')
-             .text(JSON.stringify(f)) // XXX
-
-  var parentBtn = $('<a/>')
-                  .addClass('btn waves-light waves-effect')
-                  .text('View Parent')
+  var codeCont = $('<div/>').addClass('card-content galua-code-table')
+  var code     = $('<table/>').addClass('browser-default function')
+  codeCont.append(code)
 
   var closeBtn = $('<a/>')
                  .addClass('btn waves-light waves-effect')
                  .text('close')
 
-  var new_tab_id = 'fun_tab_' + fun_tab_counter++
+  var parentBtn = $('<a/>')
+                  .addClass('btn waves-light waves-effect')
+                  .text('View Parent')
+
+  var new_tab_id = id ? id : ('fun_tab_' + dbgState.fun_counter++)
 
   var newLink = $('<li/>')
                 .addClass('tab')
-                .append($('<a/>').attr('href','#' + new_tab_id).text(f.name))
+                .append($('<a/>').attr('href','#' + new_tab_id).text(name))
 
   var newPane = $('<div/>')
                 .addClass('card')
                 .attr('id', new_tab_id)
-                .append([ code
+                .append([ codeCont
                         , $('<div/>').addClass('card-action')
                           .append([parentBtn,$('<span/>').text(' '),closeBtn])
                         ])
 
-  if (f.parent === "") {
+  if (!parent) {
       parentBtn.remove()
   } else {
       parentBtn.click(function() {
         var path = '/function'
-        jQuery.post(path, { fid: f.parent }, function(code) {
-          drawFunctionInNewTab(dbgState,code)
+        jQuery.post(path, { fid: parent }, function(cd) {
+          drawFunctionInNewTab(dbgState,cd)
         })
         .fail(disconnected)
         return false
       })
   }
 
+  var tabs = $('#code_tabs')
+
   closeBtn.click(function() {
     newLink.remove()
     newPane.remove()
-    $('#code_tabs').tabs()
+    tabs.tabs()
+    var x = $('#code_panes :first-child')
+    if (x.length !== 0) {
+      tabs.tabs('select_tab', x.attr('id'))
+    }
     return false
   })
 
-  var tabs = $('#code_tabs')
 
   tabs.append(newLink)
   $('#code_panes').append(newPane)
   tabs.tabs()
 
   tabs.tabs('select_tab', new_tab_id)
+
+  return code
 }
 
 
 
+function drawFunctionInNewTab(dbgState, f) {
+  var code =
+     newCodeContainer(dbgState, f.name, null, f.parent === "" ? null : f.parent)
+  drawFunction(dbgState, code, f)
+}
+
+
 
 function focusCurLine() {
-  jQuery.each($('.cur-line:not(.uk-hidden)'), function(ix,el) {
+  jQuery.each($('.cur-line:not(.hide)'), function(ix,el) {
     el.scrollIntoView()
   })
 }
@@ -74,6 +81,7 @@ function focusCurLine() {
 function drawFunction(dbgState, here, f) {
   here.empty()
   jQuery.each(f.lines, drawLine(dbgState,f.context,f.chunk,here))
+  $('.dropdown-button').dropdown()
 }
 
 
@@ -96,19 +104,11 @@ function drawLine(dbgState,context,chunkId,here) {
   function mkClass(x) { return 'ops_' + x }
 
 
-
-  function addSpinner(here) {
-    var spinner = $('<i/>').addClass('uk-icon-gear uk-icon-spin uk-hidden')
-    here.prepend(spinner)
-    return spinner
-  }
-
   function addBrkPoint(here, startOn) {
-    var brkIcon = $('<i/>')
-                  .addClass('uk-icon-arrow-circle-right uk-text-primary')
-                  .css('margin-right','0.5em')
-                  .addClass('breakpoint')
-    if (startOn !== true) brkIcon.addClass('uk-hidden')
+    var brkIcon = $('<i/>').addClass('blue-text material-icons')
+                           .css('margin-right','0.5em')
+                           .text('pause_circle_filled')
+    if (startOn !== true) brkIcon.addClass('hide')
 
     here.append(brkIcon)
     return {}
@@ -117,52 +117,52 @@ function drawLine(dbgState,context,chunkId,here) {
 
 
   function lineSkeleton() {
-    var row   = $('<tr/>')
-    var num1  = $('<td/>')
-                .addClass('uk-block-muted uk-text-muted')
-                .addClass('uk-text-middle uk-text-right')
-                .css('padding-left', '5px')
-
-    var num2 = $('<td/>').addClass('uk-block-muted uk-text-muted')
-                         .addClass('uk-text-middle uk-text-right')
-                         .css('padding-left', '5px')
-
-    var text = $('<td/>').addClass('uk-text-left uk-text-nowrap code_line')
-
+    var row  = $('<tr/>')
+    var num1 = $('<td/>')
+    var num2 = $('<td/>')
+    var text = $('<td/>').addClass('code_line')
     row.append(num1,num2,text)
-
     return { row: row, num1: num1, num2: num2, text: text }
   }
 
   function lineMenu(lab, clickBrk, clickGoto) {
 
     function icon(i,help,handler) {
-      return $('<i/>')
-             .addClass('uk-icon-' + i)
-             .addClass('uk-icon-hover uk-icon-small')
-             .attr('title',help)
-             .attr('data-uk-tooltip','{pos:"top"}')
-             .css('margin-right','0.5em')
-             .click(handler)
+      var link = $('<a/>')
+                     .addClass('btn-floating tooltipped')
+                     .attr('data-tooltip', help)
+                     .click(handler)
+      link.tooltip()
+      link.append($('<i/>').addClass('material-icons').text(i))
+
+      return $('<li/>').append(link)
     }
 
-    var icons = [ icon( 'arrow-circle-right'
-                      , 'Add/remove break-point'
-                      , clickBrk)
+    var newId = 'ln_' + dbgState.fun_counter++
 
-                , icon ('rocket', 'Continue from here', clickGoto)
-                ]
+    var menu = $('<ul/>')
+               .attr('id',newId)
+               .addClass('dropdown-content')
+               .append( [ icon( 'pause_circle_filled'
+                                        , 'Add/remove break-point'
+                                        , clickBrk)
 
-    var menu = $('<div/>')
-               .addClass('uk-dropdown uk-dropdown-small min-width-auto')
-               .append(icons)
+                                  , icon ('play_circle_filled'
+                                         , 'Continue from here'
+                                         , clickGoto)
+                                  ] )
 
-    var small = $('<div/>')
-                 .attr('data-uk-dropdown','{pos:"right-center", remaintime:100}')
-                 .addClass('uk-button-dropdown')
-                 .append([lab.addClass('uk-text-bold'),menu])
+    var btn = $('<a/>').text(lab)
 
-    return small
+    var btn = $('<a/>')
+           .addClass('dropdown-button btn')
+           .attr('data-activates',newId)
+           .text('X')
+    return [btn,menu]
+
+            // lab.addClass('btn fixed-action-btn horizontal')
+         //     .append(btn,menu)
+
   }
 
 
@@ -206,7 +206,7 @@ function drawLine(dbgState,context,chunkId,here) {
       theLine = addBrkPoint(num, breakNum !== 0)
 
       var lineLab = $('<span/>')
-                    .addClass('uk-text-small')
+                    .addClass('galua-line-number')
                     .text(' ' + line.line)
 
 
@@ -324,6 +324,8 @@ function drawLine(dbgState,context,chunkId,here) {
       // num.css('cursor', 'pointer')
 
       if (line.line !== null) skel.row.addClass(mkClass(line.line))
+
+      // XXX
       var openCur =
             $('input[type="radio"][name=step_type]:checked').val() === 'OpCode'
       if (!(isCurrent && openCur)) skel.row.addClass('uk-hidden')
@@ -336,16 +338,14 @@ function drawLine(dbgState,context,chunkId,here) {
 
       if (pcKey === key) skel.row.addClass('cur-line')
 
-      var lineLab = $('<span/>').addClass('uk-text-small').text(' ' + op.opcode)
+      var lineLab = $('<span/>').text(' ' + op.opcode)
       var menu = lineMenu( lineLab
                          , function() { toggleBreakOnOpCode(i, function() {}) }
                          , function() { gotoOpCode(i) } )
 
       num.append(menu)
 
-      skel.text.addClass('uk-text-muted uk-text-small')
-               .css('padding-left', '1em')
-               .text(op.text)
+      skel.text.text(op.text)
 
       here.append(skel.row)
     }
@@ -396,7 +396,7 @@ function drawLine(dbgState,context,chunkId,here) {
           console.log(res)
           $('#breakpoints-list').append(drawBreakPoint(dbgState,res))
         } else {
-          $('.brk_menu.' + id).remove()
+          $('.brk_menu.' + id).remove() // -- XXX
         }
 
         k()
