@@ -1,9 +1,12 @@
 function doPoll(cmd) {
   jQuery.post('/poll', { timeout: 10, command: cmd },
     function(res) {
-      if (cmd !== res)
+      console.log('poll result', cmd, res)
+      if (cmd !== res) {
         jQuery.get('/view', drawDebugger()).fail(disconnected)
-      window.setTimeout(doPoll, 0, res)
+      } else {
+        window.setTimeout(doPoll, 0, res)
+      }
     })
 }
 
@@ -360,6 +363,7 @@ function drawDebugger() { return function (d) {
       break
   }
 
+  doPoll(d.stateCounter)
 }}
 
 
