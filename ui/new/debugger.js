@@ -1,11 +1,15 @@
 function doPoll(cmd) {
   jQuery.post('/poll', { timeout: 10, command: cmd },
     function(res) {
-      if (cmd !== res)
+      if (cmd !== res) {
         jQuery.get('/view', drawDebugger()).fail(disconnected)
-      window.setTimeout(doPoll, 0, res)
+      } else {
+        window.setTimeout(doPoll, 0, res)
+      }
     })
 }
+
+
 
 function disconnected(info,x ) {
   console.log(info,x)
@@ -107,7 +111,8 @@ function clearBreakPoints() {
 
 function drawBreakPoint(dbgState,brk) {
   return $('<a/>')
-         .addClass('collection-item tooltipped')
+         .addClass('collection-item tooltipped brk_menu')
+         .addClass(brk.id)
          .attr('data-tooltip', brk.file ? brk.file : '???')
          .append( [ brk.name
                   , $('<span/>')
@@ -299,6 +304,7 @@ function drawDebugger() { return function (d) {
       break
   }
 
+  doPoll(d.stateCounter)
 }}
 
 

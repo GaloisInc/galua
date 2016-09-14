@@ -11,8 +11,12 @@
   height: 700px;
   overflow: scroll;
 }
+
+
 .galua-code-table td {
   border: 1px solid black;
+  padding: 0;
+  width: 10px;
 }
 
 .gal_highlight_name {
@@ -29,6 +33,18 @@
 
 .cur-line td {
   background-color: #fee;
+}
+
+.galua-source-line {
+  background-color: #fff;
+}
+
+.galua-opcode-line {
+  background-color: #eceff1;
+}
+
+.galua-opcode-line .galua-line-number {
+  padding-left: 1em;
 }
 
 .code_line {

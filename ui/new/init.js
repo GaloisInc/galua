@@ -5,8 +5,6 @@
 
     jQuery.get('/view', drawDebugger(false))
           .fail(disconnected)
-    doPoll(0)
-
   })
 })(jQuery)
 

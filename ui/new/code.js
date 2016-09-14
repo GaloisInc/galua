@@ -1,7 +1,8 @@
+
 function newCodeContainer(dbgState, name, id, parent) {
 
   var codeCont = $('<div/>').addClass('card-content galua-code-table')
-  var code     = $('<table/>').addClass('browser-default function')
+  var code     = $('<div/>').addClass('function')
   codeCont.append(code)
 
   var closeBtn = $('<a/>')
@@ -73,7 +74,7 @@ function drawFunctionInNewTab(dbgState, f) {
 
 
 function focusCurLine() {
-  jQuery.each($('.cur-line:not(.hide)'), function(ix,el) {
+  jQuery.each($('.cur-line:visible'), function(ix,el) {
     el.scrollIntoView()
   })
 }
@@ -105,63 +106,42 @@ function drawLine(dbgState,context,chunkId,here) {
 
 
   function addBrkPoint(here, startOn) {
-    var brkIcon = $('<i/>').addClass('blue-text material-icons')
-                           .css('margin-right','0.5em')
+    var brkIcon = $('<i/>').addClass('tiny blue-text material-icons')
                            .text('pause_circle_filled')
-    if (startOn !== true) brkIcon.addClass('hide')
-
+                           .css('position','absolute')
+                           .css('left','5px')
+                           .css('padding-top','5px')
+                           .addClass('breakpoint')
+    setClass(brkIcon, 'hide', startOn !== true)
     here.append(brkIcon)
+
     return {}
   }
 
 
 
-  function lineSkeleton() {
-    var row  = $('<tr/>')
-    var num1 = $('<td/>')
-    var num2 = $('<td/>')
-    var text = $('<td/>').addClass('code_line')
-    row.append(num1,num2,text)
-    return { row: row, num1: num1, num2: num2, text: text }
+  function lineSkeleton(ty) {
+    var row  = $('<div/>').addClass(ty + ' row').css('margin','0')
+    var num  = $('<div/>').addClass('left-align col s1 galua-line-number')
+    var text = $('<div/>').addClass('col s10 code_line lift-align')
+    row.append([num,text])
+    return { row: row, num: num, text: text }
   }
 
   function lineMenu(lab, clickBrk, clickGoto) {
 
-    function icon(i,help,handler) {
-      var link = $('<a/>')
-                     .addClass('btn-floating tooltipped')
-                     .attr('data-tooltip', help)
-                     .click(handler)
-      link.tooltip()
-      link.append($('<i/>').addClass('material-icons').text(i))
+    return makeMenu ( lab.css('font-weight','bold')
+                    , [ roundButton( 'blue white-text'
+                                   , 'pause'
+                                   , 'Add/remove break-point'
+                                   , clickBrk )
 
-      return $('<li/>').append(link)
-    }
-
-    var newId = 'ln_' + dbgState.fun_counter++
-
-    var menu = $('<ul/>')
-               .attr('id',newId)
-               .addClass('dropdown-content')
-               .append( [ icon( 'pause_circle_filled'
-                                        , 'Add/remove break-point'
-                                        , clickBrk)
-
-                                  , icon ('play_circle_filled'
-                                         , 'Continue from here'
-                                         , clickGoto)
-                                  ] )
-
-    var btn = $('<a/>').text(lab)
-
-    var btn = $('<a/>')
-           .addClass('dropdown-button btn')
-           .attr('data-activates',newId)
-           .text('X')
-    return [btn,menu]
-
-            // lab.addClass('btn fixed-action-btn horizontal')
-         //     .append(btn,menu)
+                      , roundButton ( 'green white-text'
+                                    , 'play_arrow'
+                                    , 'Continue from here'
+                                    , clickGoto)
+                      ]
+                    )
 
   }
 
@@ -196,9 +176,10 @@ function drawLine(dbgState,context,chunkId,here) {
     // Draw the main srouce line
     function drawSrcLine() {
 
-      var skel = lineSkeleton()
-      var num  = skel.num1
+      var skel = lineSkeleton('galua-source-line')
+      var num  = skel.num
       var text = skel.text
+
 
       if (isCurrent) skel.row.addClass('cur-line')
       skel.row.addClass(srcLineClass)
@@ -215,11 +196,9 @@ function drawLine(dbgState,context,chunkId,here) {
         num.append(menu)
         text
         .css('cursor','pointer')
-        .attr( 'data-uk-toggle'
-             , JSON.stringify({ target: '.' + mkClass(line.line)
-                              , animation: 'uk-animation-slide-top'
-                             })
-             )
+        .click(function() {
+          $('.' + mkClass(line.line)).slideToggle()
+        })
       } else num.append(lineLab)
 
       jQuery.each(line.text, function(ix,t) {
@@ -258,7 +237,7 @@ function drawLine(dbgState,context,chunkId,here) {
                                            , id: t.name.ref
                                            }, renderResult)
                        .fail(disconnected)
-                  UIkit.modal($('#value-modal')).show()
+                  $('#value-pane').openModal()
                return false
               })
             }
@@ -318,17 +297,14 @@ function drawLine(dbgState,context,chunkId,here) {
 
     // Draw a code-viwere line
     function drawOpCode(i,op) {
-      var skel = lineSkeleton()
-      var num  = skel.num2
-      num.empty()
-      // num.css('cursor', 'pointer')
+      var skel = lineSkeleton('galua-opcode-line')
+      var num  = skel.num
 
       if (line.line !== null) skel.row.addClass(mkClass(line.line))
 
-      // XXX
-      var openCur =
-            $('input[type="radio"][name=step_type]:checked').val() === 'OpCode'
-      if (!(isCurrent && openCur)) skel.row.addClass('uk-hidden')
+
+      var openCur = $('#step-by-opcode').is(':checked')
+      if (!(isCurrent && openCur)) skel.row.hide()
 
       var key     = opCodeKey(op)
       subs[i]     = addBrkPoint(num,dbgState.breakPoints[key] === true)
@@ -338,7 +314,9 @@ function drawLine(dbgState,context,chunkId,here) {
 
       if (pcKey === key) skel.row.addClass('cur-line')
 
-      var lineLab = $('<span/>').text(' ' + op.opcode)
+      var lineLab = $('<span/>')
+                    .addClass('galua-line-number')
+                    .text(' ' + op.opcode)
       var menu = lineMenu( lineLab
                          , function() { toggleBreakOnOpCode(i, function() {}) }
                          , function() { gotoOpCode(i) } )
@@ -372,31 +350,33 @@ function drawLine(dbgState,context,chunkId,here) {
 
       // Server interaction went OK
       function ok(res) {
+
         hasBrk          = !hasBrk
+        console.log('now hasBrk',hasBrk)
         dbgState.breakPoints[id] = hasBrk
-        setClass($('.' + id + ' .breakpoint'), 'uk-hidden', !hasBrk)
+
+        setClass($('.' + id + ' .breakpoint'), 'hide', !hasBrk)
 
         if (theLine !== null) {
             var lineHasBrk = false
             jQuery.each($('.' + mkClass(line.line + ' .breakpoint')),
                 function(ix,it) {
-                  if (! $(it).hasClass('uk-hidden')) {
+                  if (!$(it).hasClass('hide')) {
                     lineHasBrk = true
                     return false // stop
                   }
                   return true // keep going
                 })
 
-            setClass($('.' + srcLineClass + ' .breakpoint'),
-                                              'uk-hidden', !lineHasBrk)
+            var brks = $('.' + srcLineClass + ' .breakpoint')
+            setClass(brks,'hide', !lineHasBrk)
 
         }
 
         if (hasBrk) {
-          console.log(res)
-          $('#breakpoints-list').append(drawBreakPoint(dbgState,res))
+          $('#breakpoint-list').append(drawBreakPoint(dbgState,res))
         } else {
-          $('.brk_menu.' + id).remove() // -- XXX
+          $('.brk_menu.' + id).remove()
         }
 
         k()
