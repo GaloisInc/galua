@@ -15,15 +15,20 @@
     <div class="nav-wrapper">
       <ul class="right">
         <li><a id="status" class="white-text blue darken-2">&nbsp;</a></li>
-        <li><a class="tooltipped" data-tooltip="Continue executing">
+        <li><a class="tooltipped" data-tooltip="Continue executing"
+               onclick="drawStep('/run')">
             <i class="material-icons">play_arrow</i></a></li>
-        <li><a class="tooltipped" data-tooltip="Step over">
+        <li><a class="tooltipped" data-tooltip="Step over"
+               onclick="makeStep('/stepOver')">
             <i class="material-icons">redo</i></a></li>
-        <li><a class="tooltipped" data-tooltip="Step into function">
+        <li><a class="tooltipped" data-tooltip="Step into function"
+               onclick="makeStep('/step')">
             <i class="material-icons">vertical_align_bottom</i></a></li>
-        <li><a class="tooltipped" data-tooltip="Step out of function">
+        <li><a class="tooltipped" data-tooltip="Step out of function"
+               onclick="drawStep('/stepOutOf')">
             <i class="material-icons">vertical_align_top</i></a></li>
-        <li><a class="tooltipped" data-tooltip="Pause execution">
+        <li><a class="tooltipped" data-tooltip="Pause execution"
+                onclick="drawStep('/pause')">
             <i class="material-icons">pause</i></a></li>
         <li><a class="dropdown-button"
                data-activates="browse-menu">Browse
@@ -43,8 +48,9 @@
     <ul class="collection with-header">
     <li class="collection-header"><h5>Settings<h5></li>
     <li class="collection-item">Step by opcode, instead of line
-        <div id="step-by-opcode" class="switch secondary-content">
-        <label>Off<input type="checkbox"/><span class="lever"></span>On</label>
+        <div class="switch secondary-content">
+        <label>Off<input id='step-by-opcode'
+                         type="checkbox"/><span class="lever"></span>On</label>
         </div>
     </li>
     <li class="collection-item">Pause when exceptions are thrown

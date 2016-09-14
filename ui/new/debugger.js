@@ -88,7 +88,7 @@ function drawPrints(prints) {
 
 
 function makeStep(how) {
-  var byLine = $('input[name=step_type]:checked').val() === 'Line'
+  var byLine = !$('#step-by-opcode').is(':checked')
   return drawStep(how + (byLine ? 'Line' : ''), !byLine)
 }
 

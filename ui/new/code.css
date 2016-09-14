@@ -31,8 +31,13 @@
   background-color: pink;
 }
 
-.cur-line td {
+
+.cur-line.galua-source-line {
   background-color: #fee;
+}
+
+.cur-line.galua-opcode-line {
+  background-color: #ccc;
 }
 
 .galua-source-line {
