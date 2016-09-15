@@ -24,9 +24,9 @@ function disconnected(info,x ) {
 
 function setBreakOnError() {
   var me = $('#pause-on-error')
-  var on = me.is(':checked')
-  jQuery.post('/breakOnErr', { enabled: on}
-             , function() { me.prop('checked',!on) })
+  var newSetting = !me.is(':checked')
+  jQuery.post('/breakOnErr', { enabled: newSetting}
+             , function() { me.prop('checked',newSetting) })
   return false
 }
 
@@ -320,7 +320,7 @@ function drawValueList(dbgState, which, vs) {
     case 'vas':     title = 'Varargs';  prefix = '...'; break
   }
 
-  var vals = $('<table/>')
+  var vals = $('<table/>').addClass('bordered')
   if (title) vals.append($('<caption/>').text(title))
 
   var lastNonNil = -1
