@@ -2,9 +2,15 @@
         width: 10em;
 }
 
+.galua-small-label {
+  font-size: 10px;
+  font-style: italic;
+  color: #999;
+}
+
 .galua-line-number {
   font-size: 10px;
-  font-color: #999;
+  color: #999;
 }
 
 .galua-code-table {

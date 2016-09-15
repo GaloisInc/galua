@@ -13,10 +13,13 @@ function roundButton(cls,i,help,act) {
 }
 
 
+
 function makeMenu(thing,btns) {
   return popUpMenu($('<div/>')
                    .append([ thing.addClass('controller')
-                           , $('<div/>').addClass('menu').append(btns)
+                           , $('<div/>')
+                             .css('height','0')
+                             .addClass('menu').append(btns)
                            ]))
 }
 
@@ -29,25 +32,40 @@ function popUpMenu(thing) {
   var controller = thing.find('.controller')
   var btns       = thing.find('.menu .btn-floating')
 
+  var timeOut = null
+
+
   btns.css('position','absolute')
       .css('left','0')
       .css('top','0')
       .css('width','0')
       .css('height','0')
+      .hover(resetTimeout,closeInAWhilte)
       .click(hov(false))
 
   controller.css('cursor','pointer')
+            .hover(hov(true),closeInAWhilte)
             .click(toggle)
 
 
   return thing.css('display','inline-block')
               .css('position','relative')
 
+  function resetTimeout() {
+    if (timeOut === null) return
+    window.clearTimeout(timeOut)
+  }
+
+  function closeInAWhilte() {
+    timeOut = window.setTimeout(hov(false), 1500)
+  }
+
   function hov(open) {
     return function() { if (opening === open) toggle() }
   }
 
   function toggle() {
+
     if (active > 0) return
     active = btns.length
     var w = controller.width()

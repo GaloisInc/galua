@@ -266,7 +266,7 @@ function drawDebugger() { return function (d) {
 */
 
       drawProfiling(dbgState, state.vm.stats)
-      drawRegistry(dbgState)
+      drawRegistry(dbgState,  state.vm.registry )
       drawNewThread(dbgState, state.vm.thread)
 
       var blocked = $('#blocked_threads_pane').empty()
@@ -320,7 +320,7 @@ function drawValueList(dbgState, which, vs) {
     case 'vas':     title = 'Varargs';  prefix = '...'; break
   }
 
-  var vals = $('<table/>').addClass('highlight')
+  var vals = $('<table/>')
   if (title) vals.append($('<caption/>').text(title))
 
   var lastNonNil = -1
@@ -335,11 +335,12 @@ function drawValueList(dbgState, which, vs) {
     var altName = prefix + '[' + (ix+1) + ']'
     var row = $('<tr/>')
     vals.append(row)
-    row.append($('<td/>')
-               .addClass('tooltipped')
-               .attr('data-tooltip', val.name === null ? altName : val.name)
-               .tooltip()
-              )
+    var key = $('<td/>')
+              .addClass('tooltipped')
+              .attr('data-tooltip', val.name === null ? altName : val.name)
+              .text(val.name === null ? altName : val.name)
+    key.tooltip()
+    row.append(key)
     row.append($('<td/>').append(drawValue(dbgState,val.val)))
   })
 
