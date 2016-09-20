@@ -27,6 +27,7 @@ import Foreign.StablePtr
 import Foreign.Storable
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as B8
+import System.IO
 import System.IO.Unsafe (unsafeInterleaveIO)
 
 import Language.Lua.Bytecode
@@ -85,12 +86,20 @@ reentryAlloc label args l r k = reentry label args l r (liftAlloc . k)
 -- | Resume execution of the machine upon entry from the C API
 reentry :: Reentry Mach
 reentry label args l r k =
-  do ext <- deRefLuaState l
-     returnObjInfo <- unsafeInterleaveIO (getCFunInfo (castPtrToFunPtr r))
-     putMVar
-       (extLuaStateLuaServer ext)
-       (CReEntry label returnObjInfo args (wrapWithStack (extLuaStateThreadId ext) k))
-     cServiceLoop l (extLuaStateCServer ext) (extLuaStateLuaServer ext)
+  do res <- try body
+     case res of
+       Right x -> return x
+       Left (SomeException e) ->
+         do hPutStrLn stderr (displayException e)
+            return (-1)
+  where
+    body =
+      do ext <- deRefLuaState l
+         returnObjInfo <- unsafeInterleaveIO (getCFunInfo (castPtrToFunPtr r))
+         putMVar
+           (extLuaStateLuaServer ext)
+           (CReEntry label returnObjInfo args (wrapWithStack (extLuaStateThreadId ext) k))
+         cServiceLoop l (extLuaStateCServer ext) (extLuaStateLuaServer ext)
 
 wrapWithStack :: Int -> (SV.SizedVector (IORef Value) -> Mach a) -> Mach a
 wrapWithStack threadId k =

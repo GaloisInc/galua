@@ -29,7 +29,7 @@ import qualified Snap.Core as Snap
 import           Control.Monad.IO.Class(liftIO)
 
 import           Control.Applicative((<|>))
-import           Control.Exception (throwIO, catch)
+import           Control.Exception
 import           Control.Concurrent(newEmptyMVar, putMVar)
 import           Control.Concurrent.Async (async)
 import           Data.ByteString(ByteString)
@@ -53,10 +53,10 @@ import           Data.Maybe(fromMaybe)
 import qualified Data.Aeson as JS
 import           Text.Read(readMaybe)
 import           System.IO (hPutStrLn, stderr)
-import           System.IO.Error (isDoesNotExistError)
+import           System.IO.Error
 import           System.FilePath (takeExtension, takeDirectory, (</>))
 
-import           Foreign(Ptr)
+import           Foreign(Ptr,nullPtr)
 import           Foreign.C(CInt(..))
 
 
@@ -65,7 +65,11 @@ foreign export ccall "galua_newstate_dbg"
   startServerC :: CInt -> IO (Ptr ())
 
 startServerC :: CInt {- offset for port -} -> IO (Ptr ())
-startServerC portOffset = startServer (fromIntegral portOffset)
+startServerC portOffset =
+  do res <- try (startServer (fromIntegral portOffset))
+     case res of
+       Left (SomeException ex) -> nullPtr <$ hPutStrLn stderr (displayException ex)
+       Right ptr               -> return ptr
 
 startServer :: Int -> IO (Ptr ())
 startServer portOffset =
@@ -78,7 +82,7 @@ startServer portOffset =
          snapConfig = incrementPort portOffset
                     $ dbgSnapConfig config
 
-     httpThread <- async $ httpServe snapConfig
+     httpThread <- async $ httpServe' snapConfig
             $ Snap.route routes
           <|> serveDirectory "ui"
           <|> Snap.route [(path, sendFileBytes (B8.unpack path) content)
@@ -90,6 +94,19 @@ startServer portOffset =
 
      return cptr
 
+
+-- | Version of 'httpServe' that retries if the port is in use
+httpServe' :: Config Snap a -> Snap () -> IO ()
+httpServe' cfg snap =
+  do res <- try (httpServe cfg snap)
+     case res of
+       Left ex
+         | Just ioe <- fromException ex
+         , isAlreadyInUseError ioe ->
+               let cfg' = setPort (maybe 8000 (+1) (getPort cfg)) cfg
+               in httpServe' cfg' snap
+         | otherwise -> hPutStrLn stderr (displayException ex)
+       Right x -> return x -- not going to happen
 
 
 staticContent :: [(ByteString, ByteString)]
