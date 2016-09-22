@@ -100,12 +100,11 @@ httpServe' :: Config Snap a -> Snap () -> IO ()
 httpServe' cfg snap =
   do res <- try (httpServe cfg snap)
      case res of
-       Left ex
-         | Just ioe <- fromException ex
-         , isAlreadyInUseError ioe ->
+       Left ioe
+         | isAlreadyInUseError ioe ->
                let cfg' = setPort (maybe 8000 (+1) (getPort cfg)) cfg
                in httpServe' cfg' snap
-         | otherwise -> hPutStrLn stderr (displayException ex)
+         | otherwise -> throwIO ioe
        Right x -> return x -- not going to happen
 
 

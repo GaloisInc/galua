@@ -84,7 +84,7 @@ import           Data.IORef(IORef,readIORef,writeIORef,
                             modifyIORef,modifyIORef',newIORef,
                             atomicModifyIORef')
 
-import           Control.Concurrent.Async (cancel, wait, Async)
+import           Control.Concurrent.Async (cancel, waitCatch, Async)
 import            Control.Concurrent
                     ( MVar, newEmptyMVar, putMVar, takeMVar
                     , forkIO
@@ -92,7 +92,7 @@ import            Control.Concurrent
                     )
 import           Control.Monad.IO.Class(liftIO)
 import           Control.Monad(when,forever)
-import           Control.Exception(try)
+import           Control.Exception
 import           MonadLib(ExceptionT,runExceptionT,raise,lift)
 import           System.Timeout(timeout)
 
@@ -634,8 +634,7 @@ newEmptyDebugger threadVar opts =
                  , machOnShutdown =
                      do a <- takeMVar threadVar
                         cancel a
-                        _ <- wait a
-                        return ()
+                        () <$ waitCatch a
                  }
 
      (cptr, dbgNames, vm, next) <- setupLuaState cfg
