@@ -38,6 +38,8 @@ end
 local MAXGEN = 10000
 local NOWORD = ''
 
+io.write('Write input to stdin terminating with EOF\n')
+
 -- build table
 local statetab = {}
 
