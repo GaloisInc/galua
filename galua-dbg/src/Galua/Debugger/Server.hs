@@ -384,12 +384,23 @@ getConfig =
             breakpoints <- case getBreakpoints configValue of
                              Left e -> fail ("config file error: " ++ e)
                              Right bs -> return bs
+            breakOnError <- case getBreakOnError configValue of
+                             Left e -> fail ("config file error: " ++ e)
+                             Right bs -> return bs
             return DebugConfig
               { dbgSnapConfig = snapConfig
               , dbgGaluaOptions = Options
                   { optBreakPoints = breakpoints
+                  , optBreakOnError = breakOnError
                   }
               }
+
+getBreakOnError :: Value -> Either String Bool
+getBreakOnError v =
+  case preview (key "break-on-error") v of
+    Just (Atom "yes") -> Right True
+    Just (Atom "no" ) -> Right False
+    _                 -> Left "break-on-error: expected `yes' or `no'"
 
 getBreakpoints :: Value -> Either String (Map FilePath [Int])
 getBreakpoints v =

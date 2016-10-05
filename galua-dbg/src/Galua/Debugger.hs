@@ -643,7 +643,7 @@ newEmptyDebugger threadVar opts =
      dbgStateVM      <- newIORef (Running vm next)
 
      dbgExportable   <- newIORef newExportableState
-     dbgBreakOnError <- newIORef True
+     dbgBreakOnError <- newIORef (optBreakOnError opts)
 
      let dbg = Debugger { dbgSources, dbgNames, dbgIdleReason
                         , dbgBreaks, dbgWatches

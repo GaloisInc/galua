@@ -143,6 +143,19 @@ When running in debugger mode (using libgalua-dbg) Galua will load the `config.t
 file from the current directory. This file can set initial breakpoints and parameters
 of the embedded HTTP server.
 
+Breakpoint on error
+===================
+
+By default galua will break whenever an error is thrown. This is
+configurable with the `break-on-error` configuration setting. Valid settings
+are `yes` and `no`.
+
+Example:
+
+```
+break-on-error: no
+```
+
 Breakpoints on load
 ===================
 
