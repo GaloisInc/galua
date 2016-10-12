@@ -4,10 +4,25 @@
   color: #999;
 }
 
+.collapsible-header {
+  background-color: #e4e4e4;
+}
 .galua_section_container {
   padding: 1em;
 }
 
+table.bordered > caption {
+  text-align: left;
+  padding: 15px 5px 0px 5px;
+  font-style: italic;
+  color: #999;
+  font-size: smaller;
+}
+
+td {
+        padding: 0px 15px;
+        vertical-align: top;
+}
 
 .galua_function_chip {
   display: inline-block;
