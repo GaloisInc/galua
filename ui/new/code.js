@@ -5,11 +5,13 @@ function newCodeContainer(dbgState, name, id, parent) {
   var code     = $('<div/>').addClass('function')
   codeCont.append(code)
 
-  var closeBtn = $('<a/>')
-                 .addClass('btn waves-light waves-effect')
-                 .text('close')
+  var closeBtn = id ? null :
+               $('<a/>')
+               .addClass('btn waves-light waves-effect')
+               .text('close')
 
-  var parentBtn = $('<a/>')
+  var parentBtn = !parent ? null
+                : $('<a/>')
                   .addClass('btn waves-light waves-effect')
                   .text('View Parent')
 
@@ -27,9 +29,7 @@ function newCodeContainer(dbgState, name, id, parent) {
                           .append([parentBtn,$('<span/>').text(' '),closeBtn])
                         ])
 
-  if (!parent) {
-      parentBtn.remove()
-  } else {
+  if (parentBtn) {
       parentBtn.click(function() {
         var path = '/function'
         jQuery.post(path, { fid: parent }, function(cd) {
@@ -42,16 +42,18 @@ function newCodeContainer(dbgState, name, id, parent) {
 
   var tabs = $('#code_tabs')
 
-  closeBtn.click(function() {
-    newLink.remove()
-    newPane.remove()
-    tabs.tabs()
-    var x = $('#code_panes :first-child')
-    if (x.length !== 0) {
-      tabs.tabs('select_tab', x.attr('id'))
-    }
-    return false
-  })
+  if (closeBtn) {
+    closeBtn.click(function() {
+      newLink.remove()
+      newPane.remove()
+      tabs.tabs()
+      var x = $('#code_panes :first-child')
+      if (x.length !== 0) {
+        tabs.tabs('select_tab', x.attr('id'))
+      }
+      return false
+    })
+  }
 
 
   tabs.append(newLink)
@@ -351,11 +353,9 @@ function drawLine(dbgState,context,chunkId,here) {
       // Server interaction went OK
       function ok(res) {
 
-        hasBrk          = !hasBrk
-        console.log('now hasBrk',hasBrk)
+        setClass($('.' + id + ' .breakpoint'), 'hide', hasBrk)
+        hasBrk = !hasBrk
         dbgState.breakPoints[id] = hasBrk
-
-        setClass($('.' + id + ' .breakpoint'), 'hide', !hasBrk)
 
         if (theLine !== null) {
             var lineHasBrk = false
