@@ -40,6 +40,8 @@ function drawNewThread(dbgState, thread) {
                 .append($('<a/>')
                         .attr('href', '#' + threadId)
                         .text('Thread ' + thread.name)))
+    tabs.tabs()
+    tabs.tabs('select_tab', threadId)
   }
 
   var me = $('#' + threadId)
