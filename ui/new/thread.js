@@ -11,11 +11,6 @@ function drawNewThread(dbgState, thread) {
     var locals    = $('<ul/>').addClass('variables collection')
     var code = newCodeContainer(dbgState,'Thread ' + thread.name, codeID, null)
 
-    var stacks = $('<div/>').addClass('row')
-                 .append([ $('<div/>').addClass('col s6').append(stack)
-                         , $('<div/>').addClass('col s6').append(handlers)
-                         ])
-
     function entry(name,active,thing) {
       return $('<li/>')
              .append([ $('<div/>')
@@ -32,7 +27,8 @@ function drawNewThread(dbgState, thread) {
                .addClass('collapsible')
                .attr('data-collapsible','expandable')
                .append([ entry('Variables', true, locals)
-                       , entry('Stacks', false, stacks)
+                       , entry('Stack', false, stack)
+                       , entry('Error Handlers', false, handlers)
                        ])
                .collapsible()
 
