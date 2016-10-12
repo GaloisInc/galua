@@ -115,6 +115,7 @@ staticContent =
                    [".woff", ".woff2", ".ttf", ".otf",
                     ".png", ".min.js", ".min.css", ".html",
                     "thread.js", "values.js", "debugger.js", "code.js",
+                    "init.js", "popUpMenu.js", "style.css",
                     "analysis.js", "code.css"]
     in embedDirectory p (takeDirectory __FILE__ </>
                             ".." </> ".." </>
@@ -400,6 +401,7 @@ getBreakOnError v =
   case preview (key "break-on-error") v of
     Just (Atom "yes") -> Right True
     Just (Atom "no" ) -> Right False
+    Nothing           -> Right True
     _                 -> Left "break-on-error: expected `yes' or `no'"
 
 getBreakpoints :: Value -> Either String (Map FilePath [Int])

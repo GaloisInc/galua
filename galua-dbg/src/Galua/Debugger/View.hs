@@ -710,7 +710,7 @@ exportExecEnv funs pc eid
 
      let noCode = (Nothing, \_ -> Nothing, \_ -> Nothing)
          (code,locNames,upNames) =
-            case luaOpCodes (execFunction) of
+            case luaOpCodes execFunction of
               Just (fid,fun) ->
                 ( Just (exportFun funs (Just pc) (Just eid) fid)
                 , lookupLocalName fun pc . Reg
