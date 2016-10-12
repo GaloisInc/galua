@@ -9,3 +9,16 @@
 }
 
 
+.galua_function_chip {
+  display: inline-block;
+  font-size: small;
+  width: 3em;
+  text-align: center;
+  font-weight: 500;
+  color: rgba(0,0,0,0.6);
+  padding: 0 6px;
+  border-radius: 8px;
+  background-color: #e4e4e4;
+  margin-bottom: 5px;
+  margin-right: 5px;
+}
