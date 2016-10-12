@@ -320,6 +320,8 @@ function drawValueList(dbgState, which, vs) {
     case 'vas':     title = 'Varargs';  prefix = '...'; break
   }
 
+  title = title + ' (' + vs.length + ')'
+
   var vals = $('<table/>').addClass('bordered')
   if (title) vals.append($('<caption/>').text(title))
 
@@ -331,7 +333,7 @@ function drawValueList(dbgState, which, vs) {
   });
 
   var subvs = $(vs).slice(0,lastNonNil+1);
-  jQuery.each(vs,function(ix,val) {
+  jQuery.each(subvs,function(ix,val) {
     var altName = prefix + '[' + (ix+1) + ']'
     var row = $('<tr/>')
     vals.append(row)
@@ -356,7 +358,7 @@ function drawFunParts(f, nameHere, typeHere, pcHere, argsHere) {
   typeHere.empty()
   argsHere.empty()
 
-  typeHere.append($('<span/>').addClass('chip').text(f.type))
+  typeHere.append($('<span/>').addClass('galua_function_chip').text(f.type))
   nameHere.text(f.name)
 
   if (pcHere !== null) pcHere.empty()
