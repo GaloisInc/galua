@@ -44,7 +44,6 @@ function drawNewThread(dbgState, thread) {
                 .append($('<a/>')
                         .attr('href', '#' + threadId)
                         .text('Thread ' + thread.name)))
-    tabs.tabs({onShow: function(x) { console.log(x) }})
   }
 
   var me = $('#' + threadId)
@@ -103,6 +102,9 @@ function fillInExecEnv(dbgState, threadParts, env) {
     }
     drawFunction(dbgState, threadParts.code, env.code)
     dbgState.programCounter = oldPC
+  } else {
+    var noCode = $('<div/>').text('No code available for this function')
+    threadParts.code.append(noCode)
   }
 
 }
