@@ -5,6 +5,7 @@ function icon(cls,i) {
 function roundButton(cls,i,help,act) {
   var me = $('<a/>').addClass(cls)
            .addClass('btn-floating waves-effect waves-light tooltipped')
+           .css('margin-right','10px')
            .attr('data-tooltip',help)
            .append(icon('',i))
            .click(act)
@@ -15,75 +16,37 @@ function roundButton(cls,i,help,act) {
 
 
 function makeMenu(thing,btns) {
-  return popUpMenu($('<div/>')
-                   .append([ thing.addClass('controller')
-                           , $('<div/>')
-                             .css('height','0')
-                             .addClass('menu').append(btns)
-                           ]))
+  var openWidth = btns.length * 50
+  var container = $('<div/>')
+                  .css('width', openWidth + 'px')
+                  .css('height','40px')
+                  .css('position','absolute')
+                  .css('left','0px')
+                  .css('top','0px')
+                  .append(btns)
+                  .hide()
+  thing.css('cursor','pointer')
+  var open = false
+
+  var outer = $('<div/>').css('display','inline-block')
+                         .css('position','relative')
+
+  function showMenu() {
+      container.css('left',(thing.width() + 10) + 'px')
+      outer.addClass('pop_up_open')
+      container.show()
+      open = true
+  }
+
+  function hideMenu() {
+    container.hide()
+    outer.removeClass('pop_up_open')
+    open = false
+  }
+
+  thing.click(function() { if (open) hideMenu(); else showMenu() })
+  jQuery.each(btns,function(ix,b) { b.click(hideMenu) })
+
+  return outer.append([thing,container])
 }
 
-function popUpMenu(thing) {
-
-  var active  = 0
-  var opening = true
-
-
-  var controller = thing.find('.controller')
-  var btns       = thing.find('.menu .btn-floating')
-
-  var timeOut = null
-
-
-  btns.css('position','absolute')
-      .css('left','0')
-      .css('top','0')
-      .css('width','0')
-      .css('height','0')
-      .hover(resetTimeout,closeInAWhilte)
-      .click(hov(false))
-
-  controller.css('cursor','pointer')
-            .hover(hov(true),closeInAWhilte)
-            .click(toggle)
-
-
-  return thing.css('display','inline-block')
-              .css('position','relative')
-
-  function resetTimeout() {
-    if (timeOut === null) return
-    window.clearTimeout(timeOut)
-  }
-
-  function closeInAWhilte() {
-    timeOut = window.setTimeout(hov(false), 1500)
-  }
-
-  function hov(open) {
-    return function() { if (opening === open) toggle() }
-  }
-
-  function toggle() {
-
-    if (active > 0) return
-    active = btns.length
-    var w = controller.width()
-    if (opening) { btns.css('left', w + 'px') }
-
-    jQuery.each(btns,function(ix,btn) {
-      $(btn).velocity(opening?
-                      { left: w + 18 + ix * 50 + 'px', width: 40, height: 40 }
-                    : { left: w, width: 0, height: 0 }
-                    , { easing: 'linear'
-                      , duration: 'fast'
-                      , queue: false
-                      , complete:
-                          function() { if (active === 1) opening = !opening
-                                       --active
-                                     }
-                     })
-    })
-  }
-
-}
