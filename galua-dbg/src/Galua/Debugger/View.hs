@@ -319,7 +319,11 @@ exportVMState funs vms =
          return $ JS.object [ tag "error", "error"  .= js ]
 
     Running vm next ->
-      do jsVM <- exportVM funs vm next
+      do jsVM <- exportVM funs vm (Just next)
+         return $ JS.object [ tag "running", "vm" .= jsVM ]
+
+    RunningInC vm ->
+      do jsVM <- exportVM funs vm Nothing
          return $ JS.object [ tag "running", "vm" .= jsVM ]
 
 
@@ -473,9 +477,9 @@ exportClosure funs path MkClosure { cloFun, cloUpvalues } =
 
 
 
-exportVM :: Chunks -> VM -> NextStep -> ExportM JS.Value
-exportVM funs vm next =
-  do t  <- exportThread funs (Just next) (vmCurThread vm)
+exportVM :: Chunks -> VM -> Maybe NextStep -> ExportM JS.Value
+exportVM funs vm mbnext =
+  do t  <- exportThread funs mbnext (vmCurThread vm)
      ts <- mapM (exportValue funs VP_None . Thread) (toList (vmBlocked vm))
      let menv = vmMachineEnv vm
      stats <- io $ exportProfilingStats funs $ machProfiling menv

@@ -5,11 +5,10 @@ module Galua where
 
 import           Galua.Mach( VM, MachConfig(..)
                            , MachineEnv(..), newMachineEnv, NextStep
-                           , runMach, emptyVM, threadCPtr)
+                           , runMach, emptyVM, threadCPtr, machWaitForC)
 import           Galua.Reference(AllocRef, runAllocWith, exposeAllocRef,
                                   runAlloc, readRef)
 import           Galua.Stepper (runAllSteps)
-import           Galua.CallIntoC (cNextStepLoop)
 
 import           Control.Monad(void)
 
@@ -28,7 +27,7 @@ setupLuaState cfg =
            return (menv,allocref)
 
      let vm   = emptyVM menv
-         next = runMach vm cNextStepLoop
+         next = runMach vm machWaitForC
 
      mainThread <- readRef (machMainThreadRef menv)
      let cptr = unsafeForeignPtrToPtr (threadCPtr mainThread)

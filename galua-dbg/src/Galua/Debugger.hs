@@ -39,6 +39,7 @@ module Galua.Debugger
   ) where
 
 import           Galua(setupLuaState)
+import           Galua.CallIntoC (handleCCallState)
 import           Galua.Debugger.PrettySource
                   (lexChunk,Line,NameId,LocatedExprName)
 import           Galua.Debugger.Options
@@ -651,7 +652,7 @@ newEmptyDebugger threadVar opts =
                         , dbgExportable, dbgStateVM
                         , dbgBreakOnError, dbgBrkAddOnLoad }
 
-     _ <- forkIO (runDebbugger dbg)
+     _ <- forkIO (runDebugger dbg)
 
      return (cptr, dbg)
 
@@ -751,8 +752,8 @@ stepOutOf dbg = startExec dbg True (StepOut Stop)
 goto :: Int -> Debugger -> IO ()
 goto pc dbg =
   whenIdle dbg $
-  whenNotFinishied dbg () $ \vm _ ->
-  writeIORef (dbgStateVM dbg) (Running vm (Goto pc))
+  whenRunning dbg () $ \vm _ ->
+    writeIORef (dbgStateVM dbg) (Running vm (Goto pc))
 
 
 poll :: Debugger -> Word64 -> Int {- ^ Timeout in seconds -} -> IO Word64
@@ -796,8 +797,8 @@ data StepMode
   | StepOutYield StepMode
   deriving Show
 
-runDebbugger :: Debugger -> IO ()
-runDebbugger dbg =
+runDebugger :: Debugger -> IO ()
+runDebugger dbg =
   forever $
     do cmd    <- waitForCommand dbg
        mbMode <- handleCommand dbg True cmd
@@ -935,6 +936,13 @@ doStepMode dbg vm next mode firstStep =
             do st <- runAllocWith dbgNames (oneStep vm next)
                case st of
                  Running vm' next' -> doStepMode dbg vm' next' mode' False
+
+                 RunningInC vm' ->
+                    do let luaMVar = machLuaServer (vmMachineEnv vm')
+                       cResult <- takeMVar luaMVar
+                       let next' = runMach vm' (handleCCallState cResult)
+                       doStepMode dbg vm' next' mode' False
+
                  _                 -> return st
 
        if breaked
@@ -997,6 +1005,16 @@ startExec dbg blocking mode =
 -- | Execute the function, only if the debugger has not finished.
 whenNotFinishied :: Debugger -> a -> (VM -> NextStep -> IO a) -> IO a
 whenNotFinishied dbg a io =
+  do state <- readIORef (dbgStateVM dbg)
+     case state of
+       Running vm next -> io vm next
+       RunningInC vm   -> io vm WaitForC
+       _               -> return a
+
+-- | Execute the function, only if the debugger is running in Lua
+-- rather than waiting for C.
+whenRunning :: Debugger -> a -> (VM -> NextStep -> IO a) -> IO a
+whenRunning dbg a io =
   do state <- readIORef (dbgStateVM dbg)
      case state of
        Running vm next -> io vm next

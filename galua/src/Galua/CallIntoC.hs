@@ -1,5 +1,5 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
-module Galua.CallIntoC (execCFunction, cNextStepLoop) where
+module Galua.CallIntoC (execCFunction, handleCCallState) where
 
 import           Galua.Mach
 import           Galua.Value
@@ -18,20 +18,16 @@ execCFunction :: CFunName -> Mach a
 execCFunction cfun =
   do mvar <- getsMachEnv machCServer
      liftIO (putMVar mvar (CCallback (cfunAddr cfun)))
-     cNextStepLoop
+     machWaitForC
 
--- | Handle reentry requests and final result from the thread spawned to
--- interact with the C call
-cNextStepLoop :: Mach a
-cNextStepLoop =
-  do luaMVar <- getsMachEnv machLuaServer
-     cResult <- liftIO (takeMVar luaMVar)
-     case cResult of
-       CReturned n -> returnFromC n
-       CReEntry label returnAddress primargs k ->
-         do handleGC
-            reentryFromC label returnAddress primargs k
-            cNextStepLoop
+handleCCallState :: CCallState -> Mach a
+handleCCallState cResult =
+  case cResult of
+    CReturned n -> returnFromC n
+    CReEntry label returnAddress primargs k ->
+      do handleGC
+         reentryFromC label returnAddress primargs k
+         machWaitForC
 
 handleGC :: Mach ()
 handleGC =

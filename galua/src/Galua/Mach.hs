@@ -73,6 +73,7 @@ vmUpdateThread VM { vmCurThread } f = modifyRef vmCurThread f
 data VMState  = FinishedOk [Value]
               | FinishedWithError Value
               | Running VM NextStep
+              | RunningInC VM
 
 
 data CCallState
@@ -110,6 +111,10 @@ data NextStep
   | PrimStep (Alloc NextStep)
     -- ^ Do a side effect
 
+  | WaitForC
+    -- ^ Yield to C, wait for a response from the C reentry thread
+    -- See 'CCallState' for possible responses
+
   | Resume (Reference Thread) (ThreadResult -> NextStep)
     -- ^ Resume the given suspended thread
 
@@ -134,6 +139,7 @@ dumpNextStep next =
     FunTailcall r _ -> "tailcall " ++ show (prettyRef r)
     ThrowError _    -> "throw"
     PrimStep _      -> "prim"
+    WaitForC        -> "waitforC"
     Resume r _      -> "resume " ++ show (prettyRef r)
     Yield _         -> "yield"
     ApiStart api _ _ -> "apistart " ++ apiCallMethod api
@@ -372,6 +378,8 @@ instance NameM Mach where
 liftAlloc :: Alloc a -> Mach a
 liftAlloc m = Mach $ \_ k -> PrimStep (fmap k m)
 
+machWaitForC :: Mach a
+machWaitForC = Mach $ \_ _ -> WaitForC
 
 machTailcall :: Reference Closure -> [Value] -> Mach a
 machTailcall f vs = abort (FunTailcall f vs)

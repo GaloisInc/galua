@@ -51,6 +51,8 @@ oneStep vm instr = do
     Yield k           -> performYield      vm k
     ApiStart apiCall op k -> performApiStart vm apiCall op k
     ApiEnd label      -> performApiEnd vm label
+    WaitForC          -> return (RunningInC vm)
+
 
 performApiEnd :: VM -> ApiCall -> Alloc VMState
 performApiEnd vm _apiCall = liftIO $
@@ -356,6 +358,10 @@ runAllSteps vm i =
        FinishedOk vs       -> return (Right vs)
        FinishedWithError v -> return (Left v)
        Running v1 i1       -> runAllSteps v1 i1
+       RunningInC v1 ->
+         do let luaMVar = machLuaServer (vmMachineEnv vm)
+            cResult <- liftIO (takeMVar luaMVar)
+            runAllSteps v1 (runMach v1 (handleCCallState cResult))
 
 
 vmSwitchToNormal :: VM -> ThreadResult -> Alloc VMState

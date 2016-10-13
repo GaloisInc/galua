@@ -36,7 +36,6 @@ newtype WithMetatables m a = WithMetatables
   deriving (Functor, Applicative, Monad, MonadIO)
 
 withMetatables ::
-  MonadIO m =>
   Map ValueType (Reference Table) ->
   WithMetatables m a -> m a
 withMetatables x (WithMetatables (ReaderT f)) = f x
