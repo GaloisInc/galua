@@ -1,4 +1,27 @@
 
+function listThreads() {
+  var names = []
+  jQuery.each($('#thread_tabs>li>a'), function(ix,el) {
+    names.push($(el).attr('href').replace('#thread_',''))
+  })
+  return names
+}
+
+function removeThread(thread_name) {
+  var tid = 'thread_' + thread_name
+  var cid = 'code_for_' + thread_name
+
+  function rm(loc,nm) {
+    $('#' + loc + '_tabs>li:has(a[href="#' + nm + '"])').remove()
+    $('#' + loc + '_panes>#' + nm).remove()
+    $('#' + loc + '_tabs').tabs()
+  }
+
+  rm('thread', 'thread_' + thread_name)
+  rm('code','code_for_' + thread_name)
+}
+
+
 
 function drawNewThread(dbgState, thread) {
 

@@ -163,11 +163,16 @@ data IdleReason = Ready
 data ExportableState = ExportableState
   { expNextThing    :: !Integer
   , expClosed       :: Map Integer Exportable
+  , openThreads     :: !(Set Int)
+    -- ^ Reference ids of the threads that have been expended.
+    -- We keep an int instead of the actual reference, so that the reference
+    -- can be garbage collected if it finished.
   }
 
 newExportableState :: ExportableState
 newExportableState = ExportableState { expNextThing = 0
                                      , expClosed = Map.empty
+                                     , openThreads = Set.empty
                                      }
 
 data Exportable = ExportableValue ValuePath Value
