@@ -54,6 +54,7 @@ import qualified Data.Set as Set
 import qualified Data.Sequence as Seq
 import qualified Data.Vector as Vector
 import           Data.Maybe(fromMaybe)
+import           Data.Either(partitionEithers)
 import           Data.Traversable(for)
 import           Data.Word(Word8)
 import           Data.Text(Text)
@@ -70,7 +71,7 @@ import           Foreign.Ptr (nullPtr, nullFunPtr)
 
 import           HexFloatFormat (doubleToHex)
 
-newtype ExportM a = ExportM (StateT ExportableState IO a)
+newtype ExportM a = ExportM (ReaderT AllocRef (StateT ExportableState IO) a)
                     deriving (Functor,Applicative,Monad)
 
 io :: IO a -> ExportM a
@@ -78,9 +79,9 @@ io = ExportM . inBase
 
 -- | Assumes that we are holding the lock
 runExportM :: Debugger -> ExportM a -> IO a
-runExportM Debugger { dbgExportable } (ExportM m) =
+runExportM Debugger { dbgNames, dbgExportable } (ExportM m) =
   do s      <- readIORef dbgExportable
-     (a,s1) <- runStateT s m
+     (a,s1) <- runStateT s $ runReaderT dbgNames m
      writeIORef dbgExportable s1
      return a
 
@@ -89,13 +90,30 @@ newThing :: Exportable -> ExportM Integer
 newThing x = ExportM $ sets $ \rw ->
   let i = expNextThing rw
   in ( i, rw { expNextThing = 1 + i
-             , expClosed = Map.insert i x (expClosed rw) })
+             , expClosed = Map.insert i x (expClosed rw)
+             })
 
 lookupThing :: Integer -> ExportM (Maybe Exportable)
 lookupThing n = ExportM $ do ExportableState { expClosed } <- get
                              return (Map.lookup n expClosed)
 
+setExpandedThread :: Reference Thread -> ExportM ()
+setExpandedThread r = ExportM $ sets_ $ \rw ->
+  rw { openThreads = Set.insert (referenceId r) (openThreads rw) }
 
+getLiveExpandedThreads :: ExportM [Reference Thread]
+getLiveExpandedThreads = ExportM $
+  do n   <- ask
+     ids <- openThreads <$> get
+     let lkp x = do mb <- lookupRef x
+                    return (case mb of
+                              Nothing -> Left x
+                              Just a  -> Right a)
+     eiths <- inBase (runAllocWith n (mapM lkp (Set.toList ids)))
+     let (bad,good) = partitionEithers eiths
+     unless (null bad) $
+       sets_ $ \rw -> rw { openThreads = Set.difference ids (Set.fromList bad) }
+     return good
 
 --------------------------------------------------------------------------------
 
@@ -113,7 +131,8 @@ exportDebugger dbg =
      brkErr  <- readIORef dbgBreakOnError
      idle    <- readIORef dbgIdleReason
      brks    <- exportBreaks dbg
-     writeIORef dbgExportable newExportableState
+     modifyIORef' dbgExportable $ \r -> newExportableState
+                                          { openThreads = openThreads r }
      (jsWatches, jsSt, jsIdle)
        <- runExportM dbg $
          do jsWatches <- traverse (exportValuePath funs) (toList watches)
@@ -387,7 +406,8 @@ expandValue funs path val =
     Table r    -> exportRef r (exportTable funs)
     UserData r -> exportRef r exportUserData
     Closure r  -> exportRef r (exportClosure funs)
-    Thread r   -> exportThread funs Nothing r
+    Thread r   -> do setExpandedThread r
+                     exportThread funs Nothing r
     _          -> exportValue funs path val
 
   where exportRef r how = how path =<< io (readRef r)
@@ -480,16 +500,21 @@ exportClosure funs path MkClosure { cloFun, cloUpvalues } =
 exportVM :: Chunks -> VM -> Maybe NextStep -> ExportM JS.Value
 exportVM funs vm mbnext =
   do t  <- exportThread funs mbnext (vmCurThread vm)
+     openTs <- do ids <- getLiveExpandedThreads
+                  forM ids $ \r -> do js <- exportThread funs Nothing r
+                                      return (Text.pack (prettyRef r), js)
      ts <- mapM (exportValue funs VP_None . Thread) (toList (vmBlocked vm))
      let menv = vmMachineEnv vm
      stats <- io $ exportProfilingStats funs $ machProfiling menv
      let actualRegistry = Table (machRegistry menv)
      registry <- exportValue funs (VP_Registry actualRegistry) actualRegistry
      return (JS.object [ "thread"   .= t
+                       , "openThreads" .= JS.object openTs
                        , "blocked"  .= ts
                        , "stats"    .= stats
                        , "registry" .= registry
                        ])
+
 
 exportProfilingStats :: Chunks -> ProfilingInfo -> IO JS.Value
 exportProfilingStats funs info =

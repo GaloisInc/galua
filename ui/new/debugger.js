@@ -241,6 +241,7 @@ function drawDebugger() { return function (d) {
 
   $('#pause-on-error').prop('checked', d.breakOnError)
 
+
   function onDone(isDone) {
     return
 //XXX
@@ -267,7 +268,18 @@ function drawDebugger() { return function (d) {
 
       drawProfiling(dbgState, state.vm.stats)
       drawRegistry(dbgState,  state.vm.registry )
+
       drawNewThread(dbgState, state.vm.thread)
+      jQuery.each(listThreads(),function(ix,t) {
+        if (t === state.vm.thread.name) return true
+        var tr = state.vm.openThreads[t]
+        if (tr === undefined) {
+          removeThread(t)
+          return true
+        }
+        drawNewThread(dbgState, tr)
+      })
+
 
       var blocked = $('#blocked_threads_pane').empty()
       jQuery.each(state.vm.blocked,function(ix,v) {
