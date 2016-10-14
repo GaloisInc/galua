@@ -90,37 +90,22 @@
     </div>
   </div>
   <div class="row">
-    <ul class="collapsible" data-collapsible="expandable">
-      <li>
-        <div class="collapsible-header">
-          <span class="galua_section_label">Blocked Threads</span></div>
-        <div class="collapsible-body">
-          <ul id="blocked_threads_pane" class="collection">
-          </ul>
-        </div>
-      </li>
-
-      <li>
-        <div class="collapsible-header">
-            <span class="galua_section_label">Monitoring<span></div>
-        <div class="collapsible-body" id="monitoring-pane">
-        (none)
-        </div>
-      </li>
-      <li>
-        <div class="collapsible-header">
-          <span class="galua_section_label">Console<span></div>
-        <div class="collapsible-body" id="console-pane">
-          <ul id="prints" class="collection"></ul>
-        </div>
-      </li>
-      <li>
-        <div class="collapsible-header">
-          <span class="galua_section_label">Registry<span></div>
-        <div class="collapsible-body" id="registry-pane">
-       </div>
-      </li>
-    </ul>
+    <div class="col s12">
+      <ul class="tabs">
+        <li class="tab col s3"><a href="#console-pane">Console</a></li>
+        <li class="tab col s3"><a href="#blocked_threads_pane">Blocked Threads</a></li>
+        <li class="tab col s3"><a href="#registry-pane">Registry</a></li>
+        <li class="tab col s3"><a href="#monitoring-pane">Monitoring</a></li>
+      </ul>
+    </div>
+    <div class="col s12" id="console-pane"><ul id="prints" class="collection"></ul></div>
+    <div class="col s12" id="blocked_threads_pane">
+        <ul id="blocked_threads-content" class="collection"></ul>
+    </div>
+    <div class="col s12" id="registry-pane"><div id="registry-pane-content" class="collection"></div></div>
+    <div class="col s12" id="monitoring-pane">
+      <ul id="monitoring-content" class="collection"></ul>
+    </div>
   </div>
 </div>
 

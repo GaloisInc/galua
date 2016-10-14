@@ -224,7 +224,7 @@ function drawProfiling(dbgState,stats) {
 }
 
 function drawRegistry( dbgState, val) {
-  $('#registry-pane').empty().append(drawValue(dbgState, val))
+  $('#registry-pane-content').empty().append(drawValue(dbgState, val))
 }
 
 
@@ -281,7 +281,7 @@ function drawDebugger() { return function (d) {
       })
 
 
-      var blocked = $('#blocked_threads_pane').empty()
+      var blocked = $('#blocked_threads-content').empty()
       jQuery.each(state.vm.blocked,function(ix,v) {
         blocked.append($('<li/>')
                        .addClass('collection-item')
