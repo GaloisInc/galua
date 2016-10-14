@@ -16,6 +16,7 @@ library
   exposed-modules:
     Galua.Spec.AST,
     Galua.Spec.Lua,
+    Galua.Spec.CFG,
     Galua.Spec.Parser,
     Galua.Spec.Parser.Lexer,
     Galua.Spec.Parser.Layout,
@@ -26,7 +27,7 @@ library
                        alex-tools >=0.1 && <0.2,
                        array >=0.5 && <0.6,
                        language-lua >= 0.11,
-                       text, pretty, containers
+                       text, pretty, containers, vector, monadLib
   ghc-options:         -Wall
   hs-source-dirs:      src
   build-tools:         alex, happy
