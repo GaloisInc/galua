@@ -34,6 +34,21 @@ function drawNewThread(dbgState, thread) {
     var locals    = $('<ul/>').addClass('variables collection')
     var code = newCodeContainer(dbgState,'Thread ' + thread.name, codeID, null)
 
+
+    var varSec =
+      $('<li/>')
+      .append([ $('<div/>')
+                .addClass('collapsible-header active')
+                .append([ $('<span/>')
+                          .addClass('galua_section_label').text('Variable')
+                        , $('<span/>').addClass('curFun')
+                        ]
+                       )
+              , $('<div/>')
+              .addClass('collapsible-body')
+              .append(locals)
+              ])
+
     function entry(name,active,thing) {
       return $('<li/>')
              .append([ $('<div/>')
@@ -49,8 +64,8 @@ function drawNewThread(dbgState, thread) {
                .attr('id', threadId)
                .addClass('collapsible')
                .attr('data-collapsible','expandable')
-               .append([ entry('Variables', true, locals)
-                       , entry('Stack', false, stack)
+               .append([ varSec // entry('Variables', true, locals)
+                       , entry('Call Stack', false, stack)
                        , entry('Error Handlers', false, handlers)
                        ])
                .collapsible()
@@ -79,6 +94,7 @@ function drawNewThread(dbgState, thread) {
                     , handlers: me.find('.handlers')
                     , code:     out.find('.function')
                     , locals:   me.find('.variables')
+                    , curFun:   me.find('.curFun')
                     }
 
   var env = thread.env
@@ -104,10 +120,11 @@ function drawNewThread(dbgState, thread) {
 
 function fillInExecEnv(dbgState, threadParts, env) {
 
+  threadParts.curFun.empty().append(drawFunName(env))
+
+
   threadParts.locals.empty()
-                    .append([ drawFunName(env)
-                            , $('<hr/>')
-                            , drawValueList(dbgState, 'ups',  env.upvalues)
+                    .append([ drawValueList(dbgState, 'ups',  env.upvalues)
                             , drawValueList(dbgState, 'vas',  env.varargs)
                             , drawValueList(dbgState, 'regs', env.registers)
                             ])

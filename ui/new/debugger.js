@@ -370,7 +370,7 @@ function drawFunParts(f, nameHere, typeHere, pcHere, argsHere) {
   typeHere.empty()
   argsHere.empty()
 
-  typeHere.append($('<span/>').addClass('galua_function_chip').text(f.type))
+  typeHere.append($('<span/>').addClass('galua_function_chip ' + f.type).text(f.type))
   nameHere.text(f.name)
 
   if (pcHere !== null) pcHere.empty()
