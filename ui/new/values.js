@@ -395,10 +395,11 @@ function drawHsClosure(dbgState,x) {
 
 function drawPrimArg(x) {
   return $('<span/>')
-         .addClass('literal')
+         .addClass('literal tooltipped')
          .css('padding-left', '0.5em')
-         .attr('title', x.tag)
+         .attr('data-tooltip', x.tag)
          .text(x.text)
+         .tooltip()
 }
 
 
