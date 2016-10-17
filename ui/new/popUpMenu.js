@@ -77,7 +77,7 @@ function makeMenu(thing,btns) {
     if (!force && busy) return
     busy = true
     stopTimer()
-    allBtn.velocity( { scaleX: 0.2, scaleY: 0.2, opacity: 0 }, 80, 'linear'
+    allBtn.velocity( { scaleX: 0.2, scaleY: 0.2, opacity: 0 }, 800, 'linear'
                    , function() { container.hide(); open = false; busy = false } )
   }
 
