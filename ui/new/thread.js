@@ -185,7 +185,7 @@ function drawHandler(dbgState, h) {
   var me = $('<li/>').addClass('collection-item')
   switch (h.tag) {
     case 'default':
-      me.text('(default)')
+      me.addClass('galua_remark').text('default handler')
       break
     case 'handler':
       me.append(drawValue(dbgState,h.value))
