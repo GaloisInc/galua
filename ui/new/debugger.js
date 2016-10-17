@@ -69,7 +69,6 @@ function drawPrints(prints) {
   var here = $('#prints').empty()
 
   if (prints.length === 0) {
-    console.log(prints)
     here.append($('<li/>').addClass('galua_remark').text('no output'))
   }
   else
