@@ -231,7 +231,7 @@ function drawRegistry( dbgState, val) {
   $('#registry-pane-content')
   .empty()
   .css('padding','15px')
-  .append(drawValue(dbgState, val))
+  .append(drawValueEx(dbgState, val, true))
 }
 
 
