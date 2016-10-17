@@ -47,3 +47,13 @@ td {
 .galua_function_chip.C {
   background-color: #ffc300;
 }
+
+/* Used for non-important things like: (this is empty) */
+.galua_remark {
+  color: #999;
+  font-size: smaller;
+  font-style: italic;
+  padding: 15px;
+}
+
+

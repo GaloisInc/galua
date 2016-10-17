@@ -68,20 +68,24 @@ function drawPrints(prints) {
 
   var here = $('#prints').empty()
 
+  if (prints.length === 0) {
+    console.log(prints)
+    here.append($('<li/>').addClass('galua_remark').text('no output'))
+  }
+  else
+    jQuery.each(prints, function(ix,ln) {
+      var it = $('<li/>').addClass('collection-item')
+      if (ln.num !== 1)
+        it.append($('<span/>')
+                  .addClass('blue white-text new badge')
+                  .attr('data-badge-caption','times')
+                  .text(ln.num))
 
-  jQuery.each(prints, function(ix,ln) {
-    var it = $('<li/>').addClass('collection-item')
-    if (ln.num !== 1)
-      it.append($('<span/>')
-                .addClass('blue white-text new badge')
-                .attr('data-badge-caption','times')
-                .text(ln.num))
-
-    jQuery.each(ln.words, function(ix,w) {
-      it.append($('<span/>').addClass('gal_code_box code_line').text(w))
+      jQuery.each(ln.words, function(ix,w) {
+        it.append($('<span/>').addClass('gal_code_box code_line').text(w))
+      })
+      here.append(it)
     })
-    here.append(it)
-  })
 }
 
 
@@ -282,11 +286,15 @@ function drawDebugger() { return function (d) {
 
 
       var blocked = $('#blocked_threads-content').empty()
-      jQuery.each(state.vm.blocked,function(ix,v) {
-        blocked.append($('<li/>')
-                       .addClass('collection-item')
-                       .append(drawValue(dbgState,v)))
-      })
+      if (state.vm.blocked.length === 0) {
+        blocked.append($('<li/>').addClass('galua_remark')
+                                 .text('no blocked threads'))
+      } else
+        jQuery.each(state.vm.blocked,function(ix,v) {
+          blocked.append($('<li/>')
+                         .addClass('collection-item')
+                         .append(drawValue(dbgState,v)))
+        })
 
 /*
       if (d.idle.error !== undefined) {
@@ -320,7 +328,7 @@ function drawDebugger() { return function (d) {
 }}
 
 
-// XXX
+
 function drawValueList(dbgState, which, vs) {
 
   var title = '?'
