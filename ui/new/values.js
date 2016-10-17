@@ -11,7 +11,7 @@ function drawValueEx(dbgState,v,startExpanded) {
     case 'user_data':
     case 'thread':
       var icons = { 'table':      'web'
-                  , 'user_data':  'new_releases'
+                  , 'user_data':  'extension'
                   , 'thread':     'shuffle'
                   }
       label = $('<div/>')
@@ -81,8 +81,7 @@ function drawValueEx(dbgState,v,startExpanded) {
 
 
 function drawOrigin(o) {
-  // XXX: icon
-  var lab = roundButton('black white-text','golf_course', 'Defined by', handler)
+  var lab = roundButton('black white-text','blur_on', 'Defined by', handler)
 
   var info = $('<div/>').text('Defined by ')
 
@@ -169,7 +168,7 @@ function drawExpandCollapseIcon(dbgState, v, startExpanded) {
 function drawAddWatchIcon(v) {
   var watchIcon =
     roundButton('black white-text'
-               , 'child_care' // XXX
+               , 'visibility'
                , 'Start monitoring'
                , function () {
                    jQuery.post('/watch', { id: v.ref }, function(exp) {
@@ -184,7 +183,7 @@ function drawAddWatchIcon(v) {
 function drawAltRepIcon(v,lab,alt) {
   var icon =
     roundButton( 'black white-text'
-               , 'pool'
+               , 'repeat'
                , 'Change representation'
                , function () { var tmp = lab.text()
                                lab.text(alt)
