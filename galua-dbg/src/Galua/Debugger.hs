@@ -87,12 +87,12 @@ import           Data.IORef(IORef,readIORef,writeIORef,
 
 import           Control.Concurrent.Async (cancel, waitCatch, Async)
 import            Control.Concurrent
-                    ( MVar, newEmptyMVar, putMVar, takeMVar
-                    , forkIO
-                    , Chan,newChan,isEmptyChan,readChan,writeChan
-                    )
+                    ( MVar, newEmptyMVar, putMVar, takeMVar, forkIO )
+import           Control.Applicative ((<|>))
+import           Control.Concurrent.STM (STM, atomically, takeTMVar)
+import           Control.Concurrent.STM.TQueue (TQueue, newTQueue, writeTQueue, readTQueue, isEmptyTQueue)
 import           Control.Monad.IO.Class(liftIO)
-import           Control.Monad(when,forever)
+import           Control.Monad(join, when,forever)
 import           Control.Exception
 import           MonadLib(ExceptionT,runExceptionT,raise,lift)
 import           System.Timeout(timeout)
@@ -112,7 +112,7 @@ data Debugger = Debugger
   , dbgNames     :: !AllocRef                  -- ^ Object identities
 
 
-  , dbgCommand   :: !(Chan (DebuggerCommand,Bool))
+  , dbgCommand   :: !(TQueue (DebuggerCommand,Bool))
     {- ^ Commands from the outside world, telling the debugger what to do next.
          The boolean indicates if this command modifis the state, and as such
          should modify `dbgCommandCounter` -}
@@ -623,7 +623,7 @@ newEmptyDebugger threadVar opts =
   do let chunks = Chunks { topLevelChunks = Map.empty
                          , allFunNames    = Map.empty
                          }
-     dbgCommand <- newChan
+     dbgCommand <- atomically newTQueue
      dbgCommandCounter <- newIORef 0
 
 
@@ -931,34 +931,46 @@ doStepMode dbg vm next mode firstStep =
   breakImmune ThrowError {} = False
   breakImmune _             = True
 
+  goOn vm1 mode' =
+    do let Debugger { dbgNames } = dbg
+       st <- runAllocWith dbgNames (oneStep vm1 next)
+       case st of
+         Running vm' next' -> doStepMode dbg vm' next' mode' False
+
+         RunningInC vm' ->
+            do let luaTMVar = machLuaServer (vmMachineEnv vm')
+               res <- atomically $ Left  <$> waitForCommandSTM dbg
+                               <|> Right <$> takeTMVar luaTMVar
+               case res of
+                 Left m ->
+                   do command <- m
+                      mbMode <- handleCommand dbg False command
+                      case mbMode of
+                        Nothing      -> goOn vm' mode'
+                        Just newMode -> doStartExec dbg vm' WaitForC newMode
+
+                 Right cResult ->
+                   do let next' = runMach vm' (handleCCallState cResult)
+                      doStepMode dbg vm' next' mode' False
+
+         _                 -> return st
+
   proceed mode' =
     do let Debugger { dbgNames } = dbg
        breaked <- if firstStep || breakImmune next
                     then return False
                     else checkBreak dbg vm next
 
-       let goOn =
-            do st <- runAllocWith dbgNames (oneStep vm next)
-               case st of
-                 Running vm' next' -> doStepMode dbg vm' next' mode' False
-
-                 RunningInC vm' ->
-                    do let luaMVar = machLuaServer (vmMachineEnv vm')
-                       cResult <- takeMVar luaMVar
-                       let next' = runMach vm' (handleCCallState cResult)
-                       doStepMode dbg vm' next' mode' False
-
-                 _                 -> return st
 
        if breaked
          then done
          else do mb <- peekCmd dbg
                  case mb of
-                   Nothing -> goOn
+                   Nothing -> goOn vm mode'
                    Just command ->
                      do mbMode <- handleCommand dbg False command
                         case mbMode of
-                          Nothing      -> goOn
+                          Nothing      -> goOn vm mode'
                           Just newMode -> doStartExec dbg vm next newMode
 
 
@@ -981,21 +993,26 @@ data DebuggerCommand =
 
 peekCmd :: Debugger -> IO (Maybe DebuggerCommand)
 peekCmd dbg@Debugger { dbgCommand } =
-  do isEmpty <- isEmptyChan dbgCommand
-     if isEmpty then return Nothing else Just <$> waitForCommand dbg
+  join $ atomically $
+         do notready <- isEmptyTQueue dbgCommand
+            if notready
+              then return (return Nothing)
+              else fmap Just <$> waitForCommandSTM dbg
 
 waitForCommand :: Debugger -> IO DebuggerCommand
-waitForCommand Debugger { dbgCommand, dbgCommandCounter } =
-  do (c,vis) <- readChan dbgCommand
-     when vis (modifyIORef' dbgCommandCounter (+ 1))
-     return c
+waitForCommand = join . atomically . waitForCommandSTM
+
+waitForCommandSTM :: Debugger -> STM (IO DebuggerCommand)
+waitForCommandSTM Debugger { dbgCommand, dbgCommandCounter } =
+  do (c,vis) <- readTQueue dbgCommand
+     return (c <$ when vis (modifyIORef' dbgCommandCounter (+ 1)))
 
 
 {- | The boolan indicates if the command should contribute towards the
 global command counter.  Generally, commands that might change something
 in the state should affect this, while "read-only" commands may be invisible. -}
 sendCommand :: Debugger -> DebuggerCommand -> Bool {-^Visible?-} -> IO ()
-sendCommand Debugger { dbgCommand } c vis = writeChan dbgCommand (c,vis)
+sendCommand Debugger { dbgCommand } c vis = atomically (writeTQueue dbgCommand (c,vis))
 
 {- | Switch the debugger to the given execution mode.
 The boolean indicates if we should block:  if it is 'True', then

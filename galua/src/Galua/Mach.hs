@@ -6,6 +6,7 @@ module Galua.Mach where
 
 
 import           Control.Concurrent (MVar, newEmptyMVar)
+import           Control.Concurrent.STM (TMVar, atomically, newEmptyTMVar)
 import           Control.Exception (try)
 import           Control.Monad (when)
 import           Control.Monad.IO.Class
@@ -239,7 +240,7 @@ data MachineEnv = MachineEnv
   , machConfig        :: !MachConfig
     -- ^ Callbacks for interesting events.
 
-  , machLuaServer     :: !(MVar CCallState)
+  , machLuaServer     :: !(TMVar CCallState)
     -- ^ The Lua interpreter listens on this MVar for messages
     -- coming in from the C threads
 
@@ -474,7 +475,7 @@ newMachineEnv machConfig =
      machRegistry      <- newTable refLoc 0 0
      machNextChunkId   <- liftIO (newIORef 0)
      machMetatablesRef <- liftIO (newIORef Map.empty)
-     machLuaServer     <- liftIO newEmptyMVar
+     machLuaServer     <- liftIO (atomically newEmptyTMVar)
      machCServer       <- liftIO newEmptyMVar
      machGarbage       <- liftIO (newIORef [])
      machProfiling     <- liftIO newProfilingInfo
@@ -553,10 +554,10 @@ machNewThread =
      cMVar   <- getsMachEnv machCServer
      allocNewThread loc luaMVar cMVar ThreadNew
 
- 
+
 
 data ExternalLuaState = ExternalLuaState
-  { extLuaStateLuaServer   :: MVar CCallState
+  { extLuaStateLuaServer   :: TMVar CCallState
   , extLuaStateCServer     :: MVar CNextStep
   , extLuaStateThreadId    :: Int
   }
@@ -572,11 +573,11 @@ extToThreadRef ext =
 allocNewThread ::
   NameM m =>
   RefLoc ->
-  MVar CCallState -> MVar CNextStep -> ThreadStatus -> m (Reference Thread)
-allocNewThread refLoc luaMVar cMVar st =
+  TMVar CCallState -> MVar CNextStep -> ThreadStatus -> m (Reference Thread)
+allocNewThread refLoc luaTMVar cMVar st =
   do ref <- newRef refLoc (error "thread uninitialized")
      liftIO $ do sptr <- newStablePtr ExternalLuaState
-                           { extLuaStateLuaServer = luaMVar
+                           { extLuaStateLuaServer = luaTMVar
                            , extLuaStateCServer   = cMVar
                            , extLuaStateThreadId  = referenceId ref
                            }

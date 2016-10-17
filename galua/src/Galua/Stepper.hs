@@ -25,6 +25,7 @@ import           Language.Lua.Bytecode (Function(..))
 import           Control.Monad ((<=<))
 import           Control.Monad.IO.Class
 import           Control.Concurrent
+import           Control.Concurrent.STM (atomically, takeTMVar)
 import           Control.Exception (assert)
 import           Data.IORef
 import           Data.Foldable (traverse_)
@@ -360,7 +361,7 @@ runAllSteps vm i =
        Running v1 i1       -> runAllSteps v1 i1
        RunningInC v1 ->
          do let luaMVar = machLuaServer (vmMachineEnv vm)
-            cResult <- liftIO (takeMVar luaMVar)
+            cResult <- liftIO (atomically (takeTMVar luaMVar))
             runAllSteps v1 (runMach v1 (handleCCallState cResult))
 
 
