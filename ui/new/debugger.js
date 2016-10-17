@@ -228,7 +228,10 @@ function drawProfiling(dbgState,stats) {
 }
 
 function drawRegistry( dbgState, val) {
-  $('#registry-pane-content').empty().append(drawValue(dbgState, val))
+  $('#registry-pane-content')
+  .empty()
+  .css('padding','15px')
+  .append(drawValue(dbgState, val))
 }
 
 
@@ -266,9 +269,7 @@ function drawDebugger() { return function (d) {
       onDone(false)
       setStatus('uk-badge', d.idle.tag)
 
-/*
-      mons.append(drawValueList(dbgState, 'watches', d.watches))
-*/
+      drawWatches(dbgState, d.watches)
 
       drawProfiling(dbgState, state.vm.stats)
       drawRegistry(dbgState,  state.vm.registry )
@@ -326,6 +327,32 @@ function drawDebugger() { return function (d) {
 
   doPoll(d.stateCounter)
 }}
+
+
+function drawWatches(dbgState, vs) {
+
+  var mons = $('#monitoring-content').empty()
+  if (vs.length === 0) {
+    mons.append($('<li/>')
+                .addClass('galua_remark')
+                .text('not monitoring anything'))
+    return
+  }
+
+  var vals = $('<table/>')
+             .addClass('bordered')
+             .css('margin','15px')
+
+  jQuery.each(vs,function(ix,val) {
+    var row = $('<li/>').addClass('collection-item')
+    row.append($('<span/>').addClass('badge').text(val.name))
+    row.append(drawValue(dbgState,val.val))
+    mons.append(row)
+  })
+
+}
+
+
 
 
 

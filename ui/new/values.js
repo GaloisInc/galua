@@ -15,6 +15,7 @@ function drawValueEx(dbgState,v,startExpanded) {
                   , 'thread':     'shuffle'
                   }
       label = $('<div/>')
+              .css('display','inline-block')
               .append( icon('tiny',icons[v.tag]) )
 
       if (v.name !== undefined)
