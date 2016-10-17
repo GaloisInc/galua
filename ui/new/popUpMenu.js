@@ -55,7 +55,7 @@ function makeMenu(thing,btns) {
       if (busy) return
       busy = true
       jQuery.each($('.galua-menu-thing'),function(ix,th) {
-        if (th !== thing) $(th).data('galua-popup-menu-hide')()
+        if (th !== thing) $(th).data('galua-popup-menu-hide')(true)
       })
       var thingPagePos = thing.offset()
       var hiddenAbove  = $('body').scrollTop()
@@ -71,12 +71,14 @@ function makeMenu(thing,btns) {
                       )
   }
 
-  function hideMenu() {
-    if (busy) return
+  function hideMenu() { return doHideMenu(false) }
+
+  function doHideMenu(force) {
+    if (!force && busy) return
     busy = true
     stopTimer()
     allBtn.velocity( { scaleX: 0.2, scaleY: 0.2, opacity: 0 }, 80, 'linear'
-                   , function() { open = false; busy = false } )
+                   , function() { container.hide(); open = false; busy = false } )
   }
 
   thing.click(function() { if (open) hideMenu(); else showMenu() })
