@@ -4,7 +4,8 @@
 
 module Galua.CApi where
 
-import Control.Concurrent (MVar, putMVar, takeMVar)
+import Control.Concurrent (MVar, takeMVar)
+import Control.Concurrent.STM (TMVar, atomically, putTMVar)
 import Control.Exception
 import Control.Monad (replicateM_,when,unless)
 import Control.Monad.IO.Class
@@ -96,9 +97,9 @@ reentry label args l r k =
     body =
       do ext <- deRefLuaState l
          returnObjInfo <- unsafeInterleaveIO (getCFunInfo (castPtrToFunPtr r))
-         putMVar
+         atomically (putTMVar
            (extLuaStateLuaServer ext)
-           (CReEntry label returnObjInfo args (wrapWithStack (extLuaStateThreadId ext) k))
+           (CReEntry label returnObjInfo args (wrapWithStack (extLuaStateThreadId ext) k)))
          cServiceLoop l (extLuaStateCServer ext) (extLuaStateLuaServer ext)
 
 wrapWithStack :: Int -> (SV.SizedVector (IORef Value) -> Mach a) -> Mach a
@@ -138,7 +139,7 @@ stackFromList stack vs =
      SV.shrink stack n
      for_ vs $ push stack
 
-cServiceLoop :: Ptr () -> MVar CNextStep -> MVar CCallState -> IO CInt
+cServiceLoop :: Ptr () -> MVar CNextStep -> TMVar CCallState -> IO CInt
 cServiceLoop l resultMVar interpMVar =
   do result <- takeMVar resultMVar
                 `catch` \SomeException{} -> return CAbort
@@ -152,7 +153,7 @@ cServiceLoop l resultMVar interpMVar =
               -1 -> return () -- normal error unwind
               -2 -> fail "C functions called from Lua must return non-negative number"
               _ | resultN < 0 -> fail "Panic: capi_entry had invalid return value"
-                | otherwise -> putMVar interpMVar (CReturned (fromIntegral resultN))
+                | otherwise -> atomically (putTMVar interpMVar (CReturned (fromIntegral resultN)))
 
             cServiceLoop l resultMVar interpMVar
 
