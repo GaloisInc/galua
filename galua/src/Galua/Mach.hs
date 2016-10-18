@@ -124,8 +124,8 @@ data NextStep
   | ThreadExit [Value]
   | ThreadFail Value
 
-  | ApiStart ApiCall NextStep NextStep
-  | ApiEnd ApiCall
+  | ApiStart ApiCall NextStep
+  | ApiEnd ApiCall NextStep
 
 
 dumpNextStep :: NextStep -> String
@@ -134,8 +134,8 @@ dumpNextStep next =
     Goto n          -> "goto " ++ show n
     FunCall r _ _ _ -> "call " ++ show (prettyRef r)
     FunReturn _     -> "return"
-    ThreadExit _  -> "thread exit"
-    ThreadFail _  -> "thread fail"
+    ThreadExit _    -> "thread exit"
+    ThreadFail _    -> "thread fail"
     ErrorReturn _   -> "error return"
     FunTailcall r _ -> "tailcall " ++ show (prettyRef r)
     ThrowError _    -> "throw"
@@ -143,8 +143,8 @@ dumpNextStep next =
     WaitForC        -> "waitforC"
     Resume r _      -> "resume " ++ show (prettyRef r)
     Yield _         -> "yield"
-    ApiStart api _ _ -> "apistart " ++ apiCallMethod api
-    ApiEnd api       -> "apiend " ++ apiCallMethod api
+    ApiStart api _  -> "apistart " ++ apiCallMethod api
+    ApiEnd api _    -> "apiend " ++ apiCallMethod api
 
 
 
@@ -313,7 +313,7 @@ execChunk env = getRoot =<< execFunId env
 
 
 data ApiCallStatus
-  = ApiCallActive !ApiCall !NextStep
+  = ApiCallActive !ApiCall
   | ApiCallAborted !ApiCall
   | NoApiCall
 
@@ -410,10 +410,9 @@ machResume t = Mach $ \_ -> Resume t
 machYield :: Mach ()
 machYield = Mach $ \_ k -> Yield (k ())
 
-machApiCall :: ApiCall -> Mach () -> Mach ()
-machApiCall apiCall (Mach op) =
-  Mach $ \vm k -> ApiStart apiCall (op vm (\_ -> ApiEnd apiCall)) (k ())
-
+machApiCall :: ApiCall -> Mach a -> Mach ()
+machApiCall apiCall impl =
+  Mach $ \vm k -> ApiStart apiCall (runMach vm (impl >> abort (ApiEnd apiCall (k ()))))
 
 machVM :: Mach VM
 machVM = Mach $ \e k -> k e

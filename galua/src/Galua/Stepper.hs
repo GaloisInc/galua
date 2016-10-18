@@ -50,23 +50,23 @@ oneStep vm instr = do
     ThrowError e      -> performThrowError vm e
     Resume tRef k     -> performResume     vm tRef k
     Yield k           -> performYield      vm k
-    ApiStart apiCall op k -> performApiStart vm apiCall op k
-    ApiEnd label      -> performApiEnd vm label
+    ApiStart apiCall op -> performApiStart vm apiCall op
+    ApiEnd label next -> performApiEnd vm label next
     WaitForC          -> return (RunningInC vm)
 
 
-performApiEnd :: VM -> ApiCall -> Alloc VMState
-performApiEnd vm _apiCall = liftIO $
+performApiEnd :: VM -> ApiCall -> NextStep -> Alloc VMState
+performApiEnd vm _apiCall next = liftIO $
   do eenv <- stExecEnv <$> readRef (vmCurThread vm)
-     ApiCallActive _ k <- readIORef (execApiCall eenv)
+     ApiCallActive _ <- readIORef (execApiCall eenv)
      writeIORef (execApiCall eenv) NoApiCall
      putMVar (machCServer (vmMachineEnv vm)) CResume
-     return $ Running vm k
+     return $ Running vm next
 
-performApiStart :: VM -> ApiCall -> NextStep -> NextStep -> Alloc VMState
-performApiStart vm apiCall next k = liftIO $
+performApiStart :: VM -> ApiCall -> NextStep -> Alloc VMState
+performApiStart vm apiCall next = liftIO $
   do eenv <- stExecEnv <$> readRef (vmCurThread vm)
-     writeIORef (execApiCall eenv) (ApiCallActive apiCall k)
+     writeIORef (execApiCall eenv) (ApiCallActive apiCall)
      return $ Running vm next
 
 
@@ -270,7 +270,7 @@ abortApiCall mvar eenv =
      case st of
        NoApiCall        -> return ()
        ApiCallAborted{} -> return ()
-       ApiCallActive api _ ->
+       ApiCallActive api ->
          do putMVar mvar CAbort
             writeIORef ref (ApiCallAborted api)
 
@@ -301,7 +301,7 @@ performYield vm k =
 
      liftIO $
        do let apiRef = execApiCall (stExecEnv th)
-          ApiCallActive _ _ <- readIORef apiRef
+          ApiCallActive _ <- readIORef apiRef
           writeIORef apiRef NoApiCall
           putMVar (machCServer (vmMachineEnv vm)) CAbort
 
