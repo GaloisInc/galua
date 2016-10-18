@@ -21,7 +21,7 @@ function makeMenu(thing,btns) {
                   .css('width', openWidth + 'px')
                   .css('height','50px')
                   .css('position','absolute')
-                  .css('z-index','10')
+                  .css('z-index','2000')
                   .append(btns)
                   .hide()
   thing.css('cursor','pointer')
