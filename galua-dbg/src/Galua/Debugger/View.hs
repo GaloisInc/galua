@@ -424,7 +424,7 @@ exportThread funs mbNext tRef =
      env   <- exportExecEnv funs curPC eid stExecEnv
      stack <- mapM (exportStackFrameShort funs) (toList stStack)
      hs    <- mapM (exportHandler funs) stHandlers
-     cur   <- exportCallStackFrameShort funs curPC stExecEnv
+     cur   <- exportCallStackFrameShort funs curPC stExecEnv mbNext
      return $ JS.object
                 [ tag "thread"
                 , "name"     .= prettyRef tRef
@@ -555,26 +555,35 @@ exportStackFrameShort :: Chunks -> StackFrame -> ExportM JS.Value
 exportStackFrameShort funs sf =
   case sf of
     ErrorFrame -> return (JS.object [ tag "throw_error" ])
-    CallFrame pc env _ _ -> exportCallStackFrameShort funs pc env
+    CallFrame pc env _ _ -> exportCallStackFrameShort funs pc env Nothing
 
-exportCallStackFrameShort :: Chunks -> Int -> ExecEnv -> ExportM JS.Value
-exportCallStackFrameShort funs pc env =
+exportCallStackFrameShort :: Chunks -> Int -> ExecEnv -> Maybe NextStep -> ExportM JS.Value
+exportCallStackFrameShort funs pc env mbnext =
   do ref <- newThing (ExportableStackFrame pc env)
      st  <- io (readIORef (execApiCall env))
-     apiInfo <- case st of
-                  NoApiCall -> pure []
-                  ApiCallAborted api  -> exportApiCall api
-                  ApiCallActive api   -> exportApiCall api
+     apiInfo <- case mbnext of
+                  Just (ApiStart api _) -> exportApiCall api ApiCallStarting
+                  Just (ApiEnd   api _) -> exportApiCall api ApiCallEnding
+                  _ -> case st of
+                         NoApiCall -> pure []
+                         ApiCallAborted api  -> exportApiCall api ApiCallRunning
+                         ApiCallActive api   -> exportApiCall api ApiCallRunning
      return (JS.object ( apiInfo ++
                          tag "call"
                        : "ref" .= ref
                        : exportFunctionValue funs pc (execFunction env)))
 
-exportApiCall :: ApiCall -> ExportM [ JS.Pair ]
-exportApiCall api =
+data ApiCallPhase = ApiCallStarting | ApiCallRunning | ApiCallEnding
+
+exportApiCall :: ApiCall -> ApiCallPhase -> ExportM [ JS.Pair ]
+exportApiCall api phase =
   do args <- traverse exportPrimArg (apiCallArgs api)
      pure [ "method" .= apiCallMethod api
           , "args"   .= args
+          , "phase"  .= case phase of
+                          ApiCallStarting -> "starting" :: Text
+                          ApiCallRunning  -> "running"
+                          ApiCallEnding   -> "ending"
           , "return" .= JS.object (exportCObjInfo (apiCallReturn api))
           ]
 
