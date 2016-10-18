@@ -235,15 +235,6 @@ function drawRegistry( dbgState, val) {
 
 
 function drawDebugger() { return function (d) {
-/*
-  var body      = $('body')
-
-  var result    = $('#result').empty()
-  var mons      = $('#monitoring').empty()
-
-  $('#code_pane_control>.dynamic').remove()
-  $('#code_pane>.dynamic').remove()
-*/
 
   $('#pause-on-error').prop('checked', d.breakOnError)
 
@@ -296,17 +287,19 @@ function drawDebugger() { return function (d) {
                          .append(drawValue(dbgState,v)))
         })
 
-/*
       if (d.idle.error !== undefined) {
-        var badge = $('<div/>')
-                    .addClass('uk-badge uk-badge-danger uk-margin-right')
-                    .text('error')
-
-        result.append([badge, drawValue(dbgState,d.idle.error)])
+        $('#prints')
+        .append($('<li/>')
+                .addClass('collection-item')
+                .append([ $('<span/>')
+                          .addClass('secondary-content')
+                          .append($('<i/>')
+                                  .addClass('material-icons red-text')
+                                  .text('error'))
+                        , drawValue(dbgState,d.idle.error)
+                        ]))
       }
 
-      focusCurLine()
-*/
       break
 
     case 'finished':
@@ -320,7 +313,7 @@ function drawDebugger() { return function (d) {
     case 'error':
       onDone(true)
       setStatus('uk-badge-danger', 'Error')
-      result.append(drawValue(dbgState,state.error))
+      // result.append(drawValue(dbgState,state.error))
       break
   }
 
