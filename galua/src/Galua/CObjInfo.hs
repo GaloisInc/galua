@@ -1,5 +1,5 @@
 {-# LANGUAGE CPP, OverloadedStrings #-}
-module Galua.CObjInfo ( CObjInfo(..), getCFunInfo, noFunInfo ) where
+module Galua.CObjInfo ( CObjInfo(..), cfunInfoFun, noFunInfo ) where
 
 import Foreign(FunPtr,nullFunPtr)
 
@@ -46,12 +46,10 @@ addrName fp = if fp == nullFunPtr then "(entry)" else show fp
 
 
 
-
-
-getCFunInfo :: FunPtr a -> IO CObjInfo
+cfunInfoFun :: IO (FunPtr () -> IO CObjInfo)
+cfunInfoFun =
 #if defined ( LUA_USE_LINUX )
-getCFunInfo fptr =
-  do exe <- readSymbolicLink "/proc/self/exe"
+  do exe   <- readSymbolicLink "/proc/self/exe"
      bytes <- BS.readFile exe
      let elf = parseElf bytes
          end = case elfData elf of
@@ -61,30 +59,30 @@ getCFunInfo fptr =
                                             | s <- elfSections elf
                                             , let name = elfSectionName s
                                             , ".debug_" `isPrefixOf` name ]
-         addr     = fromIntegral (ptrToIntPtr (castFunPtrToPtr fptr))
-         info     = addr2line secs addr
-     let obj = CObjInfo
-                { cObjAddr = addrName fptr
-                , cObjName =
-                    case function info of
-                      Nothing -> Nothing
-                      Just b  -> let s = Text.decodeUtf8 b
-                                 in s `seq` Just (Text.unpack s)
-                , cObjFile =
-                     case file info of
-                       Nothing -> Nothing
-                       Just f  -> let s = Text.concat [ Text.decodeUtf8 (directory f)
-                                                      , "/"
-                                                      , Text.decodeUtf8 (fileName f) ]
-                                  in s `seq` Just (Text.unpack s)
-                , cObjLine = case line info of
-                               Nothing -> Nothing
-                               Just n  -> n `seq` Just (show n)
-                }
-     return $! obj
-
-#elif defined ( LUA_USE_MACOSX )
-getCFunInfo fptr =
+     return $ \fptr -> return $!
+        let addr = fromIntegral (ptrToIntPtr (castFunPtrToPtr fptr))
+            info = addr2line secs addr
+        in CObjInfo
+             { cObjAddr = addrName fptr
+             , cObjName =
+                 case function info of
+                   Nothing -> Nothing
+                   Just b  -> let s = Text.decodeUtf8 b
+                              in s `seq` Just (Text.unpack s)
+             , cObjFile =
+                  case file info of
+                    Nothing -> Nothing
+                    Just f  -> let s = Text.concat
+                                          [ Text.decodeUtf8 (directory f)
+                                          , "/"
+                                          , Text.decodeUtf8 (fileName f) ]
+                               in s `seq` Just (Text.unpack s)
+             , cObjLine = case line info of
+                            Nothing -> Nothing
+                            Just n  -> n `seq` Just (show n)
+             }
+#elif
+  return $
   do mb <- funPtrInfo fptr
      case mb of
        Nothing -> return (noFunInfo fptr)
@@ -94,5 +92,7 @@ getCFunInfo fptr =
                                  , cObjLine = Nothing
                                  }
 #else
-getCFunInfo fptr = return (noFunInfo fptr)
+  return $ \_ -> return (noFunInfo fptr)
 #endif
+
+

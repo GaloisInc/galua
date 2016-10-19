@@ -96,7 +96,8 @@ reentry label args l r k =
   where
     body =
       do ext <- deRefLuaState l
-         returnObjInfo <- unsafeInterleaveIO (getCFunInfo (castPtrToFunPtr r))
+         returnObjInfo <- unsafeInterleaveIO $ do f <- cfunInfoFun
+                                                  f (castPtrToFunPtr r)
          atomically (putTMVar
            (extLuaStateLuaServer ext)
            (CReEntry label returnObjInfo args (wrapWithStack (extLuaStateThreadId ext) k)))

@@ -18,7 +18,8 @@ import           Data.Vector (Vector)
 import qualified Data.Vector as Vector
 import           Data.ByteString (ByteString)
 import           Data.Void
-import           Foreign (ForeignPtr, Ptr, nullPtr, newForeignPtr, FunPtr)
+import           Foreign (ForeignPtr, Ptr, nullPtr, newForeignPtr, FunPtr
+                         , castFunPtr )
 import           Foreign.StablePtr
                    (newStablePtr, freeStablePtr, castStablePtrToPtr)
 import qualified Data.ByteString.Lazy as L
@@ -37,7 +38,7 @@ import           Galua.Reference
 import           Galua.Value
 import           Galua.FunValue(cFunction,luaFunction)
 import           Galua.LuaString
-import           Galua.CObjInfo(CObjInfo,getCFunInfo)
+import           Galua.CObjInfo(CObjInfo,cfunInfoFun)
 import           Galua.Util.Stack(Stack)
 import qualified Galua.Util.Stack as Stack
 import qualified Galua.Util.SizedVector as SV
@@ -257,6 +258,8 @@ data MachineEnv = MachineEnv
   , machNameCache     :: {-# UNPACK #-} !(IORef (Cache CFun CObjInfo))
     -- ^ A cache mapping addresses of C functions to human-readable
     -- information about them.
+
+  , machCFunInfo      :: FunPtr () -> IO CObjInfo
   }
 
 
@@ -484,6 +487,7 @@ newMachineEnv machConfig =
      setTableRaw machRegistry (Number 2) (Table machGlobals)
 
      machNameCache     <- liftIO (newIORef (cacheEmpty 50000))
+     machCFunInfo      <- liftIO cfunInfoFun
      return MachineEnv { .. }
 
 newProfilingInfo :: IO ProfilingInfo
@@ -613,19 +617,20 @@ machIsMainThread t =
 
 machLookupCFun :: CFun -> Mach CObjInfo
 machLookupCFun f =
-  do cacheRef <- getsMachEnv machNameCache
+  do cacheRef    <- getsMachEnv machNameCache
+     getCFunInfo <- getsMachEnv machCFunInfo
      {- Note that there is a potential race when we are updating the cache.
      We don't need to worry about it, because the cache is a "best effort"
      strucutre and we should be getting reasonable results even if some
      updates get lost. -}
      liftIO $
-       do cache    <- readIORef cacheRef
+       do cache <- readIORef cacheRef
           case cacheLookup f cache of
             Just (i,newCache) ->
               do writeIORef cacheRef $! newCache
                  return i
             Nothing ->
-              do o <- getCFunInfo f
+              do o <- getCFunInfo (castFunPtr f)
                  writeIORef cacheRef $! cacheInsert f o cache
                  return o
 
