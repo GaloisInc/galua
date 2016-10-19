@@ -424,6 +424,10 @@ function drawFunParts(f, nameHere, typeHere, pcHere, argsHere) {
         })
       }
       argsHere.append(' )')
+
+      if (f.phase !== undefined) {
+          argsHere.append(' - ' + f.phase)
+      }
   }
 
   nameHere.addClass('tooltipped')
