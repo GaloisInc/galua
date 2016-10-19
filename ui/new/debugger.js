@@ -64,12 +64,25 @@ function setStatus(ty,msg) {
     .text(msg)
 }
 
-function drawPrints(prints) {
+function drawPrints(dbgState,mbError, prints) {
 
   var here = $('#prints').empty()
 
+  if (mbError !== undefined) {
+    here.append($('<li/>')
+                .addClass('collection-item')
+                .append([ $('<span/>')
+                          .addClass('secondary-content')
+                          .append($('<i/>')
+                                  .addClass('material-icons red-text')
+                                  .text('error'))
+                        , drawValue(dbgState,mbError)
+                        ]))
+  }
+
   if (prints.length === 0) {
-    here.append($('<li/>').addClass('galua_remark').text('no output'))
+    here.append($('<li/>').addClass('collection-item galua_remark')
+                          .text('no output'))
   }
   else
     jQuery.each(prints, function(ix,ln) {
@@ -249,9 +262,13 @@ function drawDebugger() { return function (d) {
   var dbgState = newDebuggerState(d)
   drawSources(dbgState, d.sources)
   drawBreakPoints(dbgState, d.breakPoints)
-  drawPrints(d.prints)
 
   var state = d.state
+
+  var mbError = undefined
+  if (state.tag === 'error') mbError = state.error
+  if (state.tag === 'running') mbError = d.idle.error
+  drawPrints(dbgState,mbError,d.prints)
 
   switch (state.tag) {
 
@@ -286,19 +303,6 @@ function drawDebugger() { return function (d) {
                          .addClass('collection-item')
                          .append(drawValue(dbgState,v)))
         })
-
-      if (d.idle.error !== undefined) {
-        $('#prints')
-        .append($('<li/>')
-                .addClass('collection-item')
-                .append([ $('<span/>')
-                          .addClass('secondary-content')
-                          .append($('<i/>')
-                                  .addClass('material-icons red-text')
-                                  .text('error'))
-                        , drawValue(dbgState,d.idle.error)
-                        ]))
-      }
 
       break
 
