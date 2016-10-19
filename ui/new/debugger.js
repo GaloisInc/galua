@@ -335,17 +335,17 @@ function drawWatches(dbgState, vs) {
     return
   }
 
-  var vals = $('<table/>')
-             .addClass('bordered')
-             .css('margin','15px')
-
   jQuery.each(vs,function(ix,val) {
-    var row = $('<li/>').addClass('collection-item')
-    row.append($('<span/>').addClass('badge').text(val.name))
-    row.append(drawValue(dbgState,val.val))
-    mons.append(row)
+    mons.append(drawWatched(dbgState,val))
   })
 
+}
+
+function drawWatched(dbgState,val) {
+  var row = $('<li/>').addClass('collection-item')
+  row.append($('<span/>').addClass('badge').text(val.name))
+  row.append(drawValue(dbgState,val.val))
+  return row
 }
 
 

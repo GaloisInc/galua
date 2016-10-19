@@ -165,16 +165,17 @@ function drawExpandCollapseIcon(dbgState, v, startExpanded) {
 }
 
 
-function drawAddWatchIcon(v) {
+function drawAddWatchIcon(dbgState,v) {
   var watchIcon =
     roundButton('black white-text'
                , 'visibility'
                , 'Start monitoring'
                , function () {
                    jQuery.post('/watch', { id: v.ref }, function(exp) {
-                                   console.log(exp)
-                          })
-                         .fail(disconnected)
+                      $('#monitoring-content')
+                      .append(drawWatched(dbgState,exp))
+                   })
+                   .fail(disconnected)
                })
 
   return watchIcon
@@ -328,7 +329,7 @@ function drawCollapsedEx(dbgState, lab, v, startExpanded) {
 
 
   // Watch icon
-  icons.push(drawAddWatchIcon(v))
+  icons.push(drawAddWatchIcon(dbgState,v))
 
   // Analyze icon
   switch(v.tag) {

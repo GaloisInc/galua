@@ -265,7 +265,8 @@ watchExportable dbg n =
           case mb of
             Just (ExportableValue p _) ->
                 do io $ modifyIORef' dbgWatches $ \watches -> watches Seq.|> p
-                   return (Just (JS.object ["path" .= showValuePath p]))
+                   funs <- io $ readIORef (dbgSources dbg)
+                   Just <$> exportValuePath funs p
             Just (ExportableStackFrame {}) -> return Nothing
             Nothing -> return Nothing
   where
