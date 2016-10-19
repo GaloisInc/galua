@@ -58,7 +58,6 @@ oneStep vm instr = do
 performApiEnd :: VM -> ApiCall -> NextStep -> Alloc VMState
 performApiEnd vm _apiCall next = liftIO $
   do eenv <- stExecEnv <$> readRef (vmCurThread vm)
-     ApiCallActive _ <- readIORef (execApiCall eenv)
      writeIORef (execApiCall eenv) NoApiCall
      putMVar (machCServer (vmMachineEnv vm)) CResume
      return $ Running vm next
@@ -301,7 +300,6 @@ performYield vm k =
 
      liftIO $
        do let apiRef = execApiCall (stExecEnv th)
-          ApiCallActive _ <- readIORef apiRef
           writeIORef apiRef NoApiCall
           putMVar (machCServer (vmMachineEnv vm)) CAbort
 
