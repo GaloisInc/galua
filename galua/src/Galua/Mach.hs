@@ -410,9 +410,9 @@ machResume t = Mach $ \_ -> Resume t
 machYield :: Mach ()
 machYield = Mach $ \_ k -> Yield (k ())
 
-machApiCall :: ApiCall -> Mach a -> Mach ()
+machApiCall :: ApiCall -> Mach a -> Mach a
 machApiCall apiCall impl =
-  Mach $ \vm k -> ApiStart apiCall (runMach vm (impl >> abort (ApiEnd apiCall (k ()))))
+  Mach $ \vm k -> ApiStart apiCall (runMach vm (abort . ApiEnd apiCall . k =<< impl))
 
 machVM :: Mach VM
 machVM = Mach $ \e k -> k e
