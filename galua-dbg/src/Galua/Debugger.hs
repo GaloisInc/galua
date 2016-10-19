@@ -675,7 +675,6 @@ newEmptyDebugger threadVar opts =
                  , machOnShutdown =
                      do a <- takeMVar threadVar
                         cancel a
-                        () <$ waitCatch a
                  }
 
      (cptr, dbgNames, vm, next) <- setupLuaState cfg
