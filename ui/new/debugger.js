@@ -44,6 +44,14 @@ function newDebuggerState(d) {
   return { breakPoints:     brks
          , programCounter:  pc
          , fun_counter:     0
+
+         // Read only
+         , valueOpts: function(opts) {
+              return jQuery.extend( { expanded:  true
+                                    , watchMode:
+                                      'watch' // | 'unwatch' | 'no-watch'
+                                    }, opts)
+           }
          }
 }
 
@@ -240,10 +248,12 @@ function drawProfiling(dbgState,stats) {
 }
 
 function drawRegistry( dbgState, val) {
-  $('#registry-pane-content')
-  .empty()
-  .css('padding','15px')
-  .append(drawValueEx(dbgState, val, true))
+  var opts = dbgState.valueOpts({ expand: true
+                                , watchMode: 'no-watch'
+                                })
+  $('#registry-pane-content').empty()
+                             .css('padding','15px')
+                             .append(drawValueOpts(dbgState, val, opts))
 }
 
 
@@ -329,9 +339,7 @@ function drawWatches(dbgState, vs) {
 
   var mons = $('#monitoring-content').empty()
   if (vs.length === 0) {
-    mons.append($('<li/>')
-                .addClass('galua_remark')
-                .text('not monitoring anything'))
+    mons.append(drawEmptyWatch())
     return
   }
 
@@ -341,12 +349,25 @@ function drawWatches(dbgState, vs) {
 
 }
 
+function drawEmptyWatch() {
+  return $('<li/>')
+         .attr('id','galua-empty-watch')
+         .addClass('galua_remark')
+         .text('not monitoring anything')
+
+}
+
 function drawWatched(dbgState,val) {
-  var row = $('<li/>').addClass('collection-item')
+  var row = $('<li/>')
+            .addClass('collection-item')
+            .attr('id',watchId(val.id))
   row.append($('<span/>').addClass('badge').text(val.name))
-  row.append(drawValue(dbgState,val.val))
+  var opts = dbgState.valueOpts({watchMode: 'unwatch', watchId: val.id })
+  row.append(drawValueOpts(dbgState,val.val,opts))
   return row
 }
+
+function watchId(i) { return 'watch_id_' + i }
 
 
 

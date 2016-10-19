@@ -1,8 +1,8 @@
 function drawValue(dbgState,v) {
-  return drawValueEx(dbgState,v,false);
+  return drawValueOpts(dbgState,v,dbgState.valueOpts())
 }
 
-function drawValueEx(dbgState,v,startExpanded) {
+function drawValueOpts(dbgState,v,opts) {
 
   var label
 
@@ -74,7 +74,7 @@ function drawValueEx(dbgState,v,startExpanded) {
       label = $('<span/>').addClass('value').text(v.text)
   }
 
-  var x = drawCollapsedEx(dbgState, label, v, startExpanded)
+  var x = drawCollapsedEx(dbgState, label, v, opts)
   return $('<span/>').append(x.small)
                      .append(x.big)
 }
@@ -109,10 +109,10 @@ function drawOrigin(o) {
 }
 
 
-function drawExpandCollapseIcon(dbgState, v, startExpanded) {
+function drawExpandCollapseIcon(dbgState, v, opts) {
 
   var downloaded = false
-  var open       = startExpanded
+  var open       = opts.expand
 
   var initialImage = open ? 'arrow_drop_up' : 'arrow_drop_down'
 
@@ -165,20 +165,40 @@ function drawExpandCollapseIcon(dbgState, v, startExpanded) {
 }
 
 
-function drawAddWatchIcon(dbgState,v) {
-  var watchIcon =
-    roundButton('black white-text'
-               , 'visibility'
-               , 'Start monitoring'
-               , function () {
-                   jQuery.post('/watch', { id: v.ref }, function(exp) {
-                      $('#monitoring-content')
-                      .append(drawWatched(dbgState,exp))
-                   })
-                   .fail(disconnected)
-               })
+function drawAddWatchIcon(dbgState,v,opts) {
 
-  return watchIcon
+  switch (opts.watchMode) {
+    case 'watch':
+      return roundButton('black white-text'
+                        , 'visibility'
+                        , 'Start monitoring'
+                        , function () {
+                            jQuery.post('/watch', { id: v.ref }, function(exp) {
+                               $('#galua-empty-watch').remove()
+                               $('#monitoring-content')
+                               .append(drawWatched(dbgState,exp))
+                            })
+                            .fail(disconnected)
+                        })
+    case 'unwatch':
+      return roundButton( 'black white-text'
+                        , 'visibility_off'
+                        , 'Stop monitoring'
+                        , function () {
+                            var i = opts.watchId
+                            jQuery.post('/unwatch', { id: i },
+                              function() {
+                                $('#' + watchId(i)).remove()
+                                var mons = $('#monitoring-content')
+                                if (mons.children().length === 0)
+                                   mons.append(drawEmptyWatch())
+                              })
+                            .fail(disconnected)
+                        })
+    default:
+      console.log('Malformed `watchMode`')
+      return []
+  }
 }
 
 function drawAltRepIcon(v,lab,alt) {
@@ -287,7 +307,7 @@ function drawCollapsed(dbgState, lab, v) {
 }
 
 
-function drawCollapsedEx(dbgState, lab, v, startExpanded) {
+function drawCollapsedEx(dbgState, lab, v, opts) {
 
   var icons = []    // These go in the pop-up menu
   var here  = []    // This is what shows up when we expand the thing
@@ -297,7 +317,7 @@ function drawCollapsedEx(dbgState, lab, v, startExpanded) {
     case 'table':
     case 'user_data':
     case 'closure':
-      var expand = drawExpandCollapseIcon(dbgState, v, startExpanded)
+      var expand = drawExpandCollapseIcon(dbgState, v, opts)
       icons.push(expand.icon)
       here.push(expand.dom)
   }
@@ -329,7 +349,8 @@ function drawCollapsedEx(dbgState, lab, v, startExpanded) {
 
 
   // Watch icon
-  icons.push(drawAddWatchIcon(dbgState,v))
+  if (opts.watchMode !== 'no-watch')
+    icons.push(drawAddWatchIcon(dbgState,v,opts))
 
   // Analyze icon
   switch(v.tag) {

@@ -1,6 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, OverloadedStrings, NamedFieldPuns #-}
 module Galua.Debugger.View
-  ( exportDebugger, exportFun, expandExportable, watchExportable
+  ( exportDebugger, exportFun, expandExportable
+  , watchExportable, unwatchExportable
   , exportV -- MAYBE NOT
   , importBreakLoc
   , exportBreakLoc
@@ -135,7 +136,8 @@ exportDebugger dbg =
                                           { openThreads = openThreads r }
      (jsWatches, jsSt, jsIdle)
        <- runExportM dbg $
-         do jsWatches <- traverse (exportValuePath funs) (toList watches)
+         do jsWatches <- traverse (exportValuePath funs)
+                                  (watchListToList watches)
             jsSt      <- exportVMState funs st
             jsIdle <- exportIdleReason funs idle
             return (jsWatches, jsSt, jsIdle)
@@ -257,6 +259,11 @@ analyze dbg n =
   dotFile pre x = pre ++ "_" ++ funIdString x ++ ".dot"
 
 
+unwatchExportable :: Debugger -> Int -> IO ()
+unwatchExportable dbg n =
+  whenStable dbg False $
+    modifyIORef'  (dbgWatches dbg) (watchListRemove n)
+
 watchExportable :: Debugger -> Integer -> IO (Maybe JS.Value)
 watchExportable dbg n =
   whenStable dbg False $
@@ -264,13 +271,15 @@ watchExportable dbg n =
        do mb <- lookupThing n
           case mb of
             Just (ExportableValue p _) ->
-                do io $ modifyIORef' dbgWatches $ \watches -> watches Seq.|> p
-                   funs <- io $ readIORef (dbgSources dbg)
-                   Just <$> exportValuePath funs p
-            Just (ExportableStackFrame {}) -> return Nothing
-            Nothing -> return Nothing
+                do (funs,ip) <- io $ do ws <- readIORef dbgWatches
+                                        let (i,ws1) = watchListExtend p ws
+                                        writeIORef dbgWatches $! ws1
+                                        funs <- readIORef dbgSources
+                                        return (funs,(i,p))
+                   Just <$> exportValuePath funs ip
+            _ -> return Nothing
   where
-  Debugger { dbgWatches } = dbg
+  Debugger { dbgSources, dbgWatches } = dbg
 
 expandExportable :: Debugger -> Integer -> IO (Maybe JS.Value)
 expandExportable dbg n =
@@ -317,11 +326,12 @@ importBreakLoc txt =
                     return (op,fid)
     _ -> Nothing
 
-exportValuePath :: Chunks -> ValuePath -> ExportM JS.Value
-exportValuePath funs path =
+exportValuePath :: Chunks -> (Int, ValuePath) -> ExportM JS.Value
+exportValuePath funs (uid,path) =
   do v <- exportValue funs path . fromMaybe Nil =<< io (getValue path)
      return $ JS.object
        [ "name" .= showValuePath path
+       , "id"   .= uid
        , "val"  .= v
        ]
 

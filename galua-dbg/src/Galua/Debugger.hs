@@ -36,6 +36,10 @@ module Galua.Debugger
   , exportExecEnvId
   , importExecEnvId
   , resolveName
+
+  -- * WatchList
+  , WatchList, watchListEmpty, watchListRemove, watchListExtend
+  , watchListToList
   ) where
 
 import           Galua(setupLuaState)
@@ -61,6 +65,8 @@ import           Language.Lua.Bytecode.FunId
 import           Data.Maybe (catMaybes)
 import           Data.Map (Map)
 import qualified Data.Map as Map
+import           Data.IntMap (IntMap)
+import qualified Data.IntMap as IntMap
 import           Data.Set ( Set )
 import qualified Data.Set as Set
 import           Data.Sequence (Seq)
@@ -144,7 +150,7 @@ data Debugger = Debugger
          The break points at key 'Nothing' are added to the first chunk
          tath is loaded. -}
 
-  , dbgWatches   :: !(IORef (Seq ValuePath))       -- ^ Watched values
+  , dbgWatches   :: !(IORef WatchList)
 
   , dbgExportable :: !(IORef ExportableState)
     -- ^ Things that may be expanded further.
@@ -157,6 +163,35 @@ data IdleReason = Ready
                 | ReachedBreakPoint
                 | ThrowingError Value
                 | Executing
+
+
+--------------------------------------------------------------------------------
+-- The watch list
+
+data WatchList = WatchList
+  { wlNextId :: !Int
+  , wlItems  :: !(IntMap ValuePath)
+  }
+
+watchListEmpty :: WatchList
+watchListEmpty = WatchList { wlNextId = 0, wlItems = IntMap.empty }
+
+watchListToList :: WatchList -> [(Int,ValuePath)]
+watchListToList WatchList { .. } = IntMap.toList wlItems
+
+watchListExtend :: ValuePath -> WatchList -> (Int,WatchList)
+watchListExtend vp WatchList { .. } =
+  (wlNextId, WatchList { wlNextId = 1 + wlNextId
+                       , wlItems  = IntMap.insert wlNextId vp wlItems
+                       })
+
+watchListRemove :: Int -> WatchList -> WatchList
+watchListRemove n WatchList { .. } =
+  WatchList { wlItems = IntMap.delete n wlItems, .. }
+
+
+
+--------------------------------------------------------------------------------
 
 --------------------------------------------------------------------------------
 -- Keeping track of expand/collapsed state of references
@@ -629,7 +664,7 @@ newEmptyDebugger threadVar opts =
 
      dbgClients <- newIORef []
      dbgSources <- newIORef chunks
-     dbgWatches <- newIORef Seq.empty
+     dbgWatches <- newIORef watchListEmpty
      dbgBrkAddOnLoad <- newIORef (optBreakPoints opts)
      dbgBreaks       <- newIORef Set.empty
 

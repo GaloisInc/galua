@@ -7,7 +7,9 @@ import           Galua.Debugger.Options(Options(..), defaultOptions)
 import           Galua.Debugger.PrettySource(NameId(..))
 import           Galua.Debugger
 import           Galua.Debugger.View
-                  (exportDebugger,watchExportable,expandExportable,
+                  ( exportDebugger
+                  , watchExportable, unwatchExportable
+                  , expandExportable,
                       analyze,
                       exportFun,importBreakLoc,exportBreakLoc,exportV)
 import           Galua.Debugger.EmbedDirectory (embedDirectory)
@@ -147,6 +149,7 @@ apiRoutes st =
 
      , ("/expand",    cmd snapExpand)
      , ("/watch",     cmd snapWatch)
+     , ("/unwatch",   cmd snapUnwatch)
      , ("/watchName", cmd snapWatchName)
 
      , ("/breakOnErr", cmd snapBreakOnError)
@@ -175,6 +178,11 @@ snapWatch dbg =
      case mb of
        Nothing -> notFound
        Just js -> sendJSON js
+
+snapUnwatch :: Debugger -> Snap ()
+snapUnwatch dbg =
+  do n  <- natParam "id"
+     liftIO (unwatchExportable dbg (fromInteger n))
 
 snapWatchName :: Debugger -> Snap ()
 snapWatchName dbg =
