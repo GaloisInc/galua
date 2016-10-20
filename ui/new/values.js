@@ -476,13 +476,20 @@ function drawTable(dbgState,id,t) {
     var thisClass = 'galua-table-chunk-' + chunkNum
     var nextChunk = ++chunkNum
 
-    jQuery.each(ents.values, function(ix,entry) {
-      var r = $('<tr/>').addClass(thisClass)
-      var k = $('<td/>').append(drawValue(dbgState,entry.key))
-      var v = $('<td/>').append(drawValue(dbgState,entry.value))
-      r.append([k,v])
-      d.append(r)
-    })
+    if (ents.values.length === 0) {
+      d.append($('<tr/>')
+               .append($('<td/>')
+                       .attr('colspan','2')
+                       .addClass('galua_remark')
+                       .text('empty table')))
+    } else
+      jQuery.each(ents.values, function(ix,entry) {
+        var r = $('<tr/>').addClass(thisClass)
+        var k = $('<td/>').append(drawValue(dbgState,entry.key))
+        var v = $('<td/>').append(drawValue(dbgState,entry.value))
+        r.append([k,v])
+        d.append(r)
+      })
 
     var subOpen = false
     var downloaded = false
