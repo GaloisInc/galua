@@ -196,7 +196,7 @@ function drawAddWatchIcon(dbgState,v,opts) {
                             .fail(disconnected)
                         })
     default:
-      console.log('Malformed `watchMode`')
+      console.log('Malformed `watchMode`', opts)
       return []
   }
 }
@@ -303,7 +303,7 @@ function drawAnalyzeIcon(dbgState, v) {
 
 
 function drawCollapsed(dbgState, lab, v) {
-        return drawCollapsedEx(dbgState, lab, v, false);
+        return drawCollapsedEx(dbgState, lab, v, dbgState.valueOpts());
 }
 
 

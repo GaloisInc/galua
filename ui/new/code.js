@@ -254,11 +254,8 @@ function drawLine(dbgState,context,chunkId,here) {
             } else {
               h.append($("<span/>").addClass("code_line identifier")
                                    .text(x.name))
-              var opts = jQuery.extend( {}
-                                      , defaultValueOpts
-                                      , { expand: true }
-                                      )
-              c.append(drawValueOpts(dbgState,x.value,opts))
+              c.append(drawValueOpts(dbgState,x.value
+                      ,dbgState.valueOpts({expand:true})))
             }
           }
 
