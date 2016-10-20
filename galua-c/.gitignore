@@ -4,3 +4,5 @@
 /galua
 /galua-dbg
 /lualibs/objs
+/Lua.framework/Versions/A/Headers/
+/Lua.framework/Versions/A/Lua
