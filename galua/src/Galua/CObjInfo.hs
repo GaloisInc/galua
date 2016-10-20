@@ -81,8 +81,8 @@ cfunInfoFun =
                             Nothing -> Nothing
                             Just n  -> n `seq` Just (show n)
              }
-#elif
-  return $
+#elif LUA_USE_MACOSX
+  return $ \fptr ->
   do mb <- funPtrInfo fptr
      case mb of
        Nothing -> return (noFunInfo fptr)
