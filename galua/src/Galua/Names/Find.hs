@@ -20,7 +20,7 @@ import           Data.Text (Text)
 import qualified Data.Text as Text
 import           Data.Text.Encoding(encodeUtf8,decodeUtf8)
 import           Data.Char(isAlphaNum,isAlpha,isAscii)
-import           Language.Lua.Annotated.Lexer (SourcePos,SourceRange(..),showRange)
+import           Language.Lua.Annotated.Lexer (SourceRange(..),showRange)
 import           Language.Lua.Annotated.Simplify
 import           Language.Lua.Annotated.Syntax
 import           Language.Lua.StringLiteral(interpretStringLiteral)
@@ -244,9 +244,9 @@ instance Resolve (Stat SourceRange) where
                                newScope (declareInvisible 3 *>
                                          traverse_ declareAndUse is *>
                                          resolve b)
-      FunAssign a n x       -> resolve n *>
+      FunAssign _ n x       -> resolve n *>
                                declareFun (isMethod n) x
-      LocalFunAssign a n b  -> declareAndUse n *>
+      LocalFunAssign _ n b  -> declareAndUse n *>
                                declareFun False b
       LocalAssign _ xs b    -> resolve b <*   -- Note the order here!
                                traverse_ declareAndUse xs
@@ -301,7 +301,7 @@ instance Resolve (Exp SourceRange) where
                           Just ok -> pure (EString (LBS.toStrict ok))
                           Nothing -> ignore
       Vararg a       -> ignore <* emit a (pure EVarArg)
-      EFunDef a (FunDef _ b) -> declareFun False b
+      EFunDef _ (FunDef _ b) -> declareFun False b
       PrefixExp _ p  -> resolve p
       TableConst _ t -> resolve t
       Binop _ _ l r  -> resolve (l,r)
