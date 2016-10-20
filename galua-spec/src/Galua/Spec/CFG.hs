@@ -1,4 +1,5 @@
 {-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE FlexibleInstances #-}
 module Galua.Spec.CFG where
 
@@ -150,11 +151,66 @@ data FunBody = FunBody Annot [Name] (Maybe Annot) CFG
 
 --------------------------------------------------------------------------------
 
-newtype M a = M { unM :: StateT RW Lift a }
+newtype M a = M { unM :: StateT RW (ExceptionT Error Id) a }
+
+data Seed = Seed { seedNextBlockId, seedNextNameId :: !Int }
+
+run :: Seed -> [Lua.Name Annot] -> M a -> Either Error (a, CFG, Seed)
+run Seed { .. } ups (M m) =
+  case final m of
+    Left err     -> Left err
+    Right (a,rw) ->
+      case curBlock rw of
+        Nothing -> Right ( a
+                         , CFG { cfgBlocks = finishedBlocks rw
+                               , cfgEntry  = seedNextBlockId
+                               }
+                         , Seed { seedNextBlockId = nextBlockId rw
+                                , seedNextNameId  = nextNameId rw
+                                }
+                         )
+        Just (l,_) -> panic ("run: Unterminated block " ++ show l)
+
+  where
+  final   = runId . runExceptionT . runStateT initRW
+
+  initRW = RW { prevScopes      = []
+              , globals         = []
+              , upvalues        = zipWith toUpvalue ups [ seedNextBlockId .. ]
+              , curScope        = emptyScope
+              , curBlock        = Nothing
+              , finishedBlocks  = Map.empty
+              , nextBlockId     = seedNextBlockId
+              , nextNameId      = seedNextNameId + length ups
+              }
+
+  toUpvalue l n = (l, Name { nameId = n
+                           , nameType = UpvalueName
+                           , nameOrig = l
+                           })
+
+data Error = UndefinedLabel (Lua.Name Annot)
+           | MultipleLabelDefinitionsFor (Lua.Name Annot)
+
+-- XXX: We use association lists because `Lua.Name` is not in `Ord`.
+data Scope = Scope
+  { scopeVars   :: [ (Lua.Name Annot, Name) ]
+  , scopeLabels :: [ (Lua.Name Annot, Label) ]
+  }
+
+emptyScope :: Scope
+emptyScope = Scope { scopeVars = [], scopeLabels = [] }
 
 
 data RW = RW
-  {
+  { prevScopes      :: ![Scope]
+  , globals         :: ![(Lua.Name Annot, Name)]
+  , upvalues        :: ![(Lua.Name Annot, Name)]
+  , curScope        :: !Scope
+  , curBlock        :: !(Maybe (Label,[Stat]))  -- ^ statements are reversed
+  , finishedBlocks  :: !(Map Label BasicBlock)
+  , nextBlockId     :: !Int
+  , nextNameId      :: !Int
   }
 
 instance Functor M where
@@ -166,35 +222,101 @@ instance Monad M where
   (>>=) = derive_bind (Iso M unM)
 
 
+panic :: String -> a
+panic x = error ("[bug] " ++ x)
+
+reportError :: Error -> M a
+reportError err = M $ raise err
+
 emit :: Stat -> M ()
-emit = undefined
+emit s = M $ sets_ $ \RW { .. } ->
+  case curBlock of
+    Nothing     -> panic "emit: Nothing"
+    Just (l,bs) -> RW { curBlock = Just (l, s : bs), .. }
 
 endCurrentBlock :: EndStat -> M ()
-endCurrentBlock = undefined
+endCurrentBlock e = M $ sets_ $ \RW { .. } ->
+  case curBlock of
+    Nothing -> panic "endCurrentBlock: Nothing"
+    Just (l,bs) ->
+      let bb = BasicBlock
+                { bbStmts = Vector.fromList (reverse bs)
+                , bbExit  = e
+                }
+      in RW { curBlock       = Nothing
+            , finishedBlocks = Map.insert l bb finishedBlocks
+            , .. }
 
 setCurrentBlock :: Label -> M ()
-setCurrentBlock = undefined
+setCurrentBlock l = M $ sets_ $ \RW { .. } ->
+  case curBlock of
+    Just (l,_) -> panic ("setCurrentBlock: unterminated block " ++ show l)
+    Nothing -> RW { curBlock = Just (l,[]), .. }
+
 
 newBlock :: M Label
-newBlock = undefined
+newBlock = M $ sets $ \RW { .. } ->
+  (nextBlockId, RW { nextBlockId = 1 + nextBlockId, .. })
 
-assicateLabel :: Name -> Label -> M ()
-assicateLabel = undefined
+cvtLuaLabelNew :: Lua.Name Annot -> Label -> M ()
+cvtLuaLabelNew l bl =
+  do RW { .. } <- M get
+     when (l `elem` map fst (scopeLabels curScope)) $
+       reportError (MultipleLabelDefinitionsFor l)
+     M $ set RW { curScope = curScope
+                               { scopeLabels = (l,bl) : scopeLabels curScope }
+                , .. }
 
-lookupLabel :: Name -> M Label
-lookupLabel = undefined
+cvtLuaLabelUse :: Lua.Name Annot -> M Label
+cvtLuaLabelUse l =
+  do RW { .. } <- M get
+     let check Scope { .. } = lookup l scopeLabels
+     case msum (map check (curScope : prevScopes)) of
+       Nothing -> reportError (UndefinedLabel l)
+       Just x  -> return x
+
 
 pushScope :: M ()
-pushScope = undefined
+pushScope = M $ sets_ $ \RW { .. } ->
+                         RW { curScope = emptyScope
+                            , prevScopes = curScope : prevScopes
+                            , .. }
 
 popScope :: M ()
-popScope = undefined
-
-cvtNameUse :: Lua.Name Annot -> M Name
-cvtNameUse = undefined
+popScope = M $ sets_ $ \RW { .. } ->
+                        case prevScopes of
+                          s : ss -> RW { curScope = s, prevScopes = ss, .. }
+                          []     -> panic "popScope: []"
 
 cvtNameNew :: Lua.Name Annot -> M Name
-cvtNameNew = undefined
+cvtNameNew l = M $ sets $ \RW { curScope = Scope { .. }, .. } ->
+  let name = Name { nameId   = nextNameId
+                  , nameType = LocalName
+                  , nameOrig = l
+                  }
+  in ( name
+     , RW { curScope   = Scope { scopeVars = (l,name) : scopeVars, .. }
+          , nextNameId = 1 + nextNameId
+          , ..
+          }
+     )
+
+cvtNameUse :: Lua.Name Annot -> M Name
+cvtNameUse l =
+  do RW { .. } <- M get
+     let check Scope { .. } = lookup l scopeVars
+     case msum (map check (curScope : prevScopes) ++
+                  [ lookup l upvalues, lookup l globals ]) of
+       Nothing ->
+         do let n = Name { nameId   = nextNameId
+                         , nameType = GloabalName
+                         , nameOrig = l
+                         }
+            M $ set RW { globals = (l,n) : globals, .. }
+            return n
+       Just n -> return n
+
+
 
 
 
@@ -220,15 +342,13 @@ instance CvtStat Lua.Stat where
            emit (FunCallStat f')
 
       Lua.Label _ l ->
-        do l' <- cvtNameNew l
-           x <- newBlock
-           assicateLabel l' x
+        do x  <- newBlock
+           cvtLuaLabelNew l x
            endCurrentBlock (Goto [x])
            setCurrentBlock x
 
       Lua.Goto _ l ->
-        do l' <- cvtNameUse l
-           x <- lookupLabel l'
+        do x <- cvtLuaLabelUse l
            endCurrentBlock (Goto [x])
 
       Lua.Do _ b ->
