@@ -1,30 +1,5 @@
-
-
 #status {
         width: 10em;
-}
-
-.galua-small-label {
-  font-size: 10px;
-  font-style: italic;
-  color: #999;
-}
-
-.galua-line-number {
-  font-size: 10px;
-  color: #999;
-}
-
-.galua-code-table {
-  height: 700px;
-  overflow: scroll;
-}
-
-
-.galua-code-table td {
-  border: 1px solid black;
-  padding: 0;
-  width: 10px;
 }
 
 .gal_highlight_name {
@@ -39,33 +14,23 @@
   background-color: pink;
 }
 
-
-.cur-line.galua-source-line {
+.cur-line td {
   background-color: #fee;
-}
-
-.cur-line.galua-opcode-line {
-  background-color: #ccc;
-}
-
-.galua-source-line {
-  background-color: #fff;
-}
-
-.galua-opcode-line {
-  background-color: #eceff1;
-}
-
-.galua-opcode-line .galua-line-number {
-  padding-left: 1em;
 }
 
 .code_line {
   white-space: pre;
-  font-size:   12px;
+  font-size: 12px;
   font-family: Consolas, monospace, serif;
 }
 
+.gal_code_box {
+  background-color: #eeeeee;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  margin-left: 5px;
+  padding: 3px;
+}
 
 .keyword {
   color: #2d7091;

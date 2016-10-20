@@ -1,56 +1,113 @@
 
+function listThreads() {
+  var names = []
+  jQuery.each($('#thread_tabs>li>a'), function(ix,el) {
+    names.push($(el).attr('href').replace('#thread_',''))
+  })
+  return names
+}
+
+function removeThread(thread_name) {
+  var tid = 'thread_' + thread_name
+  var cid = 'code_for_' + thread_name
+
+  function rm(loc,nm) {
+    $('#' + loc + '_tabs>li:has(a[href="#' + nm + '"])').remove()
+    $('#' + loc + '_panes>#' + nm).remove()
+    $('#' + loc + '_tabs').tabs()
+  }
+
+  rm('thread', 'thread_' + thread_name)
+  rm('code','code_for_' + thread_name)
+}
+
+
 
 function drawNewThread(dbgState, thread) {
 
-  var stack     = $('<ul/>').addClass('uk-list uk-list-line')
-  var handlers  = $('<ul/>').addClass('uk-list uk-list-line')
-  var locals    = $('<li/>')
-  var code      = $('<table/>').addClass('code_box')
+  var threadId = "thread_" + thread.name
+  var codeID   = "code_for_" + thread.name
 
-  var locals_entry    = locals
-  var stack_entry     = $('<li/>').append(stack)
-  var handlers_entry  = $('<li/>').append(handlers)
-  var code_entry      = $('<li/>').append(code)
-
+  function allocateNewParts() {
+    var stack     = $('<ul/>').addClass('stack collection')
+    var handlers  = $('<ul/>').addClass('handlers collection')
+    var locals    = $('<ul/>').addClass('variables collection')
+    var code = newCodeContainer(dbgState,'Thread ' + thread.name, codeID, null)
 
 
+    var varSec =
+      $('<li/>')
+      .append([ $('<div/>')
+                .addClass('collapsible-header active')
+                .append([ $('<span/>')
+                          .addClass('galua_section_label').text('Variable')
+                        , $('<span/>').addClass('curFun')
+                        ]
+                       )
+              , $('<div/>')
+              .addClass('collapsible-body')
+              .append(locals)
+              ])
 
-  var tab = $('<a/>').attr('href','').text('Thread ' + thread.name)
+    function entry(name,active,thing) {
+      return $('<li/>')
+             .append([ $('<div/>')
+                       .addClass('collapsible-header'+(active ? ' active' : ''))
+                       .append($('<span/>')
+                               .addClass('galua_section_label').text(name))
+                     , $('<div/>')
+                       .addClass('collapsible-body')
+                       .append(thing) ])
+    }
 
-  var closeBtn = $('<span/>')
-                 .addClass('uk-close')
-                 .css('margin-left', '0.5em')
-                 .click(function() {
-                          tab.remove()
-                          locals_entry.remove()
-                          stack_entry.remove()
-                          handlers_entry.remove()
-                          code_entry.remove()
-                          return false })
+    var pane = $('<ul/>')
+               .attr('id', threadId)
+               .addClass('collapsible')
+               .attr('data-collapsible','expandable')
+               .append([ varSec // entry('Variables', true, locals)
+                       , entry('Call Stack', false, stack)
+                       , entry('Error Handlers', false, handlers)
+                       ])
+               .collapsible()
 
-  tab.append(closeBtn)
+    var tabs = $('#thread_tabs')
+    $('#thread_panes').append(pane)
 
+    tabs.append($('<li/>')
+                .addClass('tab')
+                .append($('<a/>')
+                        .attr('href', '#' + threadId)
+                        .text('Thread ' + thread.name)))
+    tabs.tabs()
+    tabs.tabs('select_tab', threadId)
+  }
 
-  $('#thread_vars').append(locals_entry)
-  $('#thread_stack').append(stack_entry)
-  $('#thread_handlers').append(handlers_entry)
-  $('#thread_code').append(code_entry)
+  var me = $('#' + threadId)
+  if (me.length === 0) {
+    allocateNewParts()
+    me = $('#' + threadId)
+  }
 
-  $('#thread_tabs').append($('<li/>').append(tab))
+  var out = $('#' + codeID)
 
-
-  var threadParts = { stack: stack
-                    , handlers: handlers, code: code, locals: locals }
+  var threadParts = { stack:    me.find('.stack')
+                    , handlers: me.find('.handlers')
+                    , code:     out.find('.function')
+                    , locals:   me.find('.variables')
+                    , curFun:   me.find('.curFun')
+                    }
 
   var env = thread.env
 
   fillInExecEnv(dbgState, threadParts, env)
 
+  threadParts.stack.empty()
   jQuery.each(thread.stack, function(ix,f) {
     var fst = ix === 0
     threadParts.stack.append(drawStackFrame(dbgState, threadParts, f, fst))
   })
 
+  threadParts.handlers.empty()
   jQuery.each(thread.handlers, function(ix,h) {
     threadParts.handlers.append(drawHandler(dbgState, h))
   })
@@ -63,16 +120,16 @@ function drawNewThread(dbgState, thread) {
 
 function fillInExecEnv(dbgState, threadParts, env) {
 
+  threadParts.curFun.empty().append(drawFunName(env))
+
+
   threadParts.locals.empty()
-                    .append([ drawFunName(env)
-                            , $('<hr/>')
-                            , drawValueList(dbgState, 'ups',  env.upvalues)
+                    .append([ drawValueList(dbgState, 'ups',  env.upvalues)
                             , drawValueList(dbgState, 'vas',  env.varargs)
                             , drawValueList(dbgState, 'regs', env.registers)
                             ])
 
   threadParts.code.empty()
-
 
   if (env.code) {
     var oldPC = dbgState.programCounter
@@ -83,8 +140,10 @@ function fillInExecEnv(dbgState, threadParts, env) {
     }
     drawFunction(dbgState, threadParts.code, env.code)
     dbgState.programCounter = oldPC
+  } else {
+    var noCode = $('<div/>').text('No code available for this function')
+    threadParts.code.append(noCode)
   }
-
 
 }
 
@@ -92,14 +151,15 @@ function fillInExecEnv(dbgState, threadParts, env) {
 // The `threadParts` are passed in so that we can fill in the correct
 // elements when the user asks for details of the stack frame.
 function drawStackFrame(dbgState,threadParts,f,focused) {
-  var box = $('<div/>').addClass('uk-alert')
-  var box = $('<li/>')
+  var box = $('<li/>').addClass('collection-item')
 
   switch (f.tag) {
     case 'call':
-      var ptr = $('<i/>').addClass('stack-ptr uk-icon-chevron-right')
-                         .css('margin-right', '0.5em')
-      if (!focused) ptr.addClass('uk-hidden')
+      var ptr = $('<span/>')
+                .addClass('secondary-content stack-ptr')
+                .append($('<i/>').addClass('material-icons')
+                                 .text('chevron_left'))
+      if (!focused) ptr.addClass('hide')
       box.append(ptr)
       box.append(drawFunName(f))
       box.css('cursor','pointer')
@@ -108,24 +168,24 @@ function drawStackFrame(dbgState,threadParts,f,focused) {
             fillInExecEnv(dbgState,threadParts, exp)
             box.siblings().children()
                           .filter('.stack-ptr')
-                          .addClass('uk-hidden')
-            ptr.removeClass('uk-hidden')
+                          .addClass('hide')
+            ptr.removeClass('hide')
           }).fail(disconnected)
       })
       break
 
     case 'throw_error':
-      box.addClass('uk-alert-danger').text('Error')
+      box.addClass('white-text red chip').text('Error')
   }
   return box
 }
 
 
 function drawHandler(dbgState, h) {
-  var me = $('<li/>')
+  var me = $('<li/>').addClass('collection-item')
   switch (h.tag) {
     case 'default':
-      me.text('(default)')
+      me.addClass('galua_remark').text('default handler')
       break
     case 'handler':
       me.append(drawValue(dbgState,h.value))

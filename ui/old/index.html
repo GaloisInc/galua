@@ -1,0 +1,259 @@
+<!doctype html>
+<html class="uk-height-1-1">
+<head>
+<title>Galua Debugger</title>
+<link rel="icon" type="image/png" href="logo_32x32.png" />
+
+<script src="/libs/jquery.min.js"></script>
+
+<link rel="stylesheet" href="libs/uikit/css/uikit.gradient.min.css"/>
+<script src="libs/uikit/js/uikit.min.js"></script>
+
+<script src="code.js"></script>
+<link rel="stylesheet" href="code.css">
+<script src="values.js"></script>
+<script src="debugger.js"></script>
+<script src="thread.js"></script>
+<script src="analysis.js"></script>
+
+<link rel="stylesheet" href="libs/uikit/css/components/tooltip.min.css"/>
+<script src="libs/uikit/js/components/tooltip.min.js"></script>
+
+<link rel="stylesheet" href="libs/uikit/css/components/accordion.min.css"/>
+<script src="libs/uikit/js/components/accordion.min.js"></script>
+
+<script src="libs/uikit/js/components/sticky.min.js"></script>
+<style>
+
+
+
+.code_box {
+  border-collapse: collapse;
+}
+
+.small_label {
+  font-style: italic;
+  font-size: 10px;
+  color: #999;
+  font-family: times;
+}
+
+</style>
+<script>
+$(document).ready(function() {
+  jQuery.get('/view', drawDebugger(false))
+        .fail(disconnected)
+})
+</script>
+</head>
+<body class="uk-height-1-1" class="tooltip-container">
+
+  <!-- Stepping buttons -->
+  <div style="z-index: 1" data-uk-sticky>
+    <nav class="uk-navbar">
+      <div class="uk-navbar-flip">
+        <ul class="uk-navbar-nav">
+          <li><a href="#sources-menu" data-uk-offcanvas
+                 title="Browse functions" data-uk-tooltip>
+              <i class="uk-icon-map"></i></a></li>
+          <li><a href="#breakpoints-menu" data-uk-offcanvas
+                 title="Browse breakpoints" data-uk-tooltip>
+              <i class="uk-icon-arrow-circle-right"></i></a></li>
+          <li><a href="#profiling-menu" data-uk-offcanvas
+                 title="See profiling information" data-uk-tooltip>
+              <i class="uk-icon-tasks"></i></a></li>
+        </ul>
+      </div>
+
+      <ul class="uk-navbar-nav">
+
+        <li><div class="uk-navbar-brand uk-badge" id="status"></div></li>
+
+        <li><a href="#" onclick="drawStep('/run')"
+               title="Run to break" data-uk-tooltip>
+            <i class="uk-icon-play"></i></a></li>
+
+        <li><a href="#" onclick="makeStep('/stepOver')"
+               title="Step over function call" data-uk-tooltip>
+            <i class="uk-icon-step-forward"></i></a></li>
+
+        <li><a href="#" onclick="makeStep('/step')"
+               title="Step into function call" data-uk-tooltip>
+            <i class="uk-icon-level-down"></i></a></li>
+
+        <li><a href="#" onclick="drawStep('/stepOutOf')"
+               title="Step out of function call" data-uk-tooltip>
+            <i class="uk-icon-level-up"></i>
+            </a></li>
+
+        <li><a href="#" onclick="drawStep('/pause')"
+               title="Pause execution" data-uk-tooltip>
+            <i class="uk-icon-pause"></i></a></li>
+
+        <li><div class="uk-navbar-content">
+              Step by
+              <label><input type="radio"
+                            value="Line"
+                            name="step_type"
+                            checked="checked">line</label>
+              <label><input type="radio"
+                            value="OpCode"
+                            name="step_type">op-code</label>
+            </div></li>
+
+        <li><div class="uk-navbar-content">
+            <label><input id="break_on_error"
+                          type="checkbox"
+                          onclick="return setBreakOnError()"
+                          checked="checked">stop on error</label>
+            </div></li>
+
+      </ul>
+    </nav>
+  </div>
+
+  <!-- The main display -->
+  <div class="uk-panel uk-panel-space" style="height:85%">
+    <!-- Results -->
+    <div id="result" class="uk-panel"></div>
+
+    <!-- Displays -->
+    <div class="uk-grid uk-width-1-1 uk-height-1-1">
+
+      <!-- LHS -->
+      <div class="uk-width-medium-1-2 uk-height-1-1">
+        <div class="hide_on_finish">
+          <i class="uk-icon-laptop uk-icon-small"></i>
+          <span class="uk-text-muted uk-text-small">Lua Sources</span>
+        </div>
+        <ul id="code_pane_control"
+            class="uk-tab"
+            data-uk-observe
+            data-uk-tab="{connect:'#code_pane'}">
+          <li><a href="">(thread)</a></li>
+          </li>
+        </ul>
+        <div class="uk-panel hide_on_finish uk-height-1-1 uk-overflow-container">
+          <ul data-uk-observe id="code_pane" class="uk-switcher">
+            <li><ul id="thread_code" class="uk-switcher" data-uk-observe></ul>
+          </li>
+        </div>
+      </div>
+
+      <div class="uk-width-medium-1-2 uk-height-1-1 uk-overflow-container">
+          <!-- Switching between threads -->
+          <ul id="thread_tabs" class="uk-tab uk-margin"
+              data-uk-observe
+              data-uk-tab="{ connect: '#thread_vars, #thread_stack, #thread_handlers, #thread_code' }">
+          </ul>
+
+        <div class="uk-accordion" data-uk-accordion="{collapse:false}">
+
+          <!-- thread -->
+          <div class="uk-accordion-title uk-text-right
+                      uk-panel uk-panel-box hide_on_finish">Variables</div>
+          <div class="uk-accordion-content hide_on_finish">
+            <div class="uk-panel uk-panel-box uk-overflow-container">
+              <ul id="thread_vars" class="uk-switcher"></ul>
+            </div>
+          </div>
+
+          <div class="uk-accordion-title uk-text-right
+                      uk-panel uk-panel-box
+                      hide_on_finish">Stacks</div>
+          <div class="uk-accordion-content hide_on_finish">
+            <div class="uk-grid">
+              <div class="uk-width-7-10">
+                <div class="small_label uk-text-right">Call Stack &amp; Exception Handlers</div>
+                <div class="uk-panel uk-panel-box">
+                  <div class="uk-grid">
+                    <div class="uk-width-7-10">
+                      <ul id="thread_stack" class="uk-switcher"></ul>
+                    </div>
+                    <div class="uk-width-3-10">
+                      <ul id="thread_handlers" class="uk-switcher"></ul>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="uk-width-3-10">
+                 <div class="small_label uk-text-right">Blocked Threads</div>
+                 <div class="uk-panel uk-panel-box">
+                    <ul id="blocked_threads" class="uk-list uk-list-line"></ul>
+                 </div>
+              </div>
+            </div>
+          </div>
+
+           <!-- moniotring -->
+          <div class="uk-accordion-title uk-text-right
+                      uk-panel uk-panel-box hide_on_finish">
+            <i class="uk-icon-eye"></i> Monitoring</div>
+          <div class="uk-accordion-content hide_on_finish">
+            <div id="monitoring"
+                 class="uk-panel uk-panel-box uk-overflow-container"></div>
+            </div>
+
+          <!-- console -->
+          <div class="uk-accordion-title uk-text-right
+                      uk-panel uk-panel-box">Console</div>
+          <div class="uk-accordion-content">
+            <div id="prints"
+                 class="uk-overflow-container uk-panel
+                        uk-panel-box uk-panel-box-secondary"></div>
+          </div>
+
+          <!-- registry -->
+          <div class="uk-accordion-title uk-text-right
+                      uk-panel uk-panel-box">Registry</div>
+          <div class="uk-accordion-content">
+            <div id="registry"
+                 class="uk-overflow-container uk-panel
+                        uk-panel-box uk-panel-box-secondary"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="sources-menu" class="uk-offcanvas">
+    <div class="uk-offcanvas-bar">
+      <div id="source-title" class="uk-panel-title"></div>
+      <ul id="top-source-list" class="uk-nav uk-nav-offcanvas">
+      </ul>
+    </div>
+  </div>
+
+  <div id="breakpoints-menu" class="uk-offcanvas">
+    <div class="uk-offcanvas-bar">
+      <div class="uk-panel-title">Breakpoints
+        <a href="#" onclick="clearBreakPoints()"
+               title="Clear all breakpoints" data-uk-tooltip>
+            <i class="uk-icon-times-circle-o"></i></a>
+      </div>
+      <ul id="breakpoints-list" class="uk-nav uk-nav-offcanvas">
+      </ul>
+    </div>
+  </div>
+
+  <div id="profiling-menu" class="uk-offcanvas">
+    <div class="uk-offcanvas-bar">
+      <div class="uk-panel-title">Profiling
+      </div>
+      <ul id="profiling-list" class="uk-nav uk-nav-offcanvas">
+      </ul>
+    </div>
+  </div>
+
+  <!-- Modal dialog for displaying values -->
+  <div id="value-modal" class="uk-modal">
+    <div class="uk-modal-dialog uk-modal-dialog-large">
+      <a class="uk-modal-close uk-close"></a>
+      <div id="value-header" class="uk-modal-header"></div>
+      <div id="value-container">
+      </div>
+    </div>
+  </div>
+
+</body></html>
+

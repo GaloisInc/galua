@@ -1,15 +1,8 @@
-function drawFunNameToolTip(obj) {
-  if (!obj.file && !obj.line) return '(unknown)'
-  var file = obj.file? obj.file         : ''
-  var line = obj.line? (':' + obj.line) : ''
-  return file + line
-}
-
 function drawValue(dbgState,v) {
-        return drawValueEx(dbgState,v,false);
+  return drawValueOpts(dbgState,v,dbgState.valueOpts())
 }
 
-function drawValueEx(dbgState,v,startExpanded) {
+function drawValueOpts(dbgState,v,opts) {
 
   var label
 
@@ -17,24 +10,24 @@ function drawValueEx(dbgState,v,startExpanded) {
     case 'table':
     case 'user_data':
     case 'thread':
-      var icons = { 'table':      'table'
-                  , 'user_data':  'user'
-                  , 'thread':     'random'
+      var icons = { 'table':      'web'
+                  , 'user_data':  'extension'
+                  , 'thread':     'shuffle'
                   }
       label = $('<div/>')
-              .append( $('<i/>').addClass('uk-icon-' + icons[v.tag]) )
+              .css('display','inline-block')
+              .append( icon('tiny',icons[v.tag]) )
 
       if (v.name !== undefined)
-        label.append($('<span/>').addClass('code_line uk-text-bold')
+        label.append($('<span/>').addClass('code_line galua-small-label')
                                  .text(' ' + v.name))
 
       if (v.tag === 'thread')
         label.append( $('<sup/>')
-                      .addClass('uk-text-small uk-text-muted')
+                      .addClass('galua-small-label')
                       .text(v.status))
 
-      label.append( $('<span/>').addClass('code-line')
-                                .addClass('uk-text-small uk-text-muted')
+      label.append( $('<span/>').addClass('code-line galua-small-label')
                                 .text(' ' + v.text) )
 
       break
@@ -42,19 +35,20 @@ function drawValueEx(dbgState,v,startExpanded) {
 
     case 'closure':
       label = $('<span/>')
-              .append([ $('<i/>').addClass('uk-icon-laptop')
-                      , $('<sup/>').addClass('uk-text-small uk-text-muted')
+              .append([ icon('tiny', 'computer')
+                      , $('<sup/>').addClass('galua-small-label')
                                    .text(v.type)
                       ])
 
       if (v.name !== undefined) {
-        var nm = $('<span/>').addClass('code_line uk-text-bold')
+        var nm = $('<span/>').addClass('code_line tooltipped')
                              .text(' ' + v.name)
-        nm.attr('title', drawFunNameToolTip(v))
+        nm.attr('data-tooltip', drawFunNameToolTip(v))
+        nm.tooltip()
         label.append(nm)
       }
 
-     label.append($('<span/>').addClass('code-line uk-text-small uk-text-muted')
+     label.append($('<span/>').addClass('code-line galua-small-label')
                               .text(' ' + v.text))
      break
 
@@ -80,19 +74,14 @@ function drawValueEx(dbgState,v,startExpanded) {
       label = $('<span/>').addClass('value').text(v.text)
   }
 
-  var x = drawCollapsedEx(dbgState, label, v, startExpanded)
+  var x = drawCollapsedEx(dbgState, label, v, opts)
   return $('<span/>').append(x.small)
                      .append(x.big)
 }
 
 
 function drawOrigin(o) {
-  var lab = $('<i/>')
-           .addClass('uk-icon-question uk-icon-hover uk-icon-small')
-           .attr('style','padding: 0.1em')
-           .attr('title', 'Origin')
-           .attr('data-uk-tooltip','')
-           .css('cursor', 'pointer')
+  var lab = roundButton('black white-text','blur_on', 'Defined by', handler)
 
   var info = $('<div/>').text('Defined by ')
 
@@ -113,27 +102,23 @@ function drawOrigin(o) {
   }
 
   info.hide()
-  lab.click(function() { info.toggle() })
-
+  function handler() { info.toggle() }
 
   return { icon: lab, dom: info }
 
 }
 
 
-function drawExpandCollapseIcon(dbgState, v, startExpanded) {
+function drawExpandCollapseIcon(dbgState, v, opts) {
 
   var downloaded = false
-  var open       = startExpanded
+  var open       = opts.expand
 
-  var initialImage = open ? 'uk-icon-caret-up' : 'uk-icon-caret-down'
+  var initialImage = open ? 'arrow_drop_up' : 'arrow_drop_down'
 
-  var expandIcon = $('<i/>')
-      .addClass(initialImage + ' uk-icon-hover uk-icon-small')
-      .attr('style','padding: 0.1em')
-      .attr('title', 'Expand')
-      .attr('data-uk-tooltip','')
-      .css('cursor', 'pointer')
+  var expandIcon = roundButton('black white-text'
+                              ,initialImage,'Expand/collapse', handler)
+
 
   var here = $('<div/>')
 
@@ -144,22 +129,18 @@ function drawExpandCollapseIcon(dbgState, v, startExpanded) {
   function showIt() {
         open = true
         here.slideDown()
-        expandIcon.removeClass('uk-icon-caret-down')
-                  .addClass('uk-icon-caret-up')
-                  .attr('title', 'Collapse')
+        expandIcon.find('i').text('arrow_drop_up')
   }
 
   function hideIt() {
         open = false
         here.slideUp()
-        expandIcon.removeClass('uk-icon-caret-up')
-                  .addClass('uk-icon-caret-down')
-                  .attr('title', 'Expand')
+        expandIcon.find('i').text('arrow_drop_down')
   }
 
   function doOpen() {
           jQuery.post('/expand', { id: v.ref }, function(exp) {
-             here.append(renderExpanded(dbgState, exp))
+             here.append(renderExpanded(dbgState, v.ref, exp))
              showIt()
              downloaded = true
          }).fail(disconnected)
@@ -167,7 +148,7 @@ function drawExpandCollapseIcon(dbgState, v, startExpanded) {
 
   if (open) { doOpen() }
 
-  expandIcon.click(function() {
+  function handler() {
        if (open) {
          hideIt()
        } else {
@@ -177,80 +158,89 @@ function drawExpandCollapseIcon(dbgState, v, startExpanded) {
            showIt()
          }
        }
-    })
+    }
+
 
   return { icon: expandIcon, dom: here }
 }
 
 
-function drawAddWatchIcon(v) {
-  var watchIcon = $('<i/>')
-        .addClass('uk-icon-eye uk-icon-small uk-icon-hover')
-        .attr('style','padding: 0.1em')
-        .css('cursor', 'pointer')
-        .attr('title', 'Start monitoring')
-        .attr('data-uk-tooltip','')
+function drawAddWatchIcon(dbgState,v,opts) {
 
-        .click( function () {
-          jQuery.post('/watch', { id: v.ref }, function(exp) {
-             console.log(exp)
-          })
-          .fail(disconnected)
-        })
-
-  return watchIcon
+  switch (opts.watchMode) {
+    case 'watch':
+      return roundButton('black white-text'
+                        , 'visibility'
+                        , 'Start monitoring'
+                        , function () {
+                            jQuery.post('/watch', { id: v.ref }, function(exp) {
+                               $('#galua-empty-watch').remove()
+                               $('#monitoring-content')
+                               .append(drawWatched(dbgState,exp))
+                            })
+                            .fail(disconnected)
+                        })
+    case 'unwatch':
+      return roundButton( 'black white-text'
+                        , 'visibility_off'
+                        , 'Stop monitoring'
+                        , function () {
+                            var i = opts.watchId
+                            jQuery.post('/unwatch', { id: i },
+                              function() {
+                                $('#' + watchId(i)).remove()
+                                var mons = $('#monitoring-content')
+                                if (mons.children().length === 0)
+                                   mons.append(drawEmptyWatch())
+                              })
+                            .fail(disconnected)
+                        })
+    default:
+      console.log('Malformed `watchMode`', opts)
+      return []
+  }
 }
 
 function drawAltRepIcon(v,lab,alt) {
-  var icon = $('<i/>')
-        .addClass('uk-icon-rotate-right uk-icon-small uk-icon-hover')
-        .attr('style','padding: 0.1em')
-        .css('cursor', 'pointer')
-        .attr('title', 'Change representation')
-        .attr('data-uk-tooltip','')
-
-        .click( function () {
-           var tmp = lab.text()
-           lab.text(alt)
-           alt = tmp
-        })
+  var icon =
+    roundButton( 'black white-text'
+               , 'repeat'
+               , 'Change representation'
+               , function () { var tmp = lab.text()
+                               lab.text(alt)
+                               alt = tmp
+                             })
 
   return icon
 }
 
 
 function drawViewFunctionIcon(dbgState,v) {
-  return $('<i/>')
-         .addClass('uk-icon-laptop uk-icon-small uk-icon-hover')
-         .attr('style','padding: 0.1em')
-         .css('cursor', 'pointer')
-         .attr('title', 'View source')
-         .attr('data-uk-tooltip','')
-         .click( function () {
-           var path = '/closure'
-           jQuery.post(path, { fid: v.fid, id: v.id }, function(code) {
-             drawFunctionInNewTab(dbgState,code)
-           })
-           .fail(disconnected)
+  return roundButton (
+      'black white-text'
+    , 'computer'
+    , 'View source'
+    , function () {
+        var path = '/closure'
+        jQuery.post(path, { fid: v.fid, id: v.id }, function(code) {
+            drawFunctionInNewTab(dbgState,code)
         })
+        .fail(disconnected)
+    })
 }
 
 
 
 function drawViewThreadIcon(dbgState,v) {
-  return $('<i/>')
-         .addClass('uk-icon-random uk-icon-small uk-icon-hover')
-         .attr('style','padding: 0.1em')
-         .css('cursor', 'pointer')
-         .attr('title', 'View thread')
-         .attr('data-uk-tooltip','')
-         .click( function () {
-
-           jQuery.post('/expand', { id: v.ref }, function(exp) {
-             drawNewThread(dbgState,exp)
-           })
-           .fail(disconnected)
-        })
+  return roundButton ( 'black white-text'
+                     , 'shuffle'
+                     , 'View thread'
+                     , function () {
+                         jQuery.post('/expand', { id: v.ref }, function(exp) {
+                              drawNewThread(dbgState,exp)
+                         })
+                         .fail(disconnected)
+                       })
 }
 
 
@@ -271,63 +261,63 @@ function drawSetValueIcon(dbgState,v) {
     return txt
   }
 
-  var me = $('<i/>')
-           .addClass('uk-icon-wrench uk-icon-small uk-icon-hover')
-           .attr('style','padding: 0.1em')
-           .css('cursor', 'pointer')
-           .attr('title', 'Change value')
-           .attr('data-uk-tooltip','')
-           .click( function () {
-              me.parent().append(makeTextBox())
-           })
+  var me = roundButton (
+      'black white-text'
+    , 'mode_edit'
+    , 'Change value'
+    , function () { me.parent().append(makeTextBox()) })
+
   return me
 }
 
 function drawAnalyzeIcon(dbgState, v) {
-  var me = $('<i/>')
-           .addClass('uk-icon-cubes uk-icon-small uk-icon-hover')
-           .attr('style','padding: 0.1em')
-           .css('cursor', 'pointer')
-           .attr('title', 'Analyze')
-           .attr('data-uk-tooltip','')
+  var me = roundButton( 'black white-text'
+                      , 'cake'
+                      , 'Analyze'
+                      , handler
+                      )
 
-  var dom = $('<div/>').addClass('uk-panel uk-panel-box').hide()
+  var content = $('<div/>').addClass('card-content')
 
-  var closeBtn = $('<i>')
-                 .addClass('uk-icon-close uk-icon-hover')
-                 .click(function() { dom.empty().hide() })
+  var closeBtn = $('<a>').addClass('btn').text('close')
+                 .click(function() { content.empty(); dom.hide() })
 
-  me.click( function () {
+  var dom = $('<div/>').addClass('card')
+                       .append(content)
+                       .append($('<div/>')
+                               .addClass('card-action')
+                               .append(closeBtn))
+                       .hide()
+
+
+  function handler () {
     jQuery.post('/analyze', { id: v.ref }, function(res) {
-      console.log(res)
-      dom.empty().append([closeBtn,aResult(res)]).show()
+      content.empty().append([aResult(res)])
+      dom.show()
     })
     .fail(disconnected)
-  })
-
+  }
 
   return { icon: me, dom: dom }
 }
 
 
 function drawCollapsed(dbgState, lab, v) {
-        return drawCollapsedEx(dbgState, lab, v, false);
+        return drawCollapsedEx(dbgState, lab, v, dbgState.valueOpts());
 }
 
-// A thing with a little down arrow, to get more info
-function drawCollapsedEx(dbgState, lab, v, startExpanded) {
 
-  var icons = []
-  var here  = []
+function drawCollapsedEx(dbgState, lab, v, opts) {
 
-
+  var icons = []    // These go in the pop-up menu
+  var here  = []    // This is what shows up when we expand the thing
 
   // Expandable icon
   switch(v.tag) {
     case 'table':
     case 'user_data':
     case 'closure':
-      var expand = drawExpandCollapseIcon(dbgState, v, startExpanded)
+      var expand = drawExpandCollapseIcon(dbgState, v, opts)
       icons.push(expand.icon)
       here.push(expand.dom)
   }
@@ -344,8 +334,6 @@ function drawCollapsedEx(dbgState, lab, v, startExpanded) {
       }
   }
 
-
-
   // View thread icon
   switch(v.tag) {
     case 'thread':
@@ -361,7 +349,8 @@ function drawCollapsedEx(dbgState, lab, v, startExpanded) {
 
 
   // Watch icon
-  icons.push(drawAddWatchIcon(v))
+  if (opts.watchMode !== 'no-watch')
+    icons.push(drawAddWatchIcon(dbgState,v,opts))
 
   // Analyze icon
   switch(v.tag) {
@@ -386,14 +375,7 @@ function drawCollapsedEx(dbgState, lab, v, startExpanded) {
 
 
 
-  var menu = $('<div/>')
-             .addClass('uk-dropdown uk-dropdown-small min-width-auto')
-             .append(icons)
-
-  var small = $('<span/>')
-               .attr('data-uk-dropdown','{pos:"right-center"}')
-               .addClass('uk-button-dropdown')
-               .append([lab,menu])
+  var small = makeMenu(lab,icons)
 
   return { small: small, big: here }
 }
@@ -401,10 +383,10 @@ function drawCollapsedEx(dbgState, lab, v, startExpanded) {
 
 
 // Additional information about a value
-function renderExpanded(dbgState, v) {
+function renderExpanded(dbgState, id, v) {
 
   switch (v.tag) {
-    case 'table': return drawTable(dbgState,v)
+    case 'table': return drawTable(dbgState,id,v)
     case 'user_data': return drawUserData(dbgState,v)
 
     case 'lua-fun':
@@ -435,11 +417,11 @@ function drawHsClosure(dbgState,x) {
 
 function drawPrimArg(x) {
   return $('<span/>')
-         .addClass('literal')
+         .addClass('literal tooltipped')
          .css('padding-left', '0.5em')
-         .attr('title', x.tag)
-         .attr('data-uk-tooltip','')
+         .attr('data-tooltip', x.tag)
          .text(x.text)
+         .tooltip()
 }
 
 
@@ -455,7 +437,7 @@ function drawLuaClosure(dbgState, t) {
 
 // Expanded user data
 function drawUserData(dbgState,t) {
-  var d     = $('<table/>').addClass('uk-table uk-table-condensed')
+  var d     = $('<table/>')
   var row   = $('<tr/>')
   var right = $('<td/>')
 
@@ -464,12 +446,11 @@ function drawUserData(dbgState,t) {
   bigR.append(bigC)
 
 
-    console.log(t)
   if (t.ref !== undefined) {
     var meta = drawCollapsed(dbgState
                             ,$('<div/>')
                             .text('meta ' + t.text)
-                            .addClass('code-line uk-text-small uk-text-muted')
+                            .addClass('code-line galua-small-label')
                             , t
                             )
     right.append(meta.small)
@@ -484,26 +465,76 @@ function drawUserData(dbgState,t) {
 
 
 // Expanded table
-function drawTable(dbgState,t) {
+function drawTable(dbgState,id,t) {
 
-  var d = $('<table/>')
-          .addClass('uk-table uk-table-condensed uk-table-striped')
-          // .addClass('value-list-table')
+  var chunkNum     = 0
 
-  jQuery.each(t.values, function(ix,entry) {
-    var r = $('<tr/>')
-    var k = $('<td/>').append(drawValue(dbgState,entry.key))
-    var v = $('<td/>').append(drawValue(dbgState,entry.value))
-    d.append(r)
-    r.append([k,v])
-  })
+  var d = $('<table/>').addClass('striped')
+
+  function addEntries(ents) {
+
+    var thisClass = 'galua-table-chunk-' + chunkNum
+    var nextChunk = ++chunkNum
+
+    if (ents.values.length === 0) {
+      d.append($('<tr/>')
+               .append($('<td/>')
+                       .attr('colspan','2')
+                       .addClass('galua_remark')
+                       .text('empty table')))
+    } else
+      jQuery.each(ents.values, function(ix,entry) {
+        var r = $('<tr/>').addClass(thisClass)
+        var k = $('<td/>').append(drawValue(dbgState,entry.key))
+        var v = $('<td/>').append(drawValue(dbgState,entry.value))
+        r.append([k,v])
+        d.append(r)
+      })
+
+    var subOpen = false
+    var downloaded = false
+
+    if (ents.missing > 0) {
+      var r = $('<tr/>')
+      var c = $('<td/>')
+              .attr('colspan','2')
+              .css('cursor','pointer')
+              .addClass('galua_remark')
+              .text('... ' + ents.missing + ' more ...')
+      d.append(r.append(c))
+      c.click(function() {
+        if (subOpen) {
+          $('.' + 'galua-table-chunk-' + nextChunk).hide()
+          subOpen = false
+        } else {
+          if (downloaded) {
+            $('.' + 'galua-table-chunk-' + nextChunk).show()
+            subOpen = true
+          } else
+            jQuery.post('/expandTable'
+                       , { id: id
+                         , from: ents.startIx + ents.values.length
+                         }
+                       , function(newEnts) {
+                           addEntries(newEnts)
+                           downloaded = true
+                           subOpen = true
+                         })
+        }
+        return false
+      })
+    }
+  }
+
+
+  addEntries(t)
 
   if (t.ref !== undefined) {
     var r = $('<tr/>')
     var meta = drawCollapsed(dbgState
                             ,$('<span/>')
                             .text('meta ' + t.text)
-                            .addClass('code-line uk-text-small uk-text-muted')
+                            .addClass('code-line galua-small-label')
                             , t
                             )
     r.append($('<td/>').attr('colspan','2').append(meta.small))

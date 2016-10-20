@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+<head>
+<script src="libs/jquery.js"></script>
+<script src="AreaUI.js"></script>
+<style>
+.area-ui-hover-button {
+  box-shadow: 0px 0px 10px #999;
+}
+</style>
+
+<script>
+function tile(b) {
+  var x
+  var y
+  var c = [ '#999','#333' ]
+  for(y = 0; y < 12; ++y) {
+    for(x = 0; x < 12; ++x) {
+      b.append(AreaUI.create({left: x * 64, top: y * 64 })
+                     .css('background-color', c[(x + (y % 2)) % 2]))
+    }
+  }
+}
+
+$(document).ready(function() {
+  // XXX
+//  $('html').css('height','100%').css('padding','0').css('margin','0')
+ //          .css('overflow','hidden')
+  // $('body').css('height','100%').css('padding','0').css('margin','0')
+
+
+
+  var b    = $('body')
+  tile(b)
+
+  var bar = AreaUI.create( { width: 640
+                           , transition: 'right', duration: 'slow' } )
+            .css('background-color','#eee')
+
+  var on = true
+  var x = AreaUI.roundButton().css('background-color','red')
+  var topBtn = AreaUI.create({top:11*64}).css('background-color','#666').append(x)
+  x.click(function() {
+    if (on) bar.areaUI('disappear')
+        else bar.areaUI('appear')
+    on = !on
+    return false
+  })
+
+
+
+  b.append(topBtn)
+  b.append(bar)
+
+  var tabs = []
+  var colors = [ '#fc9', '#ccf', '#339', '#933' ]
+  var cur = undefined
+  var busy = false
+  jQuery.each([0,1,2,3], function(ix,i) {
+    var btn = AreaUI.roundButton()
+                    .css('background-color', '#fc6')
+                    .areaUI('switcher','.big', '#big-' + ix)
+
+    var big = AreaUI.create({left: 3*64, width:6*64, top: 3*64, height: 6*64
+                          , transition: 'fade', duration: 'fast' })
+                    .css('background-color', colors[i])
+                    .addClass('big')
+                    .attr('id','big-' + ix)
+                    .hide()
+                    .areaUI('disappear')
+    bar.append(btn)
+    b.append(big)
+
+  })
+
+})
+</script>
+</head>
+<body>
+</body>
+</html>

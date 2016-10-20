@@ -1,7 +1,6 @@
 function doPoll(cmd) {
   jQuery.post('/poll', { timeout: 10, command: cmd },
     function(res) {
-      console.log('poll result', cmd, res)
       if (cmd !== res) {
         jQuery.get('/view', drawDebugger()).fail(disconnected)
       } else {
@@ -10,11 +9,13 @@ function doPoll(cmd) {
     })
 }
 
+
+
 function disconnected(info,x ) {
   console.log(info,x)
 
   if (info.status === 423)
-    setStatus('uk-badge-warning', 'Busy')
+    Materialize.toast('Busy', 5000)
   else
     setStatus('uk-badge-danger', 'Error (' + info.status + ')')
   return false
@@ -22,10 +23,10 @@ function disconnected(info,x ) {
 
 
 function setBreakOnError() {
-  var me = $('#break_on_error')
-  var on = me.is(':checked')
-  jQuery.post('/breakOnErr', { enabled: on}
-             , function() { me.prop('checked',on) })
+  var me = $('#pause-on-error')
+  var newSetting = !me.is(':checked')
+  jQuery.post('/breakOnErr', { enabled: newSetting}
+             , function() { me.prop('checked',newSetting) })
   return false
 }
 
@@ -40,21 +41,78 @@ function newDebuggerState(d) {
 
   jQuery.each(d.breakPoints, function(ix,loc) { brks[loc.id] = true })
 
-  return { breakPoints: brks, programCounter: pc }
+  return { breakPoints:     brks
+         , programCounter:  pc
+         , fun_counter:     0
+
+         // Read only
+         , valueOpts: function(opts) {
+              return jQuery.extend( { expanded:  true
+                                    , watchMode:
+                                      'watch' // | 'unwatch' | 'no-watch'
+                                    }, opts)
+           }
+         }
 }
 
 function setStatus(ty,msg) {
-           $('#status').removeClass('uk-badge-success')
-                       .removeClass('uk-badge-danger')
-                       .removeClass('uk-badge-warning')
-                       .addClass(ty)
-                       .empty()
-                       .text(msg)
+  var cl
+
+  switch(ty) {
+    case 'uk-badge-success': cl = 'green';  break
+    case 'uk-badge-warning': cl = 'yellow'; break
+    case 'uk-badge-danger':  cl = 'red';   break
+    default: cl = 'blue'
+  }
+
+  $('#status')
+    .removeClass('blue green yellow red')
+    .addClass(cl)
+    .empty()
+    .text(msg)
+}
+
+function drawPrints(dbgState,mbError, prints) {
+
+  var here = $('#prints').empty()
+
+  if (mbError !== undefined) {
+    here.append($('<li/>')
+                .addClass('collection-item')
+                .append([ $('<span/>')
+                          .addClass('secondary-content')
+                          .append($('<i/>')
+                                  .addClass('material-icons red-text')
+                                  .text('error'))
+                        , drawValue(dbgState,mbError)
+                        ]))
+  }
+
+  if (prints.length === 0) {
+    here.append($('<li/>').addClass('collection-item galua_remark')
+                          .text('no output'))
+  }
+  else
+    jQuery.each(prints, function(ix,ln) {
+      var it = $('<li/>').addClass('collection-item')
+      if (ln.num !== 1)
+        it.append($('<span/>')
+                  .addClass('blue white-text new badge')
+                  .attr('data-badge-caption','times')
+                  .text(ln.num))
+
+      jQuery.each(ln.words, function(ix,w) {
+        it.append($('<span/>').addClass('gal_code_box code_line').text(w))
+      })
+      here.append(it)
+    })
 }
 
 
+
+
 function makeStep(how) {
-  var byLine = $('input[name=step_type]:checked').val() === 'Line'
+  var byLine = !$('#step-by-opcode').is(':checked')
   return drawStep(how + (byLine ? 'Line' : ''), !byLine)
 }
 
@@ -65,71 +123,37 @@ function drawStep(meth) {
     jQuery.post('/view',{},drawDebugger()).fail(disconnected)
 }
 
+
 function clearBreakPoints() {
   jQuery.post('/clearBreakPoints',
      function() {
-       var list = $('#breakpoints-list')
+       var list = $('#breakpoint-list')
        list.empty()
+       $('#breakpoint-pane').closeModal()
      }).fail(disconnected)
 }
 
-function drawPrints(prints, here) {
-
-  var con = $('<ul/>').addClass('uk-list uk-list-space')
-  jQuery.each(prints, function(ix,ln) {
-    var it = $('<li/>')
-    if (ln.num !== 1)
-      it.append($('<span/>')
-                .addClass('uk-badge uk-badge-notification')
-                .text(ln.num))
-
-    jQuery.each(ln.words, function(ix,w) {
-      it.append($('<span/>').addClass('gal_code_box code_line').text(w))
-    })
-    con.append(it)
-  })
-  here.append(con)
-
-}
-
-function drawFailedToConnect(msg) {
-  return $('<div/>')
-         .attr('data-uk-alert','')
-         .addClass('uk-alert uk-alert-danger')
-         .append([ $('<a/>').addClass('uk-alert-close uk-close')
-                 , $('<p/>').text(msg)
-                 ])
-}
-
 function drawBreakPoint(dbgState,brk) {
-  var nm = $('<span/>').text(brk.name)
-  if (brk.file !== null)
-    nm.attr('title', brk.file)
-      .attr('data-uk-tooltip','')
-
-  var link = $('<a/>')
-             .append( [ $('<span/>')
-                        .addClass('uk-badge uk-margin-right')
-                        .text(brk.line)
-                      , nm ])
-             .click(function() {
-                UIkit.offcanvas.hide()
-                jQuery.post('/function', { fid: brk.fid },
-                    function(code) {
-                      drawFunctionInNewTab(dbgState, code)
-                    }).fail(disconnected)
-              })
-
-  var thing = $('<li/>')
-              .addClass('brk_menu')
-              .addClass(brk.id)
-              .append(link)
-
-  return thing
+  return $('<a/>')
+         .addClass('collection-item tooltipped brk_menu')
+         .addClass(brk.id)
+         .attr('data-tooltip', brk.file ? brk.file : '???')
+         .append( [ brk.name
+                  , $('<span/>')
+                    .addClass('secondary-content')
+                    .text('line ' + brk.line)
+                  ] )
+         .click(function() {
+            $('#breakpoint-pane').closeModal()
+            jQuery.post('/function', { fid: brk.fid },
+              function(code) { drawFunctionInNewTab(dbgState, code) }
+            ).fail(disconnected)
+          })
+          .tooltip()
 }
 
 function drawBreakPoints(dbgState, breaks) {
-  var list = $('#breakpoints-list')
+  var list = $('#breakpoint-list')
   list.empty()
   jQuery.each(breaks,function(ix,brk) {
     list.append(drawBreakPoint(dbgState,brk))
@@ -137,168 +161,110 @@ function drawBreakPoints(dbgState, breaks) {
 }
 
 function drawSources(dbgState, sources) {
-  var list    = $('#top-source-list').empty()
-  visible = []
-  var els = []
 
-  jQuery.each(sources, function(ix,source) {
-    els.push(drawNode(source))
-  })
-  visible[0] = els
-  list.append(els)
+  drawForest($('#function-browser-list').empty(), sources)
 
-  function drawSubMenu(icon,nm,els) {
+  function drawForest(prnt,xs) {
 
-    var item =
-      $('<li/>')
-      .append($('<a/>').attr('href','#')
-                       .append( [ $('<i/>').addClass(icon)
-                                , $('<span/>').text(' ' + nm)
-                                ]))
+    jQuery.each(xs, function(ix,x) {
+      var nm  = $('<div/>').addClass('collapsible-header')
+      var bdy = $('<div/>').addClass('collapsible-body')
 
-    jQuery.each(els,function(ix,el) { el.hide() })
+      switch(x.tag) {
+        case 'chunk':
+          nm.append([ $('<i/>').addClass('material-icons')
+                               .text('insert_drive_file')
+                    , $('<span/>').text(x.name)
+                    ])
 
-    var backLink = $('<a/>').attr('href','#').text('..')
-    var back = $('<li/>').hide().append(backLink)
-
-    var title = $('<span/>')
-                .attr('title',nm)
-                .attr('data-uk-tooltip','')
-                .hide()
-                .text(nm.length < 22 ? nm
-                                     : ('... ' + nm.substr(-21))
-                ).hide()
-    $('#source-title').append(title)
-
-
-    list.append(back)
-    list.append(els)
-    $('#source-title').append(title)
-
-    els.push(back)
-    els.push(title)
-    // Now `els` has all the things in our menu.
-    // Note that item belongs to the parent menu.
-
-    function showAll (xs) { jQuery.each(xs,function(ix,x) { x.show() }) }
-    function hideAll (xs) { jQuery.each(xs,function(ix,x) { x.hide() }) }
-
-    item.click(function() {
-      hideAll(visible[visible.length - 1])
-      visible.push(els)
-      showAll(els)
-    })
-
-    backLink.click(function() {
-      hideAll(visible.pop())
-      showAll(visible[visible.length - 1])
-    })
-
-    return item
-  }
-
-
-
-  function drawNode(node) {
-
-    var nm = node.name === null ? '(no name)' : node.name
-
-    switch(node.tag) {
-
-      case 'path':
-        var els = []
-        jQuery.each(node.subs, function(ix,sub) { els.push(drawNode(sub)) })
-        return drawSubMenu('uk-icon-folder', nm, els)
-
-      case 'chunk':
-        var els = []
-        jQuery.each(node.funs, function(ix,f) {
-          var link = $('<a/>').attr('href','#').text(f.name)
-          els.push($('<li/>').append(link))
-          link.click(function() {
-            UIkit.offcanvas.hide()
-              jQuery.post(
-                '/function', { fid: f.id },
-                function(code) {
-                  drawFunctionInNewTab(dbgState, code)
-                  UIkit.offcanvas.hide()
-                }).fail(disconnected)
+          var inner = $('<div/>').addClass('collection')
+          jQuery.each(x.funs, function(ix,fun) {
+            var link = $('<a/>')
+                       .attr('href','#')
+                       .addClass('collection-item').text(fun.name)
+                       .click(function() {
+                                 jQuery.post(
+                                   '/function', { fid: fun.id },
+                                   function(code) {
+                                     drawFunctionInNewTab(dbgState, code)
+                                     $('#function-pane').closeModal()
+                                   }).fail(disconnected)
+                               })
+            inner.append(link)
           })
-        })
 
-        return drawSubMenu('uk-icon-laptop', nm, els)
+          bdy.append(inner)
+          break
 
-      default:
-        console.log('Unknown tag for source: ', node)
+        case 'path':
+          nm.append([ $('<i/>').addClass('material-icons').text('folder')
+                    , $('<span/>').text(x.name)
+                    ])
 
-        return []
-    }
+          var inner = $('<ul/>').addClass('collapsible')
+                                .attr('data-collapsible','expandable')
+                                .collapsible()
+          drawForest(inner,x.subs)
+          bdy.append(inner)
+          break
+      }
+      prnt.append($('<li/>').append([nm,bdy]))
+    })
   }
+
+
 }
+
 
 function drawProfiling(dbgState,stats) {
   var list = $('#profiling-list')
   list.empty()
-  var tab = $('<table/>').addClass('uk-text-contrast')
 
-  tab.append($('<tr/>')
-             .append([ $('<td/>').attr('colspan',4).text('Function')
-                     , $('<th/>').text('Calls')
-                     , $('<th/>').text('Indiv')
-                     , $('<th/>').text('Cumul')
-                     ]))
   jQuery.each(stats.calls, function(ix,entry) {
     var count = $('<td/>').text(entry.calls)
     var ind   = $('<td/>').text(entry.ind.toFixed(2))
     var cum   = $('<td/>').text(entry.cum.toFixed(2))
     var name  = $('<td/>')
-    var ty    = $('<td/>').addClass('uk-badge')
+    var ty    = $('<td/>')
     var pc    = $('<td/>')
     var args  = $('<td/>')
     drawFunParts(entry.loc, name, ty, pc, args)
     var row = $('<tr/>').append([ty,name,pc,args,count,ind,cum])
-    tab.append(row)
+    list.append(row)
 
+    // XXX
     if (entry.loc.type === 'Lua') {
       row.css('cursor','pointer') // XXX: Is there a class for this?
          .click(function() {
          jQuery.post('/function', { fid: entry.loc.fid },
                      function(code) {
                        drawFunctionInNewTab(dbgState, code)
+                       $('#profiling-pane').closeModal()
                      }).fail(disconnected)
          })
     }
 
   })
-
-
-
-  list.append(tab)
 }
 
-function drawRegistry( dbgState, val, here ) {
-
-        here.append(drawValue(dbgState, val))
-
+function drawRegistry( dbgState, val) {
+  var opts = dbgState.valueOpts({ expand: true
+                                , watchMode: 'no-watch'
+                                })
+  $('#registry-pane-content').empty()
+                             .css('padding','15px')
+                             .append(drawValueOpts(dbgState, val, opts))
 }
 
 
 function drawDebugger() { return function (d) {
-  var body      = $('body')
 
-  var status    = $('#status').removeClass('uk-badge-success')
-                              .removeClass('uk-badge-danger')
-  var prints    = $('#prints').empty()
-  var registry  = $('#registry').empty()
-  var result    = $('#result').empty()
-  var mons      = $('#monitoring').empty()
+  $('#pause-on-error').prop('checked', d.breakOnError)
 
-  $('#code_pane_control>.dynamic').remove()
-  $('#code_pane>.dynamic').remove()
-
-  $('#break_on_error').prop('checked', d.breakOnError)
 
   function onDone(isDone) {
+    return
+//XXX
     if (isDone) $('.hide_on_finish').addClass('uk-hidden')
     else $('.hide_on_finish').removeClass('uk-hidden')
   }
@@ -307,10 +273,12 @@ function drawDebugger() { return function (d) {
   drawSources(dbgState, d.sources)
   drawBreakPoints(dbgState, d.breakPoints)
 
-
-  drawPrints(d.prints, prints)
-
   var state = d.state
+
+  var mbError = undefined
+  if (state.tag === 'error') mbError = state.error
+  if (state.tag === 'running') mbError = d.idle.error
+  drawPrints(dbgState,mbError,d.prints)
 
   switch (state.tag) {
 
@@ -318,34 +286,34 @@ function drawDebugger() { return function (d) {
       onDone(false)
       setStatus('uk-badge', d.idle.tag)
 
-      mons.append(drawValueList(dbgState, 'watches', d.watches))
-
-      $('#thread_tabs').empty()
-      $('#thread_vars').empty()
-      $('#thread_stack').empty()
-      $('#thread_handlers').empty()
-      $('#thread_code').empty()
+      drawWatches(dbgState, d.watches)
 
       drawProfiling(dbgState, state.vm.stats)
-      drawRegistry(dbgState, state.vm.registry, registry)
+      drawRegistry(dbgState,  state.vm.registry )
 
       drawNewThread(dbgState, state.vm.thread)
-      var blocked = $('#blocked_threads').empty()
-      jQuery.each(state.vm.blocked,function(ix,v) {
-        blocked.append($('<li/>').append(drawValue(dbgState,v)))
+      jQuery.each(listThreads(),function(ix,t) {
+        if (t === state.vm.thread.name) return true
+        var tr = state.vm.openThreads[t]
+        if (tr === undefined) {
+          removeThread(t)
+          return true
+        }
+        drawNewThread(dbgState, tr)
       })
 
-      UIkit.switcher($('#thread_tabs')).show(1)
 
-      if (d.idle.error !== undefined) {
-        var badge = $('<div/>')
-                    .addClass('uk-badge uk-badge-danger uk-margin-right')
-                    .text('error')
+      var blocked = $('#blocked_threads-content').empty()
+      if (state.vm.blocked.length === 0) {
+        blocked.append($('<li/>').addClass('galua_remark')
+                                 .text('no blocked threads'))
+      } else
+        jQuery.each(state.vm.blocked,function(ix,v) {
+          blocked.append($('<li/>')
+                         .addClass('collection-item')
+                         .append(drawValue(dbgState,v)))
+        })
 
-        result.append([badge, drawValue(dbgState,d.idle.error)])
-      }
-
-      focusCurLine()
       break
 
     case 'finished':
@@ -359,12 +327,50 @@ function drawDebugger() { return function (d) {
     case 'error':
       onDone(true)
       setStatus('uk-badge-danger', 'Error')
-      result.append(drawValue(dbgState,state.error))
+      // result.append(drawValue(dbgState,state.error))
       break
   }
 
   doPoll(d.stateCounter)
 }}
+
+
+function drawWatches(dbgState, vs) {
+
+  var mons = $('#monitoring-content').empty()
+  if (vs.length === 0) {
+    mons.append(drawEmptyWatch())
+    return
+  }
+
+  jQuery.each(vs,function(ix,val) {
+    mons.append(drawWatched(dbgState,val))
+  })
+
+}
+
+function drawEmptyWatch() {
+  return $('<li/>')
+         .attr('id','galua-empty-watch')
+         .addClass('galua_remark')
+         .text('not monitoring anything')
+
+}
+
+function drawWatched(dbgState,val) {
+  var row = $('<li/>')
+            .addClass('collection-item')
+            .attr('id',watchId(val.id))
+  row.append($('<span/>').addClass('badge').text(val.name))
+  var opts = dbgState.valueOpts({watchMode: 'unwatch', watchId: val.id })
+  row.append(drawValueOpts(dbgState,val.val,opts))
+  return row
+}
+
+function watchId(i) { return 'watch_id_' + i }
+
+
+
 
 
 function drawValueList(dbgState, which, vs) {
@@ -378,11 +384,10 @@ function drawValueList(dbgState, which, vs) {
     case 'vas':     title = 'Varargs';  prefix = '...'; break
   }
 
-  var vals = $('<table/>').addClass('uk-table uk-table-condensed')
-  if (title) {
-          title += ' (' + vs.length + ')'
-          vals.append($('<caption/>').text(title))
-  }
+  title = title + ' (' + vs.length + ')'
+
+  var vals = $('<table/>').addClass('bordered')
+  if (title) vals.append($('<caption/>').text(title))
 
   var lastNonNil = -1
   jQuery.each(vs,function(ix,val) {
@@ -392,14 +397,16 @@ function drawValueList(dbgState, which, vs) {
   });
 
   var subvs = $(vs).slice(0,lastNonNil+1);
-  jQuery.each(vs,function(ix,val) {
+  jQuery.each(subvs,function(ix,val) {
     var altName = prefix + '[' + (ix+1) + ']'
     var row = $('<tr/>')
     vals.append(row)
-    row.append($('<td/>')
-      .attr('title',altName)
-      .attr('data-uk-tooltip','{pos:\'top\'}')
-      .text(val.name === null ? altName : val.name))
+    var key = $('<td/>')
+              .addClass('tooltipped')
+              .attr('data-tooltip', val.name === null ? altName : val.name)
+              .text(val.name === null ? altName : val.name)
+    key.tooltip()
+    row.append(key)
     row.append($('<td/>').append(drawValue(dbgState,val.val)))
   })
 
@@ -415,15 +422,16 @@ function drawFunParts(f, nameHere, typeHere, pcHere, argsHere) {
   typeHere.empty()
   argsHere.empty()
 
-  typeHere.text(f.type)
+  typeHere.append($('<span/>').addClass('galua_function_chip ' + f.type).text(f.type))
   nameHere.text(f.name)
 
   if (pcHere !== null) pcHere.empty()
   if (f.method !== undefined) {
       var methBox = $('<span/>')
+                    .addClass('tooltipped')
                     .text(f.method)
-                    .attr('title', drawFunNameToolTip(f.return))
-                    .attr('data-uk-tooltip','')
+                    .attr('data-tooltip', drawFunNameToolTip(f.return))
+                    .tooltip()
 
       argsHere.append('- ')
               .append(methBox)
@@ -437,22 +445,26 @@ function drawFunParts(f, nameHere, typeHere, pcHere, argsHere) {
         })
       }
       argsHere.append(' )')
+
+      if (f.phase !== undefined) {
+          argsHere.append(' - ' + f.phase)
+      }
   }
 
+  nameHere.addClass('tooltipped')
 
   switch (f.type) {
     case 'Lua':
-      nameHere.attr('data-uk-tooltip','{pos:\'top\'}')
-      nameHere.attr('title',f.file)
+      nameHere.attr('data-tooltip',f.file).tooltip()
       if (pcHere !== null && f.pc !== undefined)
+                           //XXX
                            pcHere.addClass('uk-text-small uk-text-muted')
                                  .text('opcode: ' + f.pc)
       break
 
     case 'C':
       if (f.file !== null) {
-        nameHere.attr('data-uk-tooltip','{pos:\'top\'}')
-        nameHere.attr('title',drawFunNameToolTip(f))
+        nameHere.attr('data-tooltip',drawFunNameToolTip(f)).tooltip()
       }
       break
   }
@@ -460,8 +472,7 @@ function drawFunParts(f, nameHere, typeHere, pcHere, argsHere) {
 
 
 function drawFunName(f) {
-
-  var ty    = $('<span/>').addClass('uk-badge')
+  var ty    = $('<span/>')
   var name  = $('<span/>')
   var pc    = $('<span/>')
   var args  = $('<span/>')
@@ -469,5 +480,13 @@ function drawFunName(f) {
   drawFunParts(f, name, ty, pc, args)
   return $('<span/>').append([ty,' ',name,' ',args, ' ', pc])
 }
+
+function drawFunNameToolTip(obj) {
+  if (!obj.file && !obj.line) return '(unknown)'
+  var file = obj.file? obj.file         : ''
+  var line = obj.line? (':' + obj.line) : ''
+  return file + line
+}
+
 
 

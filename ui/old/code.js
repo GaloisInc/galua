@@ -1,82 +1,52 @@
+function drawFunctionInNewTab(dbgState, f) {
 
-function newCodeContainer(dbgState, name, id, parent) {
+  var code = $('<table/>').addClass('code_box')
+  drawFunction(dbgState, code, f)
 
-  var codeCont = $('<div/>').addClass('card-content galua-code-table')
-  var code     = $('<div/>').addClass('function')
-  codeCont.append(code)
+  var parentBtn = $('<span/>')
+                 .addClass('uk-icon-reply')
+                 .css('margin-left', '0.5em')
 
-  var closeBtn = id ? null :
-               $('<a/>')
-               .addClass('btn waves-light waves-effect')
-               .text('close')
-
-  var parentBtn = !parent ? null
-                : $('<a/>')
-                  .addClass('btn waves-light waves-effect')
-                  .text('View Parent')
-
-  var new_tab_id = id ? id : ('fun_tab_' + dbgState.fun_counter++)
+  var closeBtn = $('<span/>')
+                 .addClass('uk-close')
+                 .css('margin-left', '0.5em')
 
   var newLink = $('<li/>')
-                .addClass('tab')
-                .append($('<a/>').attr('href','#' + new_tab_id).text(name))
+                .append($('<a/>')
+                        .append([ $('<span/>').text(f.name), parentBtn, closeBtn ])
+                       )
 
-  var newPane = $('<div/>')
-                .addClass('card')
-                .attr('id', new_tab_id)
-                .append([ codeCont
-                        , $('<div/>').addClass('card-action')
-                          .append([parentBtn,$('<span/>').text(' '),closeBtn])
-                        ])
+  var newPane = $('<li/>').append(code)
 
-  if (parentBtn) {
+  if (f.parent === "") {
+      parentBtn.remove()
+  } else {
       parentBtn.click(function() {
         var path = '/function'
-        jQuery.post(path, { fid: parent }, function(cd) {
-          drawFunctionInNewTab(dbgState,cd)
+        jQuery.post(path, { fid: f.parent }, function(code) {
+          drawFunctionInNewTab(dbgState,code)
         })
         .fail(disconnected)
         return false
       })
   }
 
-  var tabs = $('#code_tabs')
+  closeBtn.click(function() {
+    newLink.remove()
+    newPane.remove()
+    return false
+  })
 
-  if (closeBtn) {
-    closeBtn.click(function() {
-      newLink.remove()
-      newPane.remove()
-      tabs.tabs()
-      var x = $('#code_panes :first-child')
-      if (x.length !== 0) {
-        tabs.tabs('select_tab', x.attr('id'))
-      }
-      return false
-    })
-  }
+  $('#code_pane_control').append(newLink)
+  $('#code_pane').append(newPane)
 
-
-  tabs.append(newLink)
-  $('#code_panes').append(newPane)
-  tabs.tabs()
-
-  tabs.tabs('select_tab', new_tab_id)
-
-  return code
+  // not quite right, but not documented how to do better
+  UIkit.switcher($('#code_pane')).show(newPane)
+  newLink.addClass('uk-active')
 }
-
-
-
-function drawFunctionInNewTab(dbgState, f) {
-  var code =
-     newCodeContainer(dbgState, f.name, null, f.parent === "" ? null : f.parent)
-  drawFunction(dbgState, code, f)
-}
-
-
 
 function focusCurLine() {
-  jQuery.each($('.cur-line:visible'), function(ix,el) {
+  jQuery.each($('.cur-line:not(.uk-hidden)'), function(ix,el) {
     el.scrollIntoView()
   })
 }
@@ -84,7 +54,6 @@ function focusCurLine() {
 function drawFunction(dbgState, here, f) {
   here.empty()
   jQuery.each(f.lines, drawLine(dbgState,f.context,f.chunk,here))
-  $('.dropdown-button').dropdown()
 }
 
 
@@ -107,44 +76,73 @@ function drawLine(dbgState,context,chunkId,here) {
   function mkClass(x) { return 'ops_' + x }
 
 
-  function addBrkPoint(here, startOn) {
-    var brkIcon = $('<i/>').addClass('tiny blue-text material-icons')
-                           .text('pause_circle_filled')
-                           .css('position','absolute')
-                           .css('left','5px')
-                           .css('padding-top','5px')
-                           .addClass('breakpoint')
-    setClass(brkIcon, 'hide', startOn !== true)
-    here.append(brkIcon)
 
+  function addSpinner(here) {
+    var spinner = $('<i/>').addClass('uk-icon-gear uk-icon-spin uk-hidden')
+    here.prepend(spinner)
+    return spinner
+  }
+
+  function addBrkPoint(here, startOn) {
+    var brkIcon = $('<i/>')
+                  .addClass('uk-icon-arrow-circle-right uk-text-primary')
+                  .css('margin-right','0.5em')
+                  .addClass('breakpoint')
+    if (startOn !== true) brkIcon.addClass('uk-hidden')
+
+    here.append(brkIcon)
     return {}
   }
 
 
 
-  function lineSkeleton(ty) {
-    var row  = $('<div/>').addClass(ty + ' row').css('margin','0')
-    var num  = $('<div/>').addClass('left-align col s1 galua-line-number')
-    var text = $('<div/>').addClass('col s10 code_line lift-align')
-    row.append([num,text])
-    return { row: row, num: num, text: text }
+  function lineSkeleton() {
+    var row   = $('<tr/>')
+    var num1  = $('<td/>')
+                .addClass('uk-block-muted uk-text-muted')
+                .addClass('uk-text-middle uk-text-right')
+                .css('padding-left', '5px')
+
+    var num2 = $('<td/>').addClass('uk-block-muted uk-text-muted')
+                         .addClass('uk-text-middle uk-text-right')
+                         .css('padding-left', '5px')
+
+    var text = $('<td/>').addClass('uk-text-left uk-text-nowrap code_line')
+
+    row.append(num1,num2,text)
+
+    return { row: row, num1: num1, num2: num2, text: text }
   }
 
   function lineMenu(lab, clickBrk, clickGoto) {
 
-    return makeMenu ( lab.css('font-weight','bold')
-                    , [ roundButton( 'blue white-text'
-                                   , 'pause'
-                                   , 'Add/remove break-point'
-                                   , clickBrk )
+    function icon(i,help,handler) {
+      return $('<i/>')
+             .addClass('uk-icon-' + i)
+             .addClass('uk-icon-hover uk-icon-small')
+             .attr('title',help)
+             .attr('data-uk-tooltip','{pos:"top"}')
+             .css('margin-right','0.5em')
+             .click(handler)
+    }
 
-                      , roundButton ( 'green white-text'
-                                    , 'play_arrow'
-                                    , 'Continue from here'
-                                    , clickGoto)
-                      ]
-                    )
+    var icons = [ icon( 'arrow-circle-right'
+                      , 'Add/remove break-point'
+                      , clickBrk)
 
+                , icon ('rocket', 'Continue from here', clickGoto)
+                ]
+
+    var menu = $('<div/>')
+               .addClass('uk-dropdown uk-dropdown-small min-width-auto')
+               .append(icons)
+
+    var small = $('<div/>')
+                 .attr('data-uk-dropdown','{pos:"right-center", remaintime:100}')
+                 .addClass('uk-button-dropdown')
+                 .append([lab.addClass('uk-text-bold'),menu])
+
+    return small
   }
 
 
@@ -178,10 +176,9 @@ function drawLine(dbgState,context,chunkId,here) {
     // Draw the main srouce line
     function drawSrcLine() {
 
-      var skel = lineSkeleton('galua-source-line')
-      var num  = skel.num
+      var skel = lineSkeleton()
+      var num  = skel.num1
       var text = skel.text
-
 
       if (isCurrent) skel.row.addClass('cur-line')
       skel.row.addClass(srcLineClass)
@@ -189,7 +186,7 @@ function drawLine(dbgState,context,chunkId,here) {
       theLine = addBrkPoint(num, breakNum !== 0)
 
       var lineLab = $('<span/>')
-                    .addClass('galua-line-number')
+                    .addClass('uk-text-small')
                     .text(' ' + line.line)
 
 
@@ -198,9 +195,11 @@ function drawLine(dbgState,context,chunkId,here) {
         num.append(menu)
         text
         .css('cursor','pointer')
-        .click(function() {
-          $('.' + mkClass(line.line)).slideToggle()
-        })
+        .attr( 'data-uk-toggle'
+             , JSON.stringify({ target: '.' + mkClass(line.line)
+                              , animation: 'uk-animation-slide-top'
+                             })
+             )
       } else num.append(lineLab)
 
       jQuery.each(line.text, function(ix,t) {
@@ -239,7 +238,7 @@ function drawLine(dbgState,context,chunkId,here) {
                                            , id: t.name.ref
                                            }, renderResult)
                        .fail(disconnected)
-                  $('#value-pane').openModal()
+                  UIkit.modal($('#value-modal')).show()
                return false
               })
             }
@@ -254,8 +253,7 @@ function drawLine(dbgState,context,chunkId,here) {
             } else {
               h.append($("<span/>").addClass("code_line identifier")
                                    .text(x.name))
-              c.append(drawValueOpts(dbgState,x.value
-                      ,dbgState.valueOpts({expand:true})))
+              c.append(drawValueEx(dbgState,x.value,true))
             }
           }
 
@@ -300,14 +298,15 @@ function drawLine(dbgState,context,chunkId,here) {
 
     // Draw a code-viwere line
     function drawOpCode(i,op) {
-      var skel = lineSkeleton('galua-opcode-line')
-      var num  = skel.num
+      var skel = lineSkeleton()
+      var num  = skel.num2
+      num.empty()
+      // num.css('cursor', 'pointer')
 
       if (line.line !== null) skel.row.addClass(mkClass(line.line))
-
-
-      var openCur = $('#step-by-opcode').is(':checked')
-      if (!(isCurrent && openCur)) skel.row.hide()
+      var openCur =
+            $('input[type="radio"][name=step_type]:checked').val() === 'OpCode'
+      if (!(isCurrent && openCur)) skel.row.addClass('uk-hidden')
 
       var key     = opCodeKey(op)
       subs[i]     = addBrkPoint(num,dbgState.breakPoints[key] === true)
@@ -317,16 +316,16 @@ function drawLine(dbgState,context,chunkId,here) {
 
       if (pcKey === key) skel.row.addClass('cur-line')
 
-      var lineLab = $('<span/>')
-                    .addClass('galua-line-number')
-                    .text(' ' + op.opcode)
+      var lineLab = $('<span/>').addClass('uk-text-small').text(' ' + op.opcode)
       var menu = lineMenu( lineLab
                          , function() { toggleBreakOnOpCode(i, function() {}) }
                          , function() { gotoOpCode(i) } )
 
       num.append(menu)
 
-      skel.text.text(op.text)
+      skel.text.addClass('uk-text-muted uk-text-small')
+               .css('padding-left', '1em')
+               .text(op.text)
 
       here.append(skel.row)
     }
@@ -353,29 +352,29 @@ function drawLine(dbgState,context,chunkId,here) {
 
       // Server interaction went OK
       function ok(res) {
-
-        setClass($('.' + id + ' .breakpoint'), 'hide', hasBrk)
-        hasBrk = !hasBrk
+        hasBrk          = !hasBrk
         dbgState.breakPoints[id] = hasBrk
+        setClass($('.' + id + ' .breakpoint'), 'uk-hidden', !hasBrk)
 
         if (theLine !== null) {
             var lineHasBrk = false
             jQuery.each($('.' + mkClass(line.line + ' .breakpoint')),
                 function(ix,it) {
-                  if (!$(it).hasClass('hide')) {
+                  if (! $(it).hasClass('uk-hidden')) {
                     lineHasBrk = true
                     return false // stop
                   }
                   return true // keep going
                 })
 
-            var brks = $('.' + srcLineClass + ' .breakpoint')
-            setClass(brks,'hide', !lineHasBrk)
+            setClass($('.' + srcLineClass + ' .breakpoint'),
+                                              'uk-hidden', !lineHasBrk)
 
         }
 
         if (hasBrk) {
-          $('#breakpoint-list').append(drawBreakPoint(dbgState,res))
+          console.log(res)
+          $('#breakpoints-list').append(drawBreakPoint(dbgState,res))
         } else {
           $('.brk_menu.' + id).remove()
         }
