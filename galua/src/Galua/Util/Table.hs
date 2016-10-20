@@ -13,13 +13,11 @@ module Galua.Util.Table
   , tableToList
   ) where
 
-import qualified Data.Vector as Vector
-import           Data.Vector.Mutable(IOVector)
-import qualified Data.Vector.Mutable as IOVector
 import           Data.HashTable.IO(CuckooHashTable,lookupIndex,nextByIndex)
 import qualified Data.HashTable.IO as Hash
 import           Data.Hashable(Hashable)
 import           Data.IORef(IORef,newIORef,writeIORef,readIORef)
+import qualified Galua.Util.SizedVector as SV
 
 -- Desired goals (not necessarily implemented)
 -- 1. Indexable by all values
@@ -29,7 +27,7 @@ import           Data.IORef(IORef,newIORef,writeIORef,readIORef)
 type Hash v = CuckooHashTable v v
 
 data Table v = Table
-  { tableArray :: {-# UNPACK #-} !(IOVector v)
+  { tableArray :: {-# UNPACK #-} !(SV.SizedVector v)
   , tableHash  :: {-# UNPACK #-} !(Hash v)
   , tableMeta  :: {-# UNPACK #-} !(IORef v) -- ^ Either "Table" or "Nil"
   }
@@ -43,7 +41,7 @@ class (Eq v, Hashable v) => TableValue v where
 
 newTable :: TableValue v => Int -> Int -> IO (Table v)
 newTable arraySize hashSize =
-  do tableArray <- IOVector.replicate arraySize nilTableValue
+  do tableArray <- SV.newN arraySize
      tableHash  <- Hash.newSized hashSize
      tableMeta  <- newIORef nilTableValue
      return Table { .. }
@@ -58,8 +56,10 @@ getTableRaw :: TableValue v => Table v -> v {- ^ key -} -> IO v
 getTableRaw Table { .. } key =
   case tableValueToInt key of
     Just i
-      | 1 <= i && i <= IOVector.length tableArray ->
-        IOVector.read tableArray (i-1)
+      | 1 <= i ->
+        do n <- SV.size tableArray
+           if i <= n then SV.get tableArray (i-1)
+                     else lkp (tableValueFromInt i)
       | otherwise -> lkp (tableValueFromInt i)
     _ -> lkp key
   where
@@ -73,8 +73,11 @@ setTableRaw ::
 setTableRaw Table { .. } key !val =
   case tableValueToInt key of
     Just i
-      | 1 <= i && i <= IOVector.length tableArray ->
-        IOVector.write tableArray (i-1) val
+      | 1 <= i ->
+          do n <- SV.size tableArray
+             if i <= n then SV.set tableArray (i-1) val
+               else if i == n+1 then SV.push tableArray val
+               else setHash (tableValueFromInt i)
       | otherwise -> setHash (tableValueFromInt i)
     _ -> setHash key
 
@@ -85,23 +88,21 @@ setTableRaw Table { .. } key !val =
 
 
 tableLen :: TableValue v => Table v -> IO Int
-tableLen Table { .. }
-  | n < 1 = hashLen 0 tableHash
-  | otherwise =
-     do z <- IOVector.read tableArray 0
-        if isNilTableValue z
-           then return 0
-           else do l <- arrayLen 0 (n-1) tableArray
-                   if l < n - 1
-                      then return (l + 1)
-                      else hashLen n tableHash
-  where n = IOVector.length tableArray
+tableLen Table { .. } =
+  do n <- SV.size tableArray
+     if n < 1 then hashLen 0 tableHash
+       else do z <- SV.get tableArray 0
+               if isNilTableValue z then return 0
+                 else do l <- arrayLen 0 (n-1) tableArray
+                         if l < n - 1
+                            then return (l + 1)
+                            else hashLen n tableHash
 
-arrayLen :: TableValue v => Int -> Int -> IOVector v -> IO Int
+arrayLen :: TableValue v => Int -> Int -> SV.SizedVector v -> IO Int
 arrayLen lo hi a
   | lo >= hi = return hi
   | otherwise = do let m = hi-(hi-lo) `div` 2
-                   v1 <- IOVector.read a m
+                   v1 <- SV.get a m
                    if isNilTableValue v1
                       then arrayLen lo (m-1) a
                       else arrayLen m hi a
@@ -118,15 +119,16 @@ tableFirst t = tableFirstArray t 0
 
 -- Assumes that the `Int` parameters is non-negative.
 tableFirstArray :: TableValue v => Table v -> Int -> IO (Maybe (v,v))
-tableFirstArray Table { .. } = go
+tableFirstArray Table { .. } start =
+  do n <- SV.size tableArray
+     go n start
   where
-  n = IOVector.length tableArray
-
-  go i | i >= n    = tableFirstHash tableHash
-       | otherwise = do x <- IOVector.read tableArray i
-                        if isNilTableValue x
-                          then go (i+1)
-                          else return (Just (tableValueFromInt (i+1), x))
+  go n i
+    | i >= n    = tableFirstHash tableHash
+    | otherwise = do x <- SV.get tableArray i
+                     if isNilTableValue x
+                       then go n (i+1)
+                       else return (Just (tableValueFromInt (i+1), x))
                                 -- i+1 because while vector is 0-indexed
                                 -- lua sequences are 1 indexed
 
@@ -141,7 +143,7 @@ tableNext t key
   | isNilTableValue key = tableFirst t
 
   | Just i <- tableValueToInt key
-  , 0 <= i && i < IOVector.length (tableArray t) = tableFirstArray t i
+  , 0 <= i = tableFirstArray t i
       -- start at 'i-1' + 1, next element counteracts
       -- the vector indexes being one less
 
@@ -154,9 +156,8 @@ tableNext t key
 
 tableToList :: TableValue v => Table v -> IO [(v,v)]
 tableToList Table { .. } =
-  do vec <- Vector.freeze tableArray
+  do elts <- SV.toList tableArray
      let xs = filter (\(_,y) -> not (isNilTableValue y))
-            $ zip (map tableValueFromInt [ 1 .. ])
-                  (Vector.toList vec)
+            $ zip (map tableValueFromInt [ 1 .. ]) elts
      ys <- Hash.toList tableHash
      return (xs ++ ys)

@@ -2,6 +2,7 @@
 module Galua.Util.SizedVector
   ( SizedVector
   , new
+  , newN
   , push
   , pop
   , size
@@ -40,11 +41,16 @@ failure str = throwIO (SizedVectorException str)
 initialAllocation :: Int
 initialAllocation = 4
 
--- Allocate a new, empty, resizable vector
+-- | Allocate a new, empty, resizable vector with a default initial allocation.
 new :: IO (SizedVector a)
-new =
+new = newN initialAllocation
+
+-- | Allocate a new, empty, resizable vector with a given initial allocation
+-- size.
+newN :: Int {- ^ initial allocation -} -> IO (SizedVector a)
+newN n =
   do let svCount = 0
-     svArray <- IOVector.unsafeNew initialAllocation
+     svArray <- IOVector.unsafeNew (max initialAllocation n)
      SizedVector <$> newIORef SizedVector'{..}
 
 push :: SizedVector a -> a -> IO ()
