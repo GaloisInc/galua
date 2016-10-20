@@ -76,7 +76,9 @@ setTableRaw Table { .. } key !val =
       | 1 <= i ->
           do n <- SV.size tableArray
              if i <= n then SV.set tableArray (i-1) val
-               else if i == n+1 then SV.push tableArray val
+               else if i == n+1 && not (isNilTableValue val)
+                  then do SV.push tableArray val
+                          Hash.delete tableHash (tableValueFromInt i)
                else setHash (tableValueFromInt i)
       | otherwise -> setHash (tableValueFromInt i)
     _ -> setHash key
