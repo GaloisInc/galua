@@ -140,7 +140,7 @@ function drawExpandCollapseIcon(dbgState, v, opts) {
 
   function doOpen() {
           jQuery.post('/expand', { id: v.ref }, function(exp) {
-             here.append(renderExpanded(dbgState, exp))
+             here.append(renderExpanded(dbgState, v.ref, exp))
              showIt()
              downloaded = true
          }).fail(disconnected)
@@ -383,10 +383,10 @@ function drawCollapsedEx(dbgState, lab, v, opts) {
 
 
 // Additional information about a value
-function renderExpanded(dbgState, v) {
+function renderExpanded(dbgState, id, v) {
 
   switch (v.tag) {
-    case 'table': return drawTable(dbgState,v)
+    case 'table': return drawTable(dbgState,id,v)
     case 'user_data': return drawUserData(dbgState,v)
 
     case 'lua-fun':
@@ -465,17 +465,62 @@ function drawUserData(dbgState,t) {
 
 
 // Expanded table
-function drawTable(dbgState,t) {
+function drawTable(dbgState,id,t) {
+
+  var chunkNum     = 0
 
   var d = $('<table/>').addClass('striped')
 
-  jQuery.each(t.values, function(ix,entry) {
-    var r = $('<tr/>')
-    var k = $('<td/>').append(drawValue(dbgState,entry.key))
-    var v = $('<td/>').append(drawValue(dbgState,entry.value))
-    d.append(r)
-    r.append([k,v])
-  })
+  function addEntries(ents) {
+
+    var thisClass = 'galua-table-chunk-' + chunkNum
+    var nextChunk = ++chunkNum
+
+    jQuery.each(ents.values, function(ix,entry) {
+      var r = $('<tr/>').addClass(thisClass)
+      var k = $('<td/>').append(drawValue(dbgState,entry.key))
+      var v = $('<td/>').append(drawValue(dbgState,entry.value))
+      r.append([k,v])
+      d.append(r)
+    })
+
+    var subOpen = false
+    var downloaded = false
+
+    if (ents.missing > 0) {
+      var r = $('<tr/>')
+      var c = $('<td/>')
+              .attr('colspan','2')
+              .css('cursor','pointer')
+              .addClass('galua_remark')
+              .text('... ' + ents.missing + ' more ...')
+      d.append(r.append(c))
+      c.click(function() {
+        if (subOpen) {
+          $('.' + 'galua-table-chunk-' + nextChunk).hide()
+          subOpen = false
+        } else {
+          if (downloaded) {
+            $('.' + 'galua-table-chunk-' + nextChunk).show()
+            subOpen = true
+          } else
+            jQuery.post('/expandTable'
+                       , { id: id
+                         , from: ents.startIx + ents.values.length
+                         }
+                       , function(newEnts) {
+                           addEntries(newEnts)
+                           downloaded = true
+                           subOpen = true
+                         })
+        }
+        return false
+      })
+    }
+  }
+
+
+  addEntries(t)
 
   if (t.ref !== undefined) {
     var r = $('<tr/>')

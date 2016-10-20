@@ -9,7 +9,7 @@ import           Galua.Debugger
 import           Galua.Debugger.View
                   ( exportDebugger
                   , watchExportable, unwatchExportable
-                  , expandExportable,
+                  , expandExportable, expandSubtable,
                       analyze,
                       exportFun,importBreakLoc,exportBreakLoc,exportV)
 import           Galua.Debugger.EmbedDirectory (embedDirectory)
@@ -147,10 +147,11 @@ apiRoutes st =
 
      , ("/goto", cmd snapGoto)
 
-     , ("/expand",    cmd snapExpand)
-     , ("/watch",     cmd snapWatch)
-     , ("/unwatch",   cmd snapUnwatch)
-     , ("/watchName", cmd snapWatchName)
+     , ("/expand",      cmd snapExpand)
+     , ("/expandTable", cmd snapExpandTable)
+     , ("/watch",       cmd snapWatch)
+     , ("/unwatch",     cmd snapUnwatch)
+     , ("/watchName",   cmd snapWatchName)
 
      , ("/breakOnErr", cmd snapBreakOnError)
 
@@ -223,6 +224,17 @@ snapExpand dbg =
      case mb of
        Nothing -> notFound
        Just js -> sendJSON js
+
+snapExpandTable :: Debugger -> Snap ()
+snapExpandTable dbg =
+  do n  <- natParam "id"
+     f  <- natParam "from"
+     mb <- liftIO (expandSubtable dbg n f)
+     case mb of
+       Nothing -> notFound
+       Just js -> sendJSON js
+
+
 
 
 

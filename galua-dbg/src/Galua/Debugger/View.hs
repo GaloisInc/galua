@@ -1,6 +1,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, OverloadedStrings, NamedFieldPuns #-}
 module Galua.Debugger.View
-  ( exportDebugger, exportFun, expandExportable
+  ( exportDebugger, exportFun, expandExportable, expandSubtable
   , watchExportable, unwatchExportable
   , exportV -- MAYBE NOT
   , importBreakLoc
@@ -52,7 +52,6 @@ import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString as B
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-import qualified Data.Sequence as Seq
 import qualified Data.Vector as Vector
 import           Data.Maybe(fromMaybe)
 import           Data.Either(partitionEithers)
@@ -71,6 +70,11 @@ import           Foreign.C.String
 import           Foreign.Ptr (nullPtr, nullFunPtr)
 
 import           HexFloatFormat (doubleToHex)
+
+
+-- Max nubmber of entries in a table to export at once
+tableChunk :: Int
+tableChunk = 20
 
 newtype ExportM a = ExportM (ReaderT AllocRef (StateT ExportableState IO) a)
                     deriving (Functor,Applicative,Monad)
@@ -297,6 +301,29 @@ expandExportable dbg n =
   Debugger { dbgSources } = dbg
 
 
+
+expandSubtable :: Debugger -> Integer -> Integer -> IO (Maybe JS.Value)
+expandSubtable dbg n from =
+  whenStable dbg False $
+  do funs <- readIORef dbgSources
+     runExportM dbg $
+       do mb   <- lookupThing n
+          case mb of
+            Nothing -> return Nothing
+            Just thing ->
+              case thing of
+                ExportableValue p (Table r) ->
+                 do t <- io (readRef r)
+                    Just <$> exportTable funs (fromInteger from) tableChunk p t
+
+                _ -> return Nothing
+
+  where
+  Debugger { dbgSources } = dbg
+
+
+
+
 exportBreaks :: Debugger -> IO JS.Value
 exportBreaks Debugger { dbgBreaks, dbgSources } =
   do funs <- readIORef dbgSources
@@ -414,7 +441,7 @@ lookupMetaName tab =
 expandValue :: Chunks -> ValuePath -> Value -> ExportM JS.Value
 expandValue funs path val =
   case val of
-    Table r    -> exportRef r (exportTable funs)
+    Table r    -> exportRef r (exportTable funs 0 tableChunk)
     UserData r -> exportRef r exportUserData
     Closure r  -> exportRef r (exportClosure funs)
     Thread r   -> do setExpandedThread r
@@ -458,9 +485,14 @@ exportThreadStatus st =
 
 
 
-exportTable :: Chunks -> ValuePath -> Table -> ExportM JS.Value
-exportTable funs path t =
-  do js <- (mapM entry . sortBy (compare `on` fst)) =<< io (Tab.tableToList t)
+exportTable :: Chunks -> Int -> Int -> ValuePath -> Table -> ExportM JS.Value
+exportTable funs from len path t =
+  do ents  <- io (Tab.tableToList t)
+     tabSz <- io (Tab.tableLen t)
+     let sz       = max 0 (tabSz - from)
+         visElems = take len $ drop from $ sortBy (compare `on` fst) ents
+         missing  = max 0 (sz - len)
+     js <- mapM entry visElems
      let pairs = [ tag "table", "values" .= js ]
      mb <- io (Tab.getTableMeta t)
      ref <- case mb of
@@ -470,7 +502,10 @@ exportTable funs path t =
                     return [ "text" .= prettyRef r, "ref" .= i ]
               _ -> return []
 
-     return (JS.object (pairs ++ ref))
+     return (JS.object ( [ "startIx" .= from
+                         , "missing" .= missing ]
+                         ++ pairs ++ ref
+                       ))
   where
   entry (k,v) = do j1 <- exportValue funs (VP_Key path k) k
                    j2 <- exportValue funs (VP_Field path k) v
