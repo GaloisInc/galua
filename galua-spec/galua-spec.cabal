@@ -34,7 +34,10 @@ library
   default-language:    Haskell2010
 
 executable test-parse
-  build-depends: base, galua-spec, text, pretty-show
+  build-depends: base, galua-spec, text, pretty-show, language-lua
   main-is: Test.hs
+
+
+
 
 

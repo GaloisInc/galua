@@ -12,35 +12,45 @@ import qualified Data.Vector as Vector
 import           MonadLib hiding (Label())
 import           MonadLib.Derive
 import           Data.Text ( Text )
-import qualified Data.Text as Text
+import           Data.Function (on)
+import           Text.PrettyPrint
 
 type Annot      = SourceRange
 
 data Name       = Name { nameId   :: !Int
-                          -- ^ Unique identifier (XXX, maybe more structure)
                        , nameType :: !NameT -- ^ What sort of name is this
                        , nameOrig :: !(Lua.Name Annot) -- ^ Original name
-                       }
+                       } deriving Show
+
+nameUID :: Name -> (Int,NameT)
+nameUID Name { .. } = (nameId, nameType)
 
 instance Eq Name where
-  x == y = nameId x == nameId y
+  (==) = (==) `on` nameUID
 
 instance Ord Name where
-  compare x y = compare (nameId x) (nameId y)
+  compare = compare `on` nameUID
 
-data NameT      = LocalName | UpvalueName | GloabalName
+data NameT      = LocalName
+                | UpvalueName
+                | GloabalName
+                  -- XXX ^ add chunk/file name to distinguish globals
+                  deriving (Show,Eq,Ord)
 
 type Selector   = Lua.Name Annot
 
 data FunName    = FunName Annot Name [Selector] (Maybe Selector)
+                  deriving Show
 
 data Var        = VarName Name                        -- ^ variable
                 | Select Annot PrefixExp Exp          -- ^ table[exp]
                 | SelectName Annot PrefixExp Selector -- ^ table.variable
+                  deriving Show
 
 data PrefixExp  = PEVar Var
                 | PEFunCall FunCall
                 | Paren Exp
+                  deriving Show
 
 data Exp        = Nil     Annot
                 | Bool    Annot Bool
@@ -53,17 +63,21 @@ data Exp        = Nil     Annot
                 | EFunDef     FunBody
                 | PrefixExp   PrefixExp
                 | TableConst  Table
+                  deriving Show
 
 eVar :: Name -> Exp
 eVar x = PrefixExp (PEVar (VarName x))
 
 data Table      = Table Annot [TableField]
+                  deriving Show
 
 data TableField = ExpField   Annot Exp Exp
                 | NamedField Annot Selector Exp
                 | Field      Annot Exp
+                  deriving Show
 
 data FunCall    = FunCall Annot PrefixExp (Maybe Selector) [Exp]
+                  deriving Show
 
 --------------------------------------------------------------------------------
 
@@ -122,14 +136,14 @@ instance GetAnnot Name where
 type Label    = Int
 
 data CFG = CFG
-  { cfgBlocks :: Map Label BasicBlock
-  , cfgEntry  :: Label
-  }
+  { cfgEntry     :: !Label
+  , cfgBlocks    :: !(Vector BasicBlock)
+  } deriving Show
 
 data BasicBlock = BasicBlock
   { bbStmts   :: Vector Stat
   , bbExit    :: EndStat
-  }
+  } deriving Show
 
 data Stat =
     Assign          Annot [Var]   [Exp]
@@ -141,56 +155,41 @@ data Stat =
   | AssertIsBool Exp
   | AssumeIsNumber Name
   | AssumeNotNil Name
+    deriving Show
 
 data EndStat =
     Return [Exp]
   | Goto [Label]
   | ForIn [Name] [Exp] Label Label
+    deriving Show
 
 data FunBody = FunBody Annot [Name] (Maybe Annot) CFG
+    deriving Show
+
 
 --------------------------------------------------------------------------------
 
 newtype M a = M { unM :: StateT RW (ExceptionT Error Id) a }
 
-data Seed = Seed { seedNextBlockId, seedNextNameId :: !Int }
-
-run :: Seed -> [Lua.Name Annot] -> M a -> Either Error (a, CFG, Seed)
-run Seed { .. } ups (M m) =
+run :: M a -> Either Error a
+run (M m) =
   case final m of
-    Left err     -> Left err
+    Left err -> Left err
     Right (a,rw) ->
       case curBlock rw of
-        Nothing -> Right ( a
-                         , CFG { cfgBlocks = finishedBlocks rw
-                               , cfgEntry  = seedNextBlockId
-                               }
-                         , Seed { seedNextBlockId = nextBlockId rw
-                                , seedNextNameId  = nextNameId rw
-                                }
-                         )
+        Nothing -> Right a
         Just (l,_) -> panic ("run: Unterminated block " ++ show l)
 
   where
-  final   = runId . runExceptionT . runStateT initRW
+  final = runId . runExceptionT . runStateT rwBlank
 
-  initRW = RW { prevScopes      = []
-              , globals         = []
-              , upvalues        = zipWith toUpvalue ups [ seedNextBlockId .. ]
-              , curScope        = emptyScope
-              , curBlock        = Nothing
-              , finishedBlocks  = Map.empty
-              , nextBlockId     = seedNextBlockId
-              , nextNameId      = seedNextNameId + length ups
-              }
-
-  toUpvalue l n = (l, Name { nameId = n
-                           , nameType = UpvalueName
-                           , nameOrig = l
-                           })
+topLevel :: Lua.Block Annot -> Either Error CFG
+topLevel m = run (cvtBody m)
 
 data Error = UndefinedLabel (Lua.Name Annot)
            | MultipleLabelDefinitionsFor (Lua.Name Annot)
+           | BreakOutsideLooop Annot
+             deriving Show
 
 -- XXX: We use association lists because `Lua.Name` is not in `Ord`.
 data Scope = Scope
@@ -211,6 +210,20 @@ data RW = RW
   , finishedBlocks  :: !(Map Label BasicBlock)
   , nextBlockId     :: !Int
   , nextNameId      :: !Int
+  , loopStack       :: ![Label]
+  }
+
+rwBlank :: RW
+rwBlank = RW
+  { prevScopes     = []
+  , curScope       = emptyScope
+  , upvalues       = []
+  , globals        = []
+  , curBlock       = Nothing
+  , finishedBlocks = Map.empty
+  , nextBlockId    = 0
+  , nextNameId     = 0
+  , loopStack      = []
   }
 
 instance Functor M where
@@ -228,11 +241,36 @@ panic x = error ("[bug] " ++ x)
 reportError :: Error -> M a
 reportError err = M $ raise err
 
+subFun :: M a -> M a
+subFun (M m) = M $
+  do s <- get
+     let ups = [ (x,n { nameType = UpvalueName })
+                  | Scope { .. } <- curScope s : prevScopes s
+                  , (x,n) <- scopeVars
+               ]
+     set rwBlank { globals = globals s, upvalues = ups }
+     a <- m
+     sets_ $ \s1 -> s { globals = globals s1 }
+     return a
+
+
 emit :: Stat -> M ()
 emit s = M $ sets_ $ \RW { .. } ->
   case curBlock of
     Nothing     -> panic "emit: Nothing"
     Just (l,bs) -> RW { curBlock = Just (l, s : bs), .. }
+
+hasCurrentBlock :: M Bool
+hasCurrentBlock =
+  do RW { .. } <- M get
+     case curBlock of
+       Nothing -> return False
+       Just _  -> return True
+
+getFinished :: M (Vector BasicBlock)
+getFinished =
+  do RW { .. } <- M get
+     return (Vector.fromList (Map.elems finishedBlocks))
 
 endCurrentBlock :: EndStat -> M ()
 endCurrentBlock e = M $ sets_ $ \RW { .. } ->
@@ -250,7 +288,7 @@ endCurrentBlock e = M $ sets_ $ \RW { .. } ->
 setCurrentBlock :: Label -> M ()
 setCurrentBlock l = M $ sets_ $ \RW { .. } ->
   case curBlock of
-    Just (l,_) -> panic ("setCurrentBlock: unterminated block " ++ show l)
+    Just (l',_) -> panic ("setCurrentBlock: unterminated block " ++ show l')
     Nothing -> RW { curBlock = Just (l,[]), .. }
 
 
@@ -316,9 +354,25 @@ cvtNameUse l =
             return n
        Just n -> return n
 
+startLoop :: M ()
+startLoop = M $ sets_ $ \RW { .. } ->
+  case curBlock of
+    Nothing    -> panic "startLoop: Nothing"
+    Just (l,_) -> RW { loopStack = l : loopStack, .. }
+
+endLoop :: M ()
+endLoop = M $ sets_ $ \RW { .. } ->
+  case loopStack of
+    []     -> panic "endLoop: []"
+    _ : ls -> RW { loopStack = ls, .. }
 
 
-
+getLoop :: Annot -> M Label
+getLoop a =
+  do RW { .. } <- M get
+     case loopStack of
+       []    -> reportError (BreakOutsideLooop a)
+       l : _ -> return l
 
 --------------------------------------------------------------------------------
 
@@ -327,6 +381,25 @@ class CvtStat t where
 
 class CvtExpr t s | t -> s, s -> t where
   cvtExpr :: t Annot -> M s
+
+cvtBody :: (Lua.Block Annot) -> M CFG
+cvtBody b =
+  do l <- newBlock
+     setCurrentBlock l
+     cvtStat b
+     needsEnd <- hasCurrentBlock
+     when needsEnd (endCurrentBlock (Return []))
+     bs <- getFinished
+     return CFG { cfgEntry = l, cfgBlocks = bs }
+
+cvtFunction :: Lua.FunBody Annot -> M FunBody
+cvtFunction (Lua.FunBody a xs va b) = subFun $
+  do xs' <- mapM cvtNameNew xs
+     cfg <- cvtBody b
+     return (FunBody a xs' va cfg)
+
+
+
 
 instance CvtStat Lua.Stat where
   cvtStat stmt =
@@ -351,6 +424,7 @@ instance CvtStat Lua.Stat where
         do x <- cvtLuaLabelUse l
            endCurrentBlock (Goto [x])
 
+
       Lua.Do _ b ->
         do pushScope
            cvtStat b
@@ -364,7 +438,9 @@ instance CvtStat Lua.Stat where
            endCurrentBlock (Goto [body,next])
            setCurrentBlock body
            pushScope
+           startLoop
            cvtStat b
+           endLoop
            popScope
            setCurrentBlock next
 
@@ -374,14 +450,16 @@ instance CvtStat Lua.Stat where
            endCurrentBlock (Goto [body])
            setCurrentBlock body
            pushScope
+           startLoop
            cvtStat b
            e' <- cvtExpr e
            emit (AssertIsBool e')
+           endLoop
            popScope
            endCurrentBlock (Goto [next,body])
            setCurrentBlock next
 
-      Lua.ForRange a x e1 e2 mbE3 b ->
+      Lua.ForRange _ x e1 e2 mbE3 b ->
         do emit =<< (AssertIsNumber <$> cvtExpr e1)
            emit =<< (AssertIsNumber <$> cvtExpr e2)
            case mbE3 of
@@ -394,16 +472,18 @@ instance CvtStat Lua.Stat where
 
            setCurrentBlock body
            pushScope
+           startLoop
            x' <- cvtNameNew x
            emit (AssumeIsNumber x')
            cvtStat b
+           endLoop
            popScope
            endCurrentBlock (Goto [body,next])
 
            setCurrentBlock next
 
 
-      Lua.ForIn a xs es b ->
+      Lua.ForIn _ xs es b ->
         do es'  <- mapM cvtExpr es
            body <- newBlock
            next <- newBlock
@@ -414,12 +494,23 @@ instance CvtStat Lua.Stat where
 
            setCurrentBlock body
            emit (AssumeNotNil (head xs'))
+           startLoop
            cvtStat b
+           endLoop
            popScope
            endCurrentBlock (Goto [ body, next ])
 
       -- Lua.FunAssign a x b
-      -- Lua.LocaFunAssign
+      Lua.Break a ->
+        do l <- getLoop a
+           endCurrentBlock (Goto [l])
+
+      -- Lua.If
+
+      Lua.LocalFunAssign a x f ->
+        do x' <- cvtNameNew x
+           f' <- cvtFunction f
+           emit (LocalAssign a [x'] (Just [EFunDef f']))
 
       Lua.LocalAssign a xs mb ->
         do e'  <- traverse (traverse cvtExpr) mb
@@ -445,7 +536,7 @@ instance CvtExpr Lua.Exp Exp where
      Lua.Number a t n      -> return (Number a t n)
      Lua.String a t        -> return (String a t)
      Lua.Vararg a          -> return (Vararg a)
-     -- Lua.EFunDef a d       -> error "XXX"
+     Lua.EFunDef _ (Lua.FunDef _ d) -> EFunDef <$> cvtFunction d
      Lua.PrefixExp _ e     -> PrefixExp <$> cvtExpr e
      Lua.TableConst _ t    -> TableConst <$> cvtExpr t
      Lua.Binop a op e1 e2  -> do e1' <- cvtExpr e1
@@ -505,4 +596,31 @@ instance CvtExpr Lua.TableField TableField where
                                   return (Field a e')
 
 
+--------------------------------------------------------------------------------
+
+class PP t where
+  pp :: t -> Doc
+
+{-
+instance PP Stat where
+  pp stat =
+    case stat of
+      Assign _ xs es -> hsep (punctuate comma (map pp xs)) <+> text "=" <+>
+                        hsep (punctuate comma (map pp es))
+      LocalAssign _ xs mbe ->
+        text "local" <+> hsep (punctuate comma (map pp xs)) <+>
+          (case mbe of
+             Nothing -> empty
+             Just e  -> text "=" <+> pp e)
+
+      FunAssign _ f b ->
+
+
+      LocalFunAssign  Annot Name    FunBody
+      FunCallStat FunCall
+      AssertIsNumber Exp
+      AssertIsBool Exp
+      AssumeIsNumber Name
+      AssumeNotNil Name
+-}
 
