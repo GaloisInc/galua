@@ -1,10 +1,13 @@
 {-# LANGUAGE MultiParamTypeClasses, FunctionalDependencies #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE DeriveGeneric #-}
 module Galua.Spec.CFG where
 
 import           Language.Lua.Annotated.Parser(SourceRange)
 import qualified Language.Lua.Annotated.Syntax as Lua
+import qualified Language.Lua.PrettyPrinter as Lua
+import qualified Language.Lua.Annotated.Simplify as Lua
 import           Data.Map ( Map )
 import qualified Data.Map as Map
 import           Data.Vector ( Vector )
@@ -13,7 +16,9 @@ import           MonadLib hiding (Label())
 import           MonadLib.Derive
 import           Data.Text ( Text )
 import           Data.Function (on)
-import           Text.PrettyPrint
+import           Text.Show.Pretty(PrettyVal(..),dumpDoc)
+import qualified Text.Show.Pretty as PP
+import           GHC.Generics(Generic)
 
 type Annot      = SourceRange
 
@@ -40,17 +45,17 @@ data NameT      = LocalName
 type Selector   = Lua.Name Annot
 
 data FunName    = FunName Annot Name [Selector] (Maybe Selector)
-                  deriving Show
+                  deriving (Generic,Show)
 
 data Var        = VarName Name                        -- ^ variable
                 | Select Annot PrefixExp Exp          -- ^ table[exp]
                 | SelectName Annot PrefixExp Selector -- ^ table.variable
-                  deriving Show
+                  deriving (Generic,Show)
 
 data PrefixExp  = PEVar Var
                 | PEFunCall FunCall
                 | Paren Exp
-                  deriving Show
+                  deriving (Generic,Show)
 
 data Exp        = Nil     Annot
                 | Bool    Annot Bool
@@ -63,21 +68,21 @@ data Exp        = Nil     Annot
                 | EFunDef     FunBody
                 | PrefixExp   PrefixExp
                 | TableConst  Table
-                  deriving Show
+                  deriving (Generic,Show)
 
 eVar :: Name -> Exp
 eVar x = PrefixExp (PEVar (VarName x))
 
 data Table      = Table Annot [TableField]
-                  deriving Show
+                  deriving (Generic,Show)
 
 data TableField = ExpField   Annot Exp Exp
                 | NamedField Annot Selector Exp
                 | Field      Annot Exp
-                  deriving Show
+                  deriving (Generic,Show)
 
 data FunCall    = FunCall Annot PrefixExp (Maybe Selector) [Exp]
-                  deriving Show
+                  deriving (Generic,Show)
 
 --------------------------------------------------------------------------------
 
@@ -138,12 +143,12 @@ type Label    = Int
 data CFG = CFG
   { cfgEntry     :: !Label
   , cfgBlocks    :: !(Vector BasicBlock)
-  } deriving Show
+  } deriving (Generic,Show)
 
 data BasicBlock = BasicBlock
   { bbStmts   :: Vector Stat
   , bbExit    :: EndStat
-  } deriving Show
+  } deriving (Generic,Show)
 
 data Stat =
     Assign          Annot [Var]   [Exp]
@@ -153,17 +158,17 @@ data Stat =
   | FunCallStat FunCall
   | AssertIsNumber Exp
   | AssumeIsNumber Name
-    deriving Show
+    deriving (Generic,Show)
 
 data EndStat =
     Return [Exp]
   | Goto [Label]
   | If Exp Label Label
   | ForIn [Name] [Exp] Label Label
-    deriving Show
+    deriving (Generic,Show)
 
 data FunBody = FunBody Annot [Name] (Maybe Annot) CFG
-    deriving Show
+    deriving (Generic,Show)
 
 
 --------------------------------------------------------------------------------
@@ -531,8 +536,6 @@ instance CvtStat Lua.Stat where
         do l <- getLoop a
            endCurrentBlock (Goto [l])
 
-      -- Lua.If
-
       Lua.LocalFunAssign a x f ->
         do x' <- cvtNameNew x
            f' <- cvtFunction f
@@ -624,28 +627,37 @@ instance CvtExpr Lua.TableField TableField where
 
 --------------------------------------------------------------------------------
 
-class PP t where
-  pp :: t -> Doc
+asString x = PP.String (show x)
 
-{-
-instance PP Stat where
-  pp stat =
-    case stat of
-      Assign _ xs es -> hsep (punctuate comma (map pp xs)) <+> text "=" <+>
-                        hsep (punctuate comma (map pp es))
-      LocalAssign _ xs mbe ->
-        text "local" <+> hsep (punctuate comma (map pp xs)) <+>
-          (case mbe of
-             Nothing -> empty
-             Just e  -> text "=" <+> pp e)
+instance PrettyVal Name where
+  prettyVal Name { .. } = prettyVal nameOrig
 
-      FunAssign _ f b ->
+instance PrettyVal (Lua.Name Annot) where
+  prettyVal x = PP.String (show (Lua.pprint (Lua.sName x)))
+
+instance PrettyVal Annot where
+  prettyVal _ = PP.String ""
+
+instance PrettyVal (Lua.Unop Annot) where prettyVal = asString
+instance PrettyVal (Lua.Binop Annot) where prettyVal = asString
+
+instance PrettyVal Stat
+instance PrettyVal Lua.NumberType
+instance PrettyVal Exp
+instance PrettyVal PrefixExp
+instance PrettyVal FunCall
+instance PrettyVal Var
+instance PrettyVal FunName
+instance PrettyVal Table
+instance PrettyVal TableField
+instance PrettyVal CFG
+instance PrettyVal EndStat
+instance PrettyVal BasicBlock
+instance PrettyVal FunBody
+instance PrettyVal Text where prettyVal = asString
+
+instance PrettyVal a => PrettyVal (Vector a) where
+  prettyVal = prettyVal . Vector.toList
 
 
-      LocalFunAssign  Annot Name    FunBody
-      FunCallStat FunCall
-      AssertIsNumber Exp
-      AssumeIsNumber Name
-      AssumeNotNil Name
--}
 

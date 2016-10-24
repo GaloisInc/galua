@@ -2,7 +2,7 @@ module Main(main) where
 
 import qualified Data.Text.IO as Text
 import System.Environment(getArgs)
-import Text.Show.Pretty(pPrint)
+import Text.Show.Pretty(pPrint, dumpStr)
 
 import Galua.Spec.Parser
 import Galua.Spec.AST(pretty)
@@ -24,7 +24,7 @@ testCFG file =
          let res  = topLevel b
          in case res of
               Left err  -> print err
-              Right cfg -> print cfg
+              Right cfg -> putStrLn (dumpStr cfg)
 
 testParse :: FilePath -> IO ()
 testParse file =

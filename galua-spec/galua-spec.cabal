@@ -27,7 +27,7 @@ library
                        alex-tools >=0.1 && <0.2,
                        array >=0.5 && <0.6,
                        language-lua >= 0.11,
-                       text, pretty, containers, vector, monadLib
+                       text, pretty, containers, vector, monadLib, pretty-show
   ghc-options:         -Wall
   hs-source-dirs:      src
   build-tools:         alex, happy
