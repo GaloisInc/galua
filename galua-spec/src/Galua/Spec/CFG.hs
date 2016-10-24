@@ -152,14 +152,13 @@ data Stat =
   | LocalFunAssign  Annot Name    FunBody
   | FunCallStat FunCall
   | AssertIsNumber Exp
-  | AssertIsBool Exp
   | AssumeIsNumber Name
-  | AssumeNotNil Name
     deriving Show
 
 data EndStat =
     Return [Exp]
   | Goto [Label]
+  | If Exp Label Label
   | ForIn [Name] [Exp] Label Label
     deriving Show
 
@@ -430,12 +429,41 @@ instance CvtStat Lua.Stat where
            cvtStat b
            popScope
 
+      Lua.If a bs d -> chain bs =<< newBlock
+        where
+        block l b after = do setCurrentBlock l
+                             pushScope
+                             cvtStat b
+                             popScope
+                             endCurrentBlock (Goto [after])
+
+        chain [] _ = panic "Lua.If: []"
+
+        chain [(e,b)] after =
+          do e'   <- cvtExpr e
+             l    <- newBlock
+             (next,defB) <- case d of
+                              Nothing -> return (after, return ())
+                              Just db  ->
+                                do next <- newBlock
+                                   return (next, block next db after)
+             endCurrentBlock (If e' l next)
+             block l b after
+             defB
+
+        chain ((e,b) : more) after =
+          do e'   <- cvtExpr e
+             l    <- newBlock
+             next <- newBlock
+             endCurrentBlock (If e' l next)
+             block l b after
+             chain more after
+
       Lua.While _ e b ->
         do body <- newBlock
            next <- newBlock
            e'   <- cvtExpr e
-           emit (AssertIsBool e')
-           endCurrentBlock (Goto [body,next])
+           endCurrentBlock (If e' body next)
            setCurrentBlock body
            pushScope
            startLoop
@@ -453,10 +481,9 @@ instance CvtStat Lua.Stat where
            startLoop
            cvtStat b
            e' <- cvtExpr e
-           emit (AssertIsBool e')
            endLoop
            popScope
-           endCurrentBlock (Goto [next,body])
+           endCurrentBlock (If e' next body)
            setCurrentBlock next
 
       Lua.ForRange _ x e1 e2 mbE3 b ->
@@ -493,7 +520,6 @@ instance CvtStat Lua.Stat where
            endCurrentBlock (ForIn xs' es' body next)
 
            setCurrentBlock body
-           emit (AssumeNotNil (head xs'))
            startLoop
            cvtStat b
            endLoop
@@ -619,7 +645,6 @@ instance PP Stat where
       LocalFunAssign  Annot Name    FunBody
       FunCallStat FunCall
       AssertIsNumber Exp
-      AssertIsBool Exp
       AssumeIsNumber Name
       AssumeNotNil Name
 -}
