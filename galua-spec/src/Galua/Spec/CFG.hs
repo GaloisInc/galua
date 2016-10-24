@@ -434,13 +434,17 @@ instance CvtStat Lua.Stat where
            cvtStat b
            popScope
 
-      Lua.If a bs d -> chain bs =<< newBlock
+      Lua.If a bs d ->
+        do after <- newBlock
+           chain bs after
+           setCurrentBlock after
         where
         block l b after = do setCurrentBlock l
                              pushScope
                              cvtStat b
                              popScope
-                             endCurrentBlock (Goto [after])
+                             y <- hasCurrentBlock
+                             when y (endCurrentBlock (Goto [after]))
 
         chain [] _ = panic "Lua.If: []"
 
@@ -473,6 +477,8 @@ instance CvtStat Lua.Stat where
            pushScope
            startLoop
            cvtStat b
+           y <- hasCurrentBlock
+           when y (endCurrentBlock (Goto [body]))
            endLoop
            popScope
            setCurrentBlock next
@@ -510,7 +516,8 @@ instance CvtStat Lua.Stat where
            cvtStat b
            endLoop
            popScope
-           endCurrentBlock (Goto [body,next])
+           y <- hasCurrentBlock
+           when y (endCurrentBlock (Goto [body,next]))
 
            setCurrentBlock next
 
@@ -529,9 +536,10 @@ instance CvtStat Lua.Stat where
            cvtStat b
            endLoop
            popScope
-           endCurrentBlock (Goto [ body, next ])
+           y <- hasCurrentBlock
+           when y (endCurrentBlock (Goto [ body, next ]))
 
-      -- Lua.FunAssign a x b
+
       Lua.Break a ->
         do l <- getLoop a
            endCurrentBlock (Goto [l])
@@ -540,6 +548,12 @@ instance CvtStat Lua.Stat where
         do x' <- cvtNameNew x
            f' <- cvtFunction f
            emit (LocalAssign a [x'] (Just [EFunDef f']))
+
+      Lua.FunAssign a x b ->
+        do x' <- cvtExpr x
+           b' <- cvtFunction b
+           emit (FunAssign a x' b')
+
 
       Lua.LocalAssign a xs mb ->
         do e'  <- traverse (traverse cvtExpr) mb
@@ -625,9 +639,12 @@ instance CvtExpr Lua.TableField TableField where
                                   return (Field a e')
 
 
---------------------------------------------------------------------------------
+instance CvtExpr Lua.FunName FunName where
+  cvtExpr (Lua.FunName a x ys mbz) =
+    do x' <- cvtNameUse x
+       return (FunName a x' ys mbz)
 
-asString x = PP.String (show x)
+--------------------------------------------------------------------------------
 
 instance PrettyVal Name where
   prettyVal Name { .. } = prettyVal nameOrig
@@ -638,8 +655,11 @@ instance PrettyVal (Lua.Name Annot) where
 instance PrettyVal Annot where
   prettyVal _ = PP.String ""
 
-instance PrettyVal (Lua.Unop Annot) where prettyVal = asString
-instance PrettyVal (Lua.Binop Annot) where prettyVal = asString
+instance PrettyVal (Lua.Unop Annot) where
+  prettyVal = PP.String . show . Lua.pprint . Lua.sUnop
+
+instance PrettyVal (Lua.Binop Annot) where
+  prettyVal = PP.String . show . Lua.pprint . Lua.sBinop
 
 instance PrettyVal Stat
 instance PrettyVal Lua.NumberType
@@ -654,7 +674,8 @@ instance PrettyVal CFG
 instance PrettyVal EndStat
 instance PrettyVal BasicBlock
 instance PrettyVal FunBody
-instance PrettyVal Text where prettyVal = asString
+instance PrettyVal Text where
+  prettyVal = prettyVal . show
 
 instance PrettyVal a => PrettyVal (Vector a) where
   prettyVal = prettyVal . Vector.toList
