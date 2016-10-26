@@ -1,4 +1,4 @@
-{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedStrings, TypeSynonymInstances, FlexibleInstances #-}
 module Galua.Debugger.PrettySource
   ( Line, lexChunk, omittedLine
   , NameId(..), LocatedExprName
@@ -6,9 +6,10 @@ module Galua.Debugger.PrettySource
   ) where
 
 
+import AlexTools(Lexeme(..))
 import Language.Lua.Annotated.Lexer
-          (llexNamedWithWhiteSpace,LexToken(..),SourcePos(..),SourceRange(..)
-          , dropWhiteSpace)
+         ( llexNamedWithWhiteSpace,SourcePos(..),SourceRange(..)
+         , dropWhiteSpace )
 import Language.Lua.Annotated.Parser(parseTokens,chunk)
 import qualified Language.Lua.Token as L
 import Language.Lua.Bytecode.FunId (FunId, funIdList)
@@ -30,6 +31,8 @@ import           Data.Text.Encoding.Error(lenientDecode)
 
 import qualified Data.Aeson as JS
 import           Data.Aeson (ToJSON(..), (.=))
+
+type LexToken = Lexeme L.Token
 
 newtype Line    = Line [Token]
                   deriving Show
@@ -76,7 +79,7 @@ class Rng t where
   getRange :: t -> SourceRange
 
 instance Rng LexToken where
-  getRange = ltokRange
+  getRange = lexemeRange
 
 instance Rng LocatedExprName where
   getRange = exprPos
@@ -85,16 +88,16 @@ instance Rng AnnotToken where
   getRange (AnnotToken a _ _ _) = getRange a
 
 startIx :: Rng t => t -> Int
-startIx = sourcePosIndex . sourceFrom . getRange
+startIx = sourceIndex . sourceFrom . getRange
 
 endIx :: Rng t => t -> Int
-endIx = sourcePosIndex . sourceTo . getRange
+endIx = sourceIndex . sourceTo . getRange
 
 
 data AnnotToken = AnnotToken LexToken (Maybe NameId) [NameId] (Maybe FunId)
 
 aTokLine :: AnnotToken -> Int
-aTokLine = sourcePosLine . sourceFrom . getRange
+aTokLine = sourceLine . sourceFrom . getRange
 
 
 data NameId = NameId !Int !Int
@@ -113,7 +116,7 @@ addFunIds xxs@(funId:xs) (y:ys)
   | isFunction y = setFunId funId y : addFunIds xs ys
   | otherwise = y : addFunIds xxs ys
 
-isFunction (AnnotToken t _ _ _) = ltokToken t == L.TokFunction
+isFunction (AnnotToken t _ _ _) = lexemeToken t == L.TokFunction
 
 addNames :: [ [LocatedExprName] ] -> [LexToken] -> [ AnnotToken ]
 addNames = go []
@@ -197,29 +200,29 @@ splitTok :: LexToken -> [LexToken]
 splitTok = split
   where
   split tok =
-    case Text.break (== '\n') (ltokLexeme tok) of
+    case Text.break (== '\n') (lexemeText tok) of
       (as,bs)
         | Text.null bs -> if Text.null as then [] else [tok]
         | otherwise ->
-          let rng  = ltokRange tok
+          let rng  = lexemeRange tok
               from = sourceFrom rng
               to   = sourceFrom rng
               len  = Text.length as
-              ix   = sourcePosIndex from + len
-              to'  = from { sourcePosColumn = sourcePosColumn from + len
-                          , sourcePosIndex  = ix
+              ix   = sourceIndex from + len
+              to'  = from { sourceColumn = sourceColumn from + len
+                          , sourceIndex  = ix
                           }
-              from' = from { sourcePosColumn  = 1
-                           , sourcePosLine    = sourcePosLine from + 1
-                           , sourcePosIndex   = ix + 2
+              from' = from { sourceColumn  = 1
+                           , sourceLine    = sourceLine from + 1
+                           , sourceIndex   = ix + 2
                              -- the char after the \n
                            }
 
-              t1 = tok { ltokLexeme = as
-                       , ltokRange  = SourceRange from to'
+              t1 = tok { lexemeText = as
+                       , lexemeRange  = SourceRange from to'
                        }
-              t2 = tok { ltokLexeme = Text.tail bs
-                       , ltokRange  = SourceRange from' to
+              t2 = tok { lexemeText = Text.tail bs
+                       , lexemeRange  = SourceRange from' to
                        }
 
           in t1 : split t2
@@ -227,11 +230,11 @@ splitTok = split
 
 token :: AnnotToken -> Token
 token (AnnotToken tok ns cs funId) =
-  Token (tokenType tok) (ltokLexeme tok) ns cs funId
+  Token (tokenType tok) (lexemeText tok) ns cs funId
 
 tokenType :: LexToken -> TokenType
 tokenType tok =
-  case ltokToken tok of
+  case lexemeToken tok of
     L.TokPlus        -> Operator
     L.TokMinus       -> Operator
     L.TokStar        -> Operator

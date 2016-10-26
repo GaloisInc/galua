@@ -55,7 +55,8 @@ library
                        monadLib,
                        filepath,
                        galua,
-                       galua-analysis
+                       galua-analysis,
+                       alex-tools
 
 
   hs-source-dirs:      src

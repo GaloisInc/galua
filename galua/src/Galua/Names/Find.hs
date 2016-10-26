@@ -20,7 +20,7 @@ import           Data.Text (Text)
 import qualified Data.Text as Text
 import           Data.Text.Encoding(encodeUtf8,decodeUtf8)
 import           Data.Char(isAlphaNum,isAlpha,isAscii)
-import           Language.Lua.Annotated.Lexer (SourceRange(..),showRange)
+import           AlexTools(SourceRange(..),prettySourceRange)
 import           Language.Lua.Annotated.Simplify
 import           Language.Lua.Annotated.Syntax
 import           Language.Lua.StringLiteral(interpretStringLiteral)
@@ -102,7 +102,7 @@ data LocatedExprName = LocatedExprName
 
 ppLocatedExprName :: LocatedExprName -> String
 ppLocatedExprName x =
-  ppExprName (exprName x) ++ " " ++ showRange (exprPos x)
+  ppExprName (exprName x) ++ " " ++ prettySourceRange (exprPos x)
 
 
 newtype M a = M (FunId -> RW -> (Maybe a, RW))
