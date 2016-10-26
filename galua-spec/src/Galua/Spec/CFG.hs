@@ -2,7 +2,31 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE DeriveGeneric #-}
-module Galua.Spec.CFG where
+module Galua.Spec.CFG
+  ( Label
+  , CFG(..)
+  , BasicBlock(..)
+  , Stat(..)
+  , EndStat(..)
+  , FunBody(..)
+  , Name(..)
+  , NameT(..)
+  , Selector
+  , FunName(..)
+  , Var(..)
+  , PrefixExp(..)
+  , Exp(..)
+  , Table(..)
+  , TableField(..)
+  , FunCall(..)
+  , Lua.NumberType(..)
+  , Lua.Unop(..)
+  , Lua.Binop(..)
+
+  , topLevel
+  , Error(..)
+  , GetAnnot(..)
+  ) where
 
 import           Language.Lua.Annotated.Parser(SourceRange)
 import qualified Language.Lua.Annotated.Syntax as Lua
@@ -16,25 +40,50 @@ import           MonadLib hiding (Label())
 import           MonadLib.Derive
 import           Data.Text ( Text )
 import           Data.Function (on)
-import           Text.Show.Pretty(PrettyVal(..),dumpDoc)
+import           Text.Show.Pretty(PrettyVal(..))
 import qualified Text.Show.Pretty as PP
 import           GHC.Generics(Generic)
 
-type Annot      = SourceRange
+type Annot = SourceRange
+
+type Label = Int
+
+data CFG = CFG
+  { cfgEntry     :: !Label
+  , cfgBlocks    :: !(Vector BasicBlock)
+  } deriving (Generic,Show)
+
+data BasicBlock = BasicBlock
+  { bbStmts   :: Vector Stat
+  , bbExit    :: EndStat
+  } deriving (Generic,Show)
+
+data Stat =
+    Assign          Annot [Var]   [Exp]
+  | LocalAssign     Annot [Name]  (Maybe [Exp])
+  | FunAssign       Annot FunName FunBody
+  | LocalFunAssign  Annot Name    FunBody
+  | FunCallStat FunCall
+  | AssertIsNumber Exp
+  | AssumeIsNumber Name
+    deriving (Generic,Show)
+
+data EndStat =
+    Return [Exp]
+  | Goto [Label]
+  | If Exp Label Label
+  | ForIn [Name] [Exp] Label Label
+    deriving (Generic,Show)
+
+data FunBody = FunBody Annot [Name] (Maybe Annot) CFG
+    deriving (Generic,Show)
+
+
 
 data Name       = Name { nameId   :: !Int
                        , nameType :: !NameT -- ^ What sort of name is this
                        , nameOrig :: !(Lua.Name Annot) -- ^ Original name
                        } deriving Show
-
-nameUID :: Name -> (Int,NameT)
-nameUID Name { .. } = (nameId, nameType)
-
-instance Eq Name where
-  (==) = (==) `on` nameUID
-
-instance Ord Name where
-  compare = compare `on` nameUID
 
 data NameT      = LocalName
                 | UpvalueName
@@ -69,9 +118,6 @@ data Exp        = Nil     Annot
                 | TableConst  Table
                   deriving (Generic,Show)
 
-eVar :: Name -> Exp
-eVar x = PrefixExp (PEVar (VarName x))
-
 data Table      = Table Annot [TableField]
                   deriving (Generic,Show)
 
@@ -82,6 +128,21 @@ data TableField = ExpField   Annot Exp Exp
 
 data FunCall    = FunCall Annot PrefixExp (Maybe Selector) [Exp]
                   deriving (Generic,Show)
+
+
+
+--------------------------------------------------------------------------------
+nameUID :: Name -> (Int,NameT)
+nameUID Name { .. } = (nameId, nameType)
+
+instance Eq Name where
+  (==) = (==) `on` nameUID
+
+instance Ord Name where
+  compare = compare `on` nameUID
+
+
+
 
 --------------------------------------------------------------------------------
 
@@ -136,38 +197,6 @@ instance GetAnnot Name where
 
 
 
-
-type Label    = Int
-
-data CFG = CFG
-  { cfgEntry     :: !Label
-  , cfgBlocks    :: !(Vector BasicBlock)
-  } deriving (Generic,Show)
-
-data BasicBlock = BasicBlock
-  { bbStmts   :: Vector Stat
-  , bbExit    :: EndStat
-  } deriving (Generic,Show)
-
-data Stat =
-    Assign          Annot [Var]   [Exp]
-  | LocalAssign     Annot [Name]  (Maybe [Exp])
-  | FunAssign       Annot FunName FunBody
-  | LocalFunAssign  Annot Name    FunBody
-  | FunCallStat FunCall
-  | AssertIsNumber Exp
-  | AssumeIsNumber Name
-    deriving (Generic,Show)
-
-data EndStat =
-    Return [Exp]
-  | Goto [Label]
-  | If Exp Label Label
-  | ForIn [Name] [Exp] Label Label
-    deriving (Generic,Show)
-
-data FunBody = FunBody Annot [Name] (Maybe Annot) CFG
-    deriving (Generic,Show)
 
 
 --------------------------------------------------------------------------------
@@ -439,7 +468,7 @@ instance CvtStat Lua.Stat where
            cvtStat b
            popScope
 
-      Lua.If a bs d ->
+      Lua.If _ bs d ->
         do after <- newBlock
            chain bs after
            setCurrentBlock after

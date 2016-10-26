@@ -16,6 +16,7 @@ library
   exposed-modules:
     Galua.Spec.AST,
     Galua.Spec.Lua,
+    Galua.Spec.CheckLua,
     Galua.Spec.CFG,
     Galua.Spec.Parser,
     Galua.Spec.Parser.Lexer,
