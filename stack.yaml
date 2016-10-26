@@ -6,7 +6,6 @@ packages:
 - location: galua-analysis
 - location: galua-spec
 - location: lib/dwarf-tools
-- location: lib/alex-tools
 - location: lib/language-lua
 resolver: lts-7.5
 extra-deps:
@@ -14,3 +13,4 @@ extra-deps:
 - config-value-getopt-0.1.0.0
 - elf-0.27
 - lua-bc-0.1.0.1
+- alex-tools-0.1.1.0
