@@ -222,7 +222,20 @@ lookupVar = undefined
 class InferExpr a where
   inferExpr :: a -> InferM Type
 
+class InferStmt a where
+  inferStmt :: a -> InferM ()
 
+{-
+instance InferStmt Stat where
+  inferStmt stmt =
+    case stmt of
+    Assign          Annot [Var]   [Exp]
+  | LocalAssign     Annot [Name]  (Maybe [Exp])
+  | FunAssign       Annot FunName FunBody
+  | FunCallStat FunCall
+  | AssertIsNumber Exp
+  | AssumeIsNumber Name
+-}
 
 
 instance InferExpr Exp where

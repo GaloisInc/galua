@@ -12,7 +12,6 @@ module Galua.Spec.CFG
   , Name(..)
   , NameT(..)
   , Selector
-  , FunName(..)
   , Var(..)
   , PrefixExp(..)
   , Exp(..)
@@ -28,7 +27,7 @@ module Galua.Spec.CFG
   , GetAnnot(..)
   ) where
 
-import           Language.Lua.Annotated.Parser(SourceRange)
+import           Language.Lua.Annotated.Parser(SourceRange(..))
 import qualified Language.Lua.Annotated.Syntax as Lua
 import qualified Language.Lua.PrettyPrinter as Lua
 import qualified Language.Lua.Annotated.Simplify as Lua
@@ -61,7 +60,7 @@ data BasicBlock = BasicBlock
 data Stat =
     Assign          Annot [Var]   [Exp]
   | LocalAssign     Annot [Name]  (Maybe [Exp])
-  | FunAssign       Annot FunName FunBody
+  | SetMethod Annot Name [Selector] Selector FunBody
   | FunCallStat FunCall
   | AssertIsNumber Exp
   | AssumeIsNumber Name
@@ -90,9 +89,6 @@ data NameT      = LocalName
                   deriving (Show,Eq,Ord)
 
 type Selector   = Lua.Name Annot
-
-data FunName    = FunName Annot Name [Selector] (Maybe Selector)
-                  deriving (Generic,Show)
 
 data Var        = VarName Name                        -- ^ variable
                 | Select Annot PrefixExp Exp          -- ^ table[exp]
@@ -582,11 +578,21 @@ instance CvtStat Lua.Stat where
            f' <- cvtFunction f
            emit (LocalAssign a [x'] (Just [EFunDef f']))
 
-      Lua.FunAssign a x b ->
-        do x' <- cvtExpr x
+      Lua.FunAssign a (Lua.FunName _ x xs (Just m)) b ->
+        do x' <- cvtNameUse x
            b' <- cvtFunction b
-           emit (FunAssign a x' b')
+           emit (SetMethod a x' xs m b')
 
+      Lua.FunAssign a (Lua.FunName _ x xs Nothing) b ->
+        do x' <- cvtNameUse x
+           b' <- cvtFunction b
+           let var = foldl sel (VarName x') xs
+               sel p s = let an = SourceRange
+                                    { sourceFrom = sourceFrom (annot p)
+                                    , sourceTo = sourceTo (Lua.ann s)
+                                    }
+                         in SelectName an (PEVar p) s
+           emit (Assign a [var] [EFunDef b'])
 
       Lua.LocalAssign a xs mb ->
         do e'  <- traverse (traverse cvtExpr) mb
@@ -672,10 +678,6 @@ instance CvtExpr Lua.TableField TableField where
                                   return (Field a e')
 
 
-instance CvtExpr Lua.FunName FunName where
-  cvtExpr (Lua.FunName a x ys mbz) =
-    do x' <- cvtNameUse x
-       return (FunName a x' ys mbz)
 
 --------------------------------------------------------------------------------
 
@@ -700,7 +702,6 @@ instance PrettyVal Exp
 instance PrettyVal PrefixExp
 instance PrettyVal FunCall
 instance PrettyVal Var
-instance PrettyVal FunName
 instance PrettyVal Table
 instance PrettyVal TableField
 instance PrettyVal CFG
