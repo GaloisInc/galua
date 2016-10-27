@@ -95,6 +95,8 @@ data Ctr  = C_Add
 
           | C_EqType
 
+          | C_Init -- match type of variables with type of initializers
+
 c1 :: SourceRange -> Ctr -> Type -> Constraint
 c1 r c t = Constraint r c [t]
 
@@ -150,6 +152,7 @@ instance Pretty Constraint where
       (C_Get n, [a,b])   -> returns ("get_" <> int n <+> a) b
 
       (C_EqType,[a,b])   -> a <+> "=" <+> b
+      (C_Init,[a,b])     -> a <+> "<-" <+> b
 
     where
     returns a b = a <+> "=" <+> b
@@ -214,7 +217,11 @@ delay c = IM $ sets_ $ \s -> s { rwConstraints = c : rwConstraints s }
 lookupVar :: Name -> InferM Type
 lookupVar = undefined
 
+setVarType :: Name -> Type -> InferM ()
+setVarType = undefined
 
+setVarNotInit :: SourceRange -> Name -> InferM ()
+setVarNotInit = undefined
 
 
 
@@ -225,17 +232,32 @@ class InferExpr a where
 class InferStmt a where
   inferStmt :: a -> InferM ()
 
-{-
 instance InferStmt Stat where
   inferStmt stmt =
     case stmt of
-    Assign          Annot [Var]   [Exp]
-  | LocalAssign     Annot [Name]  (Maybe [Exp])
-  | FunAssign       Annot FunName FunBody
-  | FunCallStat FunCall
-  | AssertIsNumber Exp
-  | AssumeIsNumber Name
--}
+      Assign a xs es -> undefined
+
+      LocalAssign a xs Nothing ->
+        mapM_ (setVarNotInit a) xs
+
+      LocalAssign a xs (Just es) ->
+        do ts <- mapM_ inferExpr es
+           as <- forM xs $ \x -> do t <- newTVar (annot x)
+                                    setVarType x t
+                                    return t
+           undefined -- constraint (c2 a C_Init as ts)
+
+      SetMethod a x sel m fb -> undefined
+
+      FunCallStat fc -> undefined
+
+      AssertIsNumber e ->
+        do t <- inferExpr e
+           let loc = annot e
+           constraint (c2 loc C_Number t (tNumber loc))
+
+      AssumeIsNumber x -> setVarType x (tNumber (annot x))
+
 
 
 instance InferExpr Exp where

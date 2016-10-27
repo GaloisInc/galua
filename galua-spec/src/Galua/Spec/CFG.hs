@@ -526,6 +526,7 @@ instance CvtStat Lua.Stat where
            endCurrentBlock (If e' next body)
            setCurrentBlock next
 
+      -- XXX: numbers vs integers
       Lua.ForRange _ x e1 e2 mbE3 b ->
         do emit =<< (AssertIsNumber <$> cvtExpr e1)
            emit =<< (AssertIsNumber <$> cvtExpr e2)
