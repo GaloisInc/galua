@@ -39,6 +39,8 @@ tokens :-
   "}"                         { lexeme KW_close_brace         }
   "("                         { lexeme KW_open_paren          }
   ")"                         { lexeme KW_close_paren         }
+  "<"                         { lexeme KW_open_angle          }
+  ">"                         { lexeme KW_close_angle         }
   "="                         { lexeme KW_equals              }
   ","                         { lexeme KW_comma               }
   "->"                        { lexeme KW_arrow               }
@@ -77,6 +79,8 @@ data Token =
   | KW_close_brace
   | KW_open_paren
   | KW_close_paren
+  | KW_open_angle
+  | KW_close_angle
   | KW_equals
   | KW_comma
   | KW_arrow

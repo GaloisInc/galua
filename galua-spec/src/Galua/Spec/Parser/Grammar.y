@@ -30,6 +30,8 @@ import Galua.Spec.Parser.Monad
   '}'         { Lexeme { lexemeToken = KW_close_brace } }
   '('         { Lexeme { lexemeToken = KW_open_paren  } }
   ')'         { Lexeme { lexemeToken = KW_close_paren } }
+  '<'         { Lexeme { lexemeToken = KW_open_angle  } }
+  '>'         { Lexeme { lexemeToken = KW_close_angle } }
   '='         { Lexeme { lexemeToken = KW_equals      } }
   ','         { Lexeme { lexemeToken = KW_comma       } }
   '->'        { Lexeme { lexemeToken = KW_arrow       } }
@@ -94,15 +96,26 @@ class_member :: { Either Name (ValDecl Parsed) }
   | val_decl            { Right $1 }
 
 
+generic_vars ::      { [ Name ]   }
+  : '<' var_list '>' { reverse $2 }
+  |                  { []         }
+
+var_list ::           { [ Name ] }
+  : name              { [ $1 ]   }
+  | var_list ',' name { $3 : $1  }
 
 val_decl                 :: { ValDecl Parsed }
-  : 'mutable' name ':' type   { ValDecl { valAnnot   = $1 <-> $4
+  : 'mutable' name generic_vars ':' type
+                              { ValDecl { valAnnot   = $1 <-> $5
                                         , valName    = $2
-                                        , valType    = $4
+                                        , valType    = $5
+                                        , valVars    = $3
                                         , valMutable = True } }
-  |           name ':' type   { ValDecl { valAnnot   = $1 <-> $3
+  |           name generic_vars ':' type
+                              { ValDecl { valAnnot   = $1 <-> $4
                                         , valName    = $1
-                                        , valType    = $3
+                                        , valType    = $4
+                                        , valVars    = $2
                                         , valMutable = False } }
 
 

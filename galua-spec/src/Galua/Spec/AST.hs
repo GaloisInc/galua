@@ -59,6 +59,7 @@ data ClassDecl a = ClassDecl
 data ValDecl a = ValDecl
   { valAnnot   :: !(Annot a)
   , valName    :: !Name
+  , valVars    :: [Name]
   , valMutable :: !Bool
   , valType    :: !(Type a)
   }
@@ -133,8 +134,16 @@ instance Pretty (ClassDecl a) where
     ppExt x = "extends" <+> pretty x
 
 instance Pretty (ValDecl a) where
-  pretty ValDecl { .. } = mut <+> pretty valName <> colon <+> pretty valType
-    where mut = if valMutable then "mutable" else empty
+  pretty ValDecl { .. } = mut <+> pretty valName <> generic <> colon <+> pretty valType
+    where mut
+            | valMutable = "mutable"
+            | otherwise  = empty
+          generic
+            | null valVars = empty
+            | otherwise =
+                "<" <>
+                foldr1 (\x y -> x <> "," <+> y) (map pretty valVars) <>
+                ">"
 
 instance Pretty (TypeDecl a) where
   pretty TypeDecl { .. } =
