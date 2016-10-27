@@ -62,7 +62,6 @@ data Stat =
     Assign          Annot [Var]   [Exp]
   | LocalAssign     Annot [Name]  (Maybe [Exp])
   | FunAssign       Annot FunName FunBody
-  | LocalFunAssign  Annot Name    FunBody
   | FunCallStat FunCall
   | AssertIsNumber Exp
   | AssumeIsNumber Name
