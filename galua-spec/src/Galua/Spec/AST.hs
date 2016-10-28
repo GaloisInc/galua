@@ -173,10 +173,11 @@ prettyTypeParts prec typeCon typeParams =
     TMap          -> ar3 $ \m s t -> pp 1 m <+>
                                       braces (pp 0 s <+> ":" <+> pp 0 t)
     TTuple n      -> arN n (parens . hsep . punctuate comma . map (pp 0))
-    TMaybe        -> ar1 $ \t   -> wrap 2 (pp 1 t <> text "?")
-    TMany         -> ar1 $ \t   -> wrap 2 (pp 1 t <> text "*")
+    TMaybe        -> ar1 $ \t   -> wrap 3 (pp 2 t <> text "?")
+    TMany         -> ar1 $ \t   -> wrap 3 (pp 2 t <> text "*")
     TFun          -> ar2 $ \s t -> wrap 1 (pp 1 s <+> text "->" <+> pp 0 t)
     TUser x       -> ar0 (pretty x)
+    TUnion        -> ar2 $ \s t -> wrap 2 (pp 2 s <+> text "|" <+> pp 2 t)
   where
   ar0 f   = prettyTypeApp 0 typeParams $ \_                 -> f
   ar1 f   = prettyTypeApp 1 typeParams $ \ ~(x : _)         -> f x

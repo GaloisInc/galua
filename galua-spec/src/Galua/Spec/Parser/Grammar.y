@@ -165,8 +165,8 @@ ctype                          :: { Type Parsed }
   | ctype '|' btype               { tUnion $1 $3 }
 
 type                           :: { Type Parsed }
-  : btype                         { $1 }
-  | btype '->' type               { tFun $1 $3 }
+  : ctype                         { $1 }
+  | ctype '->' type               { tFun $1 $3 }
 
 tuple_types                    :: { [ Type Parsed ] }
   : type ',' type                 { [ $1, $3 ] }
