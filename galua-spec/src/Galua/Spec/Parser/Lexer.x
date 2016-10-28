@@ -41,6 +41,7 @@ tokens :-
   ")"                         { lexeme KW_close_paren         }
   "<"                         { lexeme KW_open_angle          }
   ">"                         { lexeme KW_close_angle         }
+  "|"                         { lexeme KW_pipe                }
   "="                         { lexeme KW_equals              }
   ","                         { lexeme KW_comma               }
   "->"                        { lexeme KW_arrow               }
@@ -84,6 +85,7 @@ data Token =
   | KW_equals
   | KW_comma
   | KW_arrow
+  | KW_pipe
 
   | Ident
   | Skippable WhiteSpace

@@ -94,6 +94,7 @@ data TCon   = TNil
             | TFun
             | TMutable Bool
             | TUser Name
+            | TUnion
               deriving Eq
 
 
