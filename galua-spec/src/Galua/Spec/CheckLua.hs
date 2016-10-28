@@ -8,6 +8,8 @@ import MonadLib.Derive
 import qualified Language.Lua.Annotated.Syntax as Lua
 import qualified Language.Lua.PrettyPrinter as Lua
 import qualified Language.Lua.Annotated.Simplify as Lua
+import Data.Map as Map
+import qualified Data.Map ( Map )
 
 import Galua.Spec.Parser(SourceRange(..))
 
@@ -169,13 +171,13 @@ instance Pretty TV where
 
 --------------------------------------------------------------------------------
 
-newtype InferM a = IM {unIM :: ReaderT    RO (
-                               StateT     RW (
-                               ExceptionT TypeError
-                               Id)) a }
+newtype InferM a = IM { unIM :: ReaderT    RO (
+                                StateT     RW (
+                                ExceptionT TypeError
+                                Id)) a }
 
 data RO = RO
-  {
+  { roSpecs :: !(Spec TypeChecked)
   }
 
 data RW = RW
