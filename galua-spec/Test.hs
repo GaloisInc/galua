@@ -21,7 +21,7 @@ testCFG file =
      case mb of
        Left err -> print err
        Right b ->
-         let res  = topLevel 0 b
+         let res  = topLevel b
          in case res of
               Left err  -> print err
               Right cfg -> putStrLn (dumpStr cfg)

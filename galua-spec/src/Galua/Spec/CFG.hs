@@ -85,7 +85,7 @@ data Name       = Name { nameId   :: !Int
 
 data NameT      = LocalName
                 | UpvalueName
-                | GloabalName !Int
+                | GlobalName
                   deriving (Show,Eq,Ord)
 
 type Selector   = Lua.Name Annot
@@ -196,10 +196,10 @@ instance GetAnnot Name where
 
 --------------------------------------------------------------------------------
 
-newtype M a = M { unM :: ReaderT RO (StateT RW (ExceptionT Error Id)) a }
+newtype M a = M { unM :: StateT RW (ExceptionT Error Id) a }
 
-run :: Int -> M a -> Either Error a
-run cid (M m) =
+run :: M a -> Either Error a
+run (M m) =
   case final m of
     Left err -> Left err
     Right (a,rw) ->
@@ -208,11 +208,10 @@ run cid (M m) =
         Just (l,_) -> panic ("run: Unterminated block " ++ show l)
 
   where
-  final = runId . runExceptionT . runStateT rwBlank . runReaderT ro
-  ro = RO { chunkID = cid }
+  final = runId . runExceptionT . runStateT rwBlank
 
-topLevel :: Int -> Lua.Block Annot -> Either Error CFG
-topLevel cid m = run cid (cvtBody m)
+topLevel :: Lua.Block Annot -> Either Error CFG
+topLevel m = run (cvtBody m)
 
 data Error = UndefinedLabel (Lua.Name Annot)
            | MultipleLabelDefinitionsFor (Lua.Name Annot)
@@ -228,10 +227,6 @@ data Scope = Scope
 emptyScope :: Scope
 emptyScope = Scope { scopeVars = [], scopeLabels = [] }
 
-
-data RO = RO
-  { chunkID :: !Int
-  }
 
 data RW = RW
   { prevScopes      :: ![Scope]
@@ -378,9 +373,8 @@ cvtNameUse l =
      case msum (map check (curScope : prevScopes) ++
                   [ lookup l upvalues, lookup l globals ]) of
        Nothing ->
-         do RO { .. } <- M ask
-            let n = Name { nameId   = nextNameId
-                         , nameType = GloabalName chunkID
+         do let n = Name { nameId   = nextNameId
+                         , nameType = GlobalName
                          , nameOrig = l
                          }
             M $ set RW { globals = (l,n) : globals, .. }
