@@ -11,7 +11,7 @@ import Galua.Spec.CFG
 import Language.Lua.Annotated(parseFile)
 
 main :: IO ()
-main = mapM_ testCFG =<< getArgs
+main = mapM_ testParse =<< getArgs
 
 
 

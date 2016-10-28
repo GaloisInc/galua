@@ -32,6 +32,7 @@ import Galua.Spec.Parser.Monad
   ')'         { Lexeme { lexemeToken = KW_close_paren } }
   '<'         { Lexeme { lexemeToken = KW_open_angle  } }
   '>'         { Lexeme { lexemeToken = KW_close_angle } }
+  '|'         { Lexeme { lexemeToken = KW_pipe        } }
   '='         { Lexeme { lexemeToken = KW_equals      } }
   ','         { Lexeme { lexemeToken = KW_comma       } }
   '->'        { Lexeme { lexemeToken = KW_arrow       } }
@@ -159,6 +160,10 @@ btype                          :: { Type Parsed }
   | atype '?'                     { tMaybe $1 $2 }
   | atype '*'                     { tMany $1 $2 }
 
+ctype                          :: { Type Parsed }
+  : btype                         { $1 }
+  | ctype '|' btype               { tUnion $1 $3 }
+
 type                           :: { Type Parsed }
   : btype                         { $1 }
   | btype '->' type               { tFun $1 $3 }
@@ -187,7 +192,7 @@ end_block                  :: { SourceRange }
 {
 data Parsed
 type instance Annot Parsed = SourceRange
-type instance TVar  Parsed = Void
+type instance TVar  Parsed = Name
 
 name :: Lexeme Token -> Name
 name l = Name { nameRange = range l, nameText = lexemeText l }
@@ -222,6 +227,9 @@ tMaybe t r = TCon (t <-> r) TMaybe [t]
 
 tMany :: Type Parsed -> Lexeme Token -> Type Parsed
 tMany t r = TCon (t <-> r) TMany [t]
+
+tUnion :: Type Parsed -> Type Parsed -> Type Parsed
+tUnion t u = TCon (t <-> u) TUnion [t,u]
 
 
 (?->) :: HasRange a => Maybe SourceRange -> a -> SourceRange
