@@ -8,7 +8,7 @@ class FILE
   close: () -> ()
   flush: () -> ()
   lines: string* -> STRING_ITERATOR
-  read: string* -> string* -- or numbers
+  read: (number | string)* -> string*
 
   seek: (number?, number?) -> (number?, string?)
 
