@@ -4,6 +4,7 @@ module Galua.Names.Eval
   , NotFound(..), nameResolveException
   , Flavor(..)
   , nameInScope
+  , globalInfo
   ) where
 
 import           Language.Lua.Syntax(Unop(..))
@@ -25,7 +26,8 @@ import Galua.Overloading(valueMetamethod,withMetatables)
 import Galua.Reference(Reference,readRef)
 import Galua.Util.Table(Table,getTableRaw,tableLen)
 import Galua.Util.SizedVector(SizedVector,getMaybe)
-import Galua.LuaString(unsafeFromByteString,fromByteString,luaStringLen)
+import Galua.LuaString(toByteString,
+                        unsafeFromByteString,fromByteString,luaStringLen)
 import Galua.Number(Number(..),numberToInt)
 import Galua.Names.Find
 import Galua.Mach (TypeMetatables)
@@ -51,6 +53,34 @@ bad msg = throwIO (NotFound msg)
 
 
 data Flavor = Local | UpValue | Global
+
+globalInfo :: NameResolveEnv {-^ execution frame -}  ->
+               Maybe PC       {-^ cur pc -}           ->
+               ExprName                               ->
+               IO (Maybe (ByteString,[ByteString]))
+globalInfo eenv pc expr =
+
+  case expr of
+
+    ENonLocal x ->
+      case getUpValue (nrFunction eenv) x of
+        Just u  -> return Nothing
+        Nothing -> return (Just (x,[]))
+
+    ESelectFrom x y ->
+      do mb <- globalInfo eenv pc x
+         case mb of
+           Just (g,sels) ->
+             do i <- exprToValue eenv pc y
+                case i of
+                  String s -> return (Just (g, toByteString s : sels))
+                  _        -> return Nothing
+           Nothing -> return Nothing
+
+    _ -> return Nothing
+
+
+
 
 
 -- | Throws 'NotFound'

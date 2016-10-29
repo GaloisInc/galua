@@ -6,6 +6,7 @@ import           Language.Lua.Bytecode.FunId
 import           Galua.Debugger.Options(Options(..), defaultOptions)
 import           Galua.Debugger.PrettySource(NameId(..))
 import           Galua.Debugger
+import           Galua.Debugger.View.Spec(exportT)
 import           Galua.Debugger.View
                   ( exportDebugger
                   , watchExportable, unwatchExportable
@@ -197,9 +198,12 @@ snapWatchName dbg =
             sendJSON =<< liftIO (
               case mb of
                 Left (NotFound err) -> return $ JS.object [ "error" JS..= err ]
-                Right (n,v) ->
+                Right (n,v,mbT) ->
                     do jv <- exportV dbg v
-                       return $ JS.object [ "name" JS..= n, "value" JS..= jv ]
+                       return $ JS.object [ "name" JS..= n
+                                          , "value" JS..= jv
+                                          , "type" JS..= (exportT <$> mbT)
+                                          ]
               )
 
 snapSetValue :: Debugger -> Snap ()

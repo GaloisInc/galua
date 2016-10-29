@@ -40,6 +40,9 @@ module Galua.Debugger
   -- * WatchList
   , WatchList, watchListEmpty, watchListRemove, watchListExtend
   , watchListToList
+
+  -- * Globals
+  , GlobalTypeEntry(..)
   ) where
 
 import           Galua(setupLuaState)
@@ -57,12 +60,15 @@ import           Galua.Names.Eval
 import           Galua.Names.Find(LocatedExprName(..),ppExprName)
 import qualified Galua.Util.SizedVector as SV
 
+import qualified Galua.Spec.AST as Spec
+import qualified Galua.Spec.Parser as Spec
+
 import           Language.Lua.Bytecode(Function(..))
 import           Language.Lua.Bytecode.Debug
                     (lookupLineNumber,inferSubFunctionNames,deepLineNumberMap)
 import           Language.Lua.Bytecode.FunId
 
-import           Data.Maybe (catMaybes)
+import           Data.Maybe (catMaybes,mapMaybe)
 import           Data.Map (Map)
 import qualified Data.Map as Map
 import           Data.IntMap (IntMap)
@@ -75,7 +81,7 @@ import           Data.Word(Word64)
 import           Data.Text(Text)
 import qualified Data.Text as Text
 import           Data.Text.Read(decimal)
-import           Data.Text.Encoding(decodeUtf8)
+import           Data.Text.Encoding(decodeUtf8,encodeUtf8)
 
 import           Data.ByteString (ByteString)
 import qualified Data.ByteString as B
@@ -154,10 +160,14 @@ data Debugger = Debugger
 
   , dbgExportable :: !(IORef ExportableState)
     -- ^ Things that may be expanded further.
+
+    -- ^ Types
+  , dbgDeclaredTypes :: !(IORef GlobalTypeMap)
   }
 
 
-
+type SpecType = Spec.ValDecl Spec.Parsed
+type SpecDecl = Spec.Decl Spec.Parsed
 
 data IdleReason = Ready
                 | ReachedBreakPoint
@@ -487,8 +497,9 @@ execEnvToNameResolveEnv metaTabs eenv =
 
      return (fid, nre)
 
+
 resolveName :: Debugger -> ExecEnvId -> Maybe Int -> NameId ->
-                IO (Either NotFound (String,Value))
+                IO (Either NotFound (String,Value,Maybe GlobalTypeEntry))
 resolveName dbg eid pc nid =
   whenStable dbg False $
   whenNotFinishied dbg (Left $ NotFound "Not executing") $ \vm _ ->
@@ -510,9 +521,59 @@ resolveName dbg eid pc nid =
 
      let en = exprName name
      v <- exprToValue resEnv pc en
-     return (ppExprName en, v)
+     mbG <- globalInfo resEnv pc en
+     mbT <- case mbG of
+              Nothing -> return Nothing
+              Just (g,revSel) ->
+                do ds <- readIORef (dbgDeclaredTypes dbg)
+                   return (lookupGlobal ds g (reverse revSel))
+     return (ppExprName en, v, mbT)
 
 
+
+newtype GlobalTypeMap = GTM (Map ByteString GlobalTypeEntry)
+data GlobalTypeEntry  = GlobalType [SpecType] | GlobalNamespace GlobalTypeMap
+
+
+makeGlobalTypeMap :: [SpecDecl] -> GlobalTypeMap
+makeGlobalTypeMap = mk . mapMaybe decl
+  where
+  nm x = encodeUtf8 (Spec.nameText x)
+
+  decl d = case d of
+             Spec.DClass {}     -> Nothing
+             Spec.DType {}      -> Nothing
+             Spec.DNamespace ns -> Just (namespace ns)
+             Spec.DValDecl vd   -> Just (valDecl vd)
+
+  valDecl vd = (nm (Spec.valName vd), GlobalType [vd])
+
+  jn (GlobalType xs) (GlobalType ys) = GlobalType (xs ++ ys)
+  jn (GlobalNamespace (GTM x)) (GlobalNamespace (GTM y)) =
+      GlobalNamespace (GTM (Map.unionWith jn x y))
+  jn x y = x -- XXX: shouldn't happen
+
+  mk = GTM . Map.fromListWith jn
+
+  namespace x =
+    ( nm (Spec.namespaceName x)
+    , GlobalNamespace $ mk $ map valDecl (Spec.namespaceMembers x) ++
+                             map namespace (Spec.namespaceNested x)
+    )
+
+
+
+
+lookupGlobal ::
+  GlobalTypeMap -> ByteString -> [ByteString] -> Maybe GlobalTypeEntry
+lookupGlobal (GTM mp) x ls =
+  do ent <- Map.lookup x mp
+     case ls of
+       [] -> Just ent
+       l : more ->
+          case ent of
+            GlobalType _        -> Nothing
+            GlobalNamespace mp1 -> lookupGlobal mp1 l more
 
 
 
@@ -685,11 +746,19 @@ newEmptyDebugger threadVar opts =
      dbgExportable   <- newIORef newExportableState
      dbgBreakOnError <- newIORef (optBreakOnError opts)
 
+     dbgDeclaredTypes <-
+        (newIORef . makeGlobalTypeMap) =<<
+          (do s <- Spec.specFromFile "lua.spec" -- XXX: search for specs, etc.
+              return (Spec.specDecls s)
+            `catch` \SomeException {} -> return [])
+
      let dbg = Debugger { dbgSources, dbgNames, dbgIdleReason
                         , dbgBreaks, dbgWatches
                         , dbgCommand, dbgCommandCounter, dbgClients
                         , dbgExportable, dbgStateVM
-                        , dbgBreakOnError, dbgBrkAddOnLoad }
+                        , dbgBreakOnError, dbgBrkAddOnLoad
+                        , dbgDeclaredTypes
+                        }
 
      _ <- forkIO (runDebugger dbg)
 

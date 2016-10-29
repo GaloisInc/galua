@@ -29,7 +29,8 @@ library
                     Galua.Debugger.Options,
                     Galua.Debugger.Trie,
                     Galua.Debugger.Console,
-                    Galua.Debugger.View.Analysis
+                    Galua.Debugger.View.Analysis,
+                    Galua.Debugger.View.Spec
 
   other-modules:    HexFloatFormat
 
@@ -56,7 +57,9 @@ library
                        filepath,
                        galua,
                        galua-analysis,
-                       alex-tools
+                       galua-spec,
+                       alex-tools,
+                       pretty
 
 
   hs-source-dirs:      src

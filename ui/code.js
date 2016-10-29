@@ -254,6 +254,13 @@ function drawLine(dbgState,context,chunkId,here) {
             } else {
               h.append($("<span/>").addClass("code_line identifier")
                                    .text(x.name))
+              if (x.type !== null) {
+                h.append([ $('<br/>')
+                         , $('<span/>')
+                           .addClass('code_line identifier galua_remark')
+                           .text(x.type.text)])
+              }
+
               c.append(drawValueOpts(dbgState,x.value
                       ,dbgState.valueOpts({expand:true})))
             }
