@@ -68,6 +68,7 @@ data TypeDecl a = TypeDecl
   { typeDeclAnnot   :: !(Annot a)
   , typeDeclName    :: !Name
   , typeDeclDef     :: !(Type a)
+  , typeDeclVars    :: ![Name]
   }
 
 data NamespaceDecl a = NamespaceDecl
@@ -86,6 +87,7 @@ data TCon   = TNil
             | TString
             | TInteger
             | TNumber
+            | TDynamic
             | TArray
             | TMap
             | TTuple Int
@@ -135,20 +137,22 @@ instance Pretty (ClassDecl a) where
     ppExt x = "extends" <+> pretty x
 
 instance Pretty (ValDecl a) where
-  pretty ValDecl { .. } = mut <+> pretty valName <> generic <> colon <+> pretty valType
+  pretty ValDecl { .. } =
+    mut <+> pretty valName <> ppGenericList valVars <> colon <+>
+    pretty valType
     where mut
             | valMutable = "mutable"
             | otherwise  = empty
-          generic
-            | null valVars = empty
-            | otherwise =
-                "<" <>
-                foldr1 (\x y -> x <> "," <+> y) (map pretty valVars) <>
-                ">"
+
+ppGenericList :: [Name] -> Doc
+ppGenericList vars
+  | null vars = empty
+  | otherwise = "<" <> foldr1 (\x y -> x <> "," <+> y) (map pretty vars) <> ">"
 
 instance Pretty (TypeDecl a) where
   pretty TypeDecl { .. } =
-    "type" <+> pretty typeDeclName <+> "=" <+> pretty typeDeclDef
+    "type" <+> pretty typeDeclName <> ppGenericList typeDeclVars <+> "=" <+>
+    pretty typeDeclDef
 
 instance Pretty (NamespaceDecl a) where
   pretty NamespaceDecl { .. } =
@@ -167,6 +171,8 @@ prettyTypeParts prec typeCon typeParams =
     TString       -> ar0 "string"
     TInteger      -> ar0 "integer"
     TNumber       -> ar0 "number"
+    TDynamic      -> ar0 "dynamic"
+    TNil          -> ar0 "nil"
     TMutable b    -> ar0 (if b then "mutable"
                                else if prec > 0 then empty else "immutable")
     TArray        -> ar2 $ \m t -> pp 1 m <+> braces (pp 0 t)

@@ -21,6 +21,8 @@ import Galua.Spec.Parser.Monad
   'string'    { Lexeme { lexemeToken = KW_string      } }
   'number'    { Lexeme { lexemeToken = KW_number      } }
   'integer'   { Lexeme { lexemeToken = KW_integer     } }
+  'nil'       { Lexeme { lexemeToken = KW_nil         } }
+  'dynamic'   { Lexeme { lexemeToken = KW_dynamic     } }
 
   '?'         { Lexeme { lexemeToken = KW_quest       } }
   '*'         { Lexeme { lexemeToken = KW_star        } }
@@ -65,10 +67,11 @@ decl :: { Decl Parsed }
                           , classMembers = ms
                           } }
 
-  | 'type' type_name '=' type
-    { DType TypeDecl { typeDeclAnnot  = $1 <-> $4
+  | 'type' type_name generic_vars '=' type
+    { DType TypeDecl { typeDeclAnnot  = $1 <-> $5
                      , typeDeclName   = $2
-                     , typeDeclDef    = $4
+                     , typeDeclVars   = $3
+                     , typeDeclDef    = $5
                      } }
 
   | namespace_decl
@@ -134,6 +137,8 @@ name         :: { Name }
   | 'string'    { name $1 }
   | 'number'    { name $1 }
   | 'integer'   { name $1 }
+  | 'nil'       { name $1 }
+  | 'dynamic'   { name $1 }
 
 
 
@@ -143,7 +148,9 @@ atype                          :: { Type Parsed }
   | 'string'                      { tPrim $1 TString  }
   | 'number'                      { tPrim $1 TNumber  }
   | 'integer'                     { tPrim $1 TInteger }
-  | type_name                     { tUser $1 }
+  | 'nil'                         { tPrim $1 TNil     }
+  | 'dynamic'                     { tPrim $1 TDynamic }
+  | type_name generic_vars        { tUser $1 }
   | opt_mut '{' type '}'          { tArray $1 ($2 <-> $4) $3 }
   | opt_mut '{' type ':' type '}' { tMap $1 ($2 <-> $6) $3 $5 }
   | '(' type ')'                  { $2 }
