@@ -1,6 +1,62 @@
--- IO module
+-- This doesn't quite work, these shouldn't be methods
+
+class METATABLE
+  __add<A>: ((A, A) -> A)?
+  __sub<A>: ((A, A) -> A)?
+  __mul<A>: ((A, A) -> A)?
+  __div<A>: ((A, A) -> A)?
+  __mod<A>: ((A, A) -> A)?
+  __pow<A>: ((A, A) -> A)?
+  __unm<A>: (A -> A)?
+  __idiv<A>: ((A,A) -> A)?
+  __band<A>: ((A,A) -> A)?
+  __bxor<A>: ((A,A) -> A)?
+  __bnot<A>: (A -> A)?
+  __shl<A>: ((A,A) -> A)?
+  __shr<A>: ((A,A) -> A)?
+  __concat<A>: ((A,A) -> A)?
+  __len<A>: (A -> number)?
+  __eq<A>: ((A,A) -> boolean)?
+  __lt<A>: ((A, A) -> boolean)?
+  __le<A>: ((A, A) -> boolean)?
+  __index<A>: ((A, dynamic) -> dynamic)?
+  __newindex<A>: ((A, dynamic, dynamic) -> ())?
+  __call<A>: ((A, dynamic*) -> dynamic*)?
+
+assert<A>: A -> A
+collectgarbage: (string?, dynamic) -> boolean?
+dofile: string? -> dynamic
+error<A>: (dynamic, number?) -> A
+getmetatable: dynamic -> METATABLE?
 
 class ITERATOR_STATE
+type IPAIRS_ITERATOR<K,V> = ((ITERATOR_STATE, K?) -> (K?, V?), ITERATOR_STATE, K?)
+
+ipairs<A>: {A} -> PAIRS_ITERATOR<number,A>
+
+load: ( string | (() -> string?) | nil, string?, string?, dynamic) -> dynamic*
+loadfile: (string?, string?, dynamic) -> dynamic*
+
+next<K,V>: ({K:V}, K?) -> (K?, V?)
+
+pairs<K,V>: {K:V} -> PAIRS_ITERATOR<K,V>
+print: dynamic* -> ()
+rawequal<A>: (A,A) -> boolean
+rawget<K,V>: ({K:V}, K) -> V?
+
+rawlen<A>: {A} -> number
+rawlen: string -> number
+rawset<K,V>: ({K:V}, K, V) -> {K:V}
+select<A>: (number, A*) -> A*
+select<A>: (string, A*) -> number
+setmetatable<A>: (A, METATABLE?) -> A
+tonumber: (string|number, number?) -> number?
+tostring<A>: A -> string
+type<A>: A -> string
+-- xpcall
+
+-- IO module
+
 
 type STRING_ITERATOR = ((ITERATOR_STATE, string?) -> string*, ITERATOR_STATE, string?)
 
@@ -13,7 +69,7 @@ class FILE
   seek: (number?, number?) -> (number?, string?)
 
   setvbuf: (string, number?) -> ()
-  write: string* -> () -- or number
+  write: (number|string)* -> ()
 
 namespace io
 
@@ -35,7 +91,7 @@ namespace io
   read: string* -> string*
   tmpfile: () -> FILE
   type: FILE -> string
-  write: string* -> () -- or number
+  write: (number|string)* -> ()
 
 namespace math
   abs: number -> number
@@ -66,7 +122,7 @@ namespace math
   ult: (number, number) -> boolean
 
 namespace table
-  concat: ({ string }, string?, number?, number?) -> string -- or numbers
+  concat: ({ number|string }, string?, number?, number?) -> string
   insert<A>: ({A}, number, A) -> {A}
   insert<A>: ({A}, A) -> {A}
   move<A>: ({A},number,number,number,{A}?) -> {A}
