@@ -253,13 +253,6 @@ instance InferStmt Stat where
 
       FunCallStat fc -> undefined
 
-      AssertIsNumber e ->
-        do t <- inferExpr e
-           let loc = annot e
-           constraint (c2 loc C_Number t (tNumber loc))
-
-      AssumeIsNumber x -> setVarType x (tNumber (annot x))
-
 
 
 instance InferExpr Exp where

@@ -62,15 +62,14 @@ data Stat =
   | LocalAssign     Annot [Name]  (Maybe [Exp])
   | SetMethod Annot Name [Selector] Selector FunBody
   | FunCallStat FunCall
-  | AssertIsNumber Exp
-  | AssumeIsNumber Name
     deriving (Generic,Show)
 
 data EndStat =
     Return [Exp]
   | Goto [Label]
   | If Exp Label Label
-  | ForIn [Name] [Exp] Label Label
+  | ForRange Annot Name Exp Exp (Maybe Exp) Label Label
+  | ForIn Annot [Name] [Exp] Label Label
     deriving (Generic,Show)
 
 data FunBody = FunBody Annot [Name] (Maybe Annot) CFG
@@ -520,40 +519,17 @@ instance CvtStat Lua.Stat where
            endCurrentBlock (If e' next body)
            setCurrentBlock next
 
-      -- XXX: numbers vs integers
-      Lua.ForRange _ x e1 e2 mbE3 b ->
-        do emit =<< (AssertIsNumber <$> cvtExpr e1)
-           emit =<< (AssertIsNumber <$> cvtExpr e2)
-           case mbE3 of
-             Nothing -> return ()
-             Just e3 -> emit =<< (AssertIsNumber <$> cvtExpr e3)
+      Lua.ForRange a x e1 e2 e3 b ->
+        do e1' <- cvtExpr e1
+           e2' <- cvtExpr e2
+           e3' <- traverse cvtExpr e3
 
            body <- newBlock
            next <- newBlock
-           endCurrentBlock (Goto [body,next])
 
-           setCurrentBlock body
            pushScope
-           startLoop
            x' <- cvtNameNew x
-           emit (AssumeIsNumber x')
-           cvtStat b
-           endLoop
-           popScope
-           y <- hasCurrentBlock
-           when y (endCurrentBlock (Goto [body,next]))
-
-           setCurrentBlock next
-
-
-      Lua.ForIn _ xs es b ->
-        do es'  <- mapM cvtExpr es
-           body <- newBlock
-           next <- newBlock
-
-           pushScope
-           xs' <- mapM cvtNameNew xs
-           endCurrentBlock (ForIn xs' es' body next)
+           endCurrentBlock (ForRange a x' e1' e2' e3' body next)
 
            setCurrentBlock body
            startLoop
@@ -563,6 +539,24 @@ instance CvtStat Lua.Stat where
            y <- hasCurrentBlock
            when y (endCurrentBlock (Goto [ body, next ]))
 
+           setCurrentBlock next
+
+      Lua.ForIn a xs es b ->
+        do es'  <- mapM cvtExpr es
+           body <- newBlock
+           next <- newBlock
+
+           pushScope
+           xs' <- mapM cvtNameNew xs
+           endCurrentBlock (ForIn a xs' es' body next)
+
+           setCurrentBlock body
+           startLoop
+           cvtStat b
+           endLoop
+           popScope
+           y <- hasCurrentBlock
+           when y (endCurrentBlock (Goto [ body, next ]))
 
       Lua.Break a ->
         do l <- getLoop a
