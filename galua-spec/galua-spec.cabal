@@ -15,7 +15,6 @@ cabal-version:       >=1.10
 library
   exposed-modules:
     Galua.Spec.AST,
-    Galua.Spec.Lua,
     Galua.Spec.CheckLua,
     Galua.Spec.CFG,
     Galua.Spec.Parser,
