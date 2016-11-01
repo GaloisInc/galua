@@ -83,6 +83,7 @@ data Type a = TCon !(Annot a) !TCon ![Type a]
 
 
 data TCon   = TNil
+            | TStringLit Text
             | TBoolean
             | TString
             | TInteger

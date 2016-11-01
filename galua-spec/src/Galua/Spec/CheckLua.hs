@@ -10,6 +10,7 @@ import qualified Language.Lua.PrettyPrinter as Lua
 import qualified Language.Lua.Annotated.Simplify as Lua
 import Data.Map as Map
 import qualified Data.Map ( Map )
+import Data.Text(Text)
 
 import Galua.Spec.Parser(SourceRange(..))
 
@@ -39,11 +40,17 @@ instance Ord TV where
 tPrim :: TCon -> SourceRange -> Type
 tPrim tc a = TCon a tc []
 
+tNil :: SourceRange -> Type
+tNil = tPrim TNil
+
 tBoolean :: SourceRange -> Type
 tBoolean = tPrim TBoolean
 
 tString :: SourceRange -> Type
 tString = tPrim TString
+
+tStringLit :: Text -> SourceRange -> Type
+tStringLit t = tPrim (TStringLit t)
 
 tInteger :: SourceRange -> Type
 tInteger = tPrim TInteger
@@ -97,7 +104,12 @@ data Ctr  = C_Add
 
           | C_EqType
 
-          | C_Init -- match type of variables with type of initializers
+
+          | C_SubtypeOf -- sub typing: one type is contained in another
+          | C_TupleSel Int -- The n-th component of a tuple. 0 based.
+                           -- Non-tuple treated as 1 tuple.
+                           -- If the component does not exist, then nil.
+
 
 c1 :: SourceRange -> Ctr -> Type -> Constraint
 c1 r c t = Constraint r c [t]
@@ -154,7 +166,9 @@ instance Pretty Constraint where
       (C_Get n, [a,b])   -> returns ("get_" <> int n <+> a) b
 
       (C_EqType,[a,b])   -> a <+> "=" <+> b
-      (C_Init,[a,b])     -> a <+> "<-" <+> b
+
+      (C_SubtypeOf,[a,b])  -> a <+> "subtypeOf" <+> b
+      (C_TupleSel n,[a,b]) -> infix3 "@" a (int n) b
 
     where
     returns a b = a <+> "=" <+> b
@@ -222,10 +236,8 @@ lookupVar = undefined
 setVarType :: Name -> Type -> InferM ()
 setVarType = undefined
 
-setVarNotInit :: SourceRange -> Name -> InferM ()
-setVarNotInit = undefined
-
-
+panic :: String -> a
+panic msg = error ("[bug] " ++ msg)
 
 --------------------------------------------------------------------------------
 class InferExpr a where
@@ -239,15 +251,34 @@ instance InferStmt Stat where
     case stmt of
       Assign a xs es -> undefined
 
-      LocalAssign a xs Nothing ->
-        mapM_ (setVarNotInit a) xs
+      LocalAssign r xs Nothing ->
+        forM_ xs $ \x ->
+          do a <- newTVar r
+             setVarType x a
+             constraint (c2 r C_SubtypeOf (tNil r) a)
 
-      LocalAssign a xs (Just es) ->
-        do ts <- mapM_ inferExpr es
-           as <- forM xs $ \x -> do t <- newTVar (annot x)
-                                    setVarType x t
-                                    return t
-           undefined -- constraint (c2 a C_Init as ts)
+      LocalAssign _ xs (Just es) -> match xs es
+        where
+        match vs [e] =
+          do t <- inferExpr e
+             forM_ (zip [0..] vs) $ \(n,v) ->
+               do let r = annot v
+                  a <- newTVar r
+                  constraint (c2 r (C_TupleSel n) t a)
+                  b <- newTVar r
+                  setVarType v b
+                  constraint (c2 r C_SubtypeOf a b)
+
+        match [] _ = panic "LocalAssign: Just []"
+
+        match (v:vs) (e1:e2:more) =
+          do t <- inferExpr e1
+             a <- newTVar (annot e1)
+             constraint (c2 (annot e1) (C_TupleSel 0) t a)
+             b <- newTVar (annot v)
+             constraint (c2 (annot v) C_SubtypeOf a b)
+             setVarType v b
+             match vs (e2:more)
 
       SetMethod a x sel m fb -> undefined
 
@@ -260,16 +291,25 @@ instance InferExpr Exp where
     case expr of
 
       Nil r       -> do a <- newTVar r
-                        return (tMaybe r a)
+                        constraint (c2 r C_SubtypeOf (tNil r) a)
+                        return a
 
-      Bool r _    -> return (tBoolean r)
+      Bool r _    -> do a <- newTVar r
+                        constraint (c2 r C_SubtypeOf (tBoolean r) a)
+                        return a
 
       Number r nt _ ->
-        case nt of
-          FloatNum -> return (tNumber r)
-          IntNum   -> return (tInteger r)
+        do a <- newTVar r
+           let t = case nt of
+                     FloatNum -> tNumber r
+                     IntNum   -> tInteger r
+           constraint (c2 r C_SubtypeOf t a)
+           return a
 
-      String r _ -> return (tString r)
+      String r t ->
+        do a <- newTVar r
+           constraint (c2 r C_SubtypeOf (tStringLit t r) a)
+           return a
 
 {-
       Vararg r          -> lookupVarArg r
