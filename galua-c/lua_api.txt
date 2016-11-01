@@ -1,3 +1,4 @@
+_galua_control
 _galua_argc_p
 _galua_argv_p
 _luaL_addlstring

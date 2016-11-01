@@ -10,7 +10,18 @@ extern char *__progname;
 extern int *galua_argc_p;
 extern char ***galua_argv_p;
 
-int main(int argc, char**argv) {
+int Bgalua_control(lua_State *L)
+{
+  extern void galua_control(lua_State *, const char *);
+
+  const char * command = luaL_checkstring(L, 1);
+  galua_control(L, command);
+  lua_remove(L, 1);
+  return lua_gettop(L);
+}
+
+int main(int argc, char**argv)
+{
   int res;
   int i;
 
@@ -29,6 +40,8 @@ int main(int argc, char**argv) {
   }
 
   luaL_openlibs(L);
+
+  lua_register(L, "galuacontrol", Bgalua_control);
 
   res = luaL_loadfile(L, argv[1]);
   if (res != LUA_OK) {

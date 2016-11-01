@@ -281,6 +281,7 @@ data MachConfig = MachConfig
   { machOnChunkLoad :: Maybe String -> ByteString -> Int -> Function -> IO ()
     -- ^ Invoke this when loading a chunk
   , machOnShutdown  :: IO ()
+  , machOnQuery     :: String -> IO Value
   }
 
 

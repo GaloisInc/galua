@@ -884,6 +884,10 @@ int lua_yieldk (lua_State *L,
 /* End of Coroutines ********************************************/
 
 
+LUA_API
+void galua_control (lua_State *L, const char *command) {
+  API_ENTRY(galua_control, L, (HsPtr)command);
+}
 
 
 /************************************************************************
