@@ -102,7 +102,8 @@ function drawPrints(dbgState,mbError, prints) {
                   .text(ln.num))
 
       jQuery.each(ln.words, function(ix,w) {
-        it.append($('<span/>').addClass('gal_code_box code_line').text(w))
+        it.append($('<span/>').addClass('gal_code_box code_line galua_code_word')
+                              .text(w))
       })
       here.append(it)
     })
