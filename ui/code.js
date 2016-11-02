@@ -82,9 +82,50 @@ function focusCurLine() {
 }
 
 function drawFunction(dbgState, here, f) {
+  var fid = dbgState.programCounter.fid
+
+  var drawnFun = here.data('galua-function')
+  if (drawnFun && fid === drawnFun) {
+    var pc = dbgState.programCounter.pc
+    var done = false
+    jQuery.each(f.lines,function(line_ix,line) {
+      if (done) return false
+      jQuery.each(line.opcodes,function(op_ix,opcode) {
+        if (opcode.opcode === pc) {
+          // Remember old current line
+          var cl = $('.cur-line.galua-source-line')
+
+          // Turn off currently selected
+          $('.cur-line').removeClass('cur-line')
+
+          var cid = 'src_' + f.chunk + '-' + line.line
+          // Add to current source line
+          $('.' + cid).addClass('cur-line')
+
+          // Add to current op-code
+          $('.ops_' + line.line + '.' + f.chunk + '-' + opcode.opcode)
+          .addClass('cur-line')
+
+          // Open/close opcode if we moved onto a new line
+          if ($('#step-by-opcode').is(':checked') && !cl.hasClass(cid)) {
+            var old_line = cl.data('galua-line')
+            $('.galua-opcode-line.ops_' + old_line).hide()
+            $('.galua-opcode-line.ops_' + line.line).show()
+          }
+
+
+          done = true
+          return false
+        }
+      })
+    })
+    return
+  }
+
   here.empty()
   jQuery.each(f.lines, drawLine(dbgState,f.context,f.chunk,here))
   $('.dropdown-button').dropdown()
+  here.data('galua-function', fid)
 }
 
 
@@ -183,6 +224,7 @@ function drawLine(dbgState,context,chunkId,here) {
 
       if (isCurrent) skel.row.addClass('cur-line')
       skel.row.addClass(srcLineClass)
+              .data('galua-line',line.line)
 
       theLine = addBrkPoint(num, breakNum !== 0)
 
@@ -304,7 +346,7 @@ function drawLine(dbgState,context,chunkId,here) {
     }
 
 
-    // Draw a code-viwere line
+    // Draw a code-viewer line
     function drawOpCode(i,op) {
       var skel = lineSkeleton('galua-opcode-line')
       var num  = skel.num
