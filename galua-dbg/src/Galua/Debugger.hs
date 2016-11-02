@@ -729,13 +729,17 @@ newEmptyDebugger threadVar opts =
      dbgBrkAddOnLoad <- newIORef (optBreakPoints opts)
      dbgBreaks       <- newIORef Set.empty
 
-     let cfg = MachConfig
+     let query "port" = return (Number 8000)
+         query _      = return Nil
+
+         cfg = MachConfig
                  { machOnChunkLoad = addSourceFile dbgBrkAddOnLoad
                                                    dbgBreaks
                                                    dbgSources
                  , machOnShutdown =
                      do a <- takeMVar threadVar
                         cancel a
+                 , machOnQuery    = query
                  }
 
      (cptr, dbgNames, vm, next) <- setupLuaState cfg

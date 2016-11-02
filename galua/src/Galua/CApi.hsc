@@ -1602,3 +1602,16 @@ lua_close_hs :: ApiLuaClose
 lua_close_hs l r = reentry "lua_close" [] l r $ \_args ->
   do cfg <- getsMachEnv machConfig
      liftIO (machOnShutdown cfg)
+
+------------------------------------------------------------------------
+
+type GaluaControl = EntryPoint (CString -> IO CInt)
+
+foreign export ccall galua_control_hs :: GaluaControl
+
+galua_control_hs :: GaluaControl
+galua_control_hs l r cmdPtr = reentry "galua_control" [cstringArg0 cmdPtr] l r $ \args ->
+  do cmd <- liftIO (peekCString cmdPtr)
+     onQuery <- getsMachEnv (machOnQuery . machConfig)
+     answer <- liftIO (onQuery cmd)
+     push args answer

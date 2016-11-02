@@ -9,6 +9,7 @@ import           Galua.Mach( VM, MachConfig(..)
 import           Galua.Reference(AllocRef, runAllocWith, exposeAllocRef,
                                   runAlloc, readRef)
 import           Galua.Stepper (runAllSteps)
+import           Galua.Value (Value(Nil))
 
 import           Control.Monad(void)
 
@@ -44,6 +45,7 @@ newLuaState =
      return cptr
 
   where cfg = MachConfig
-                { machOnChunkLoad     = \_ _ _ _ -> return ()
-                , machOnShutdown = return () -- TODO: free stable pointers
+                { machOnChunkLoad = \_ _ _ _ -> return ()
+                , machOnShutdown  = return () -- TODO: free stable pointers
+                , machOnQuery     = \_ -> return Nil
                 }
