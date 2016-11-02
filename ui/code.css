@@ -13,6 +13,8 @@
 .galua-line-number {
   font-size: 10px;
   color: #999;
+  white-space: nowrap;
+  vertical-align: top;
 }
 
 .galua-code-table {

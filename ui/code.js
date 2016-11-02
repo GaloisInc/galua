@@ -110,9 +110,7 @@ function drawLine(dbgState,context,chunkId,here) {
   function addBrkPoint(here, startOn) {
     var brkIcon = $('<i/>').addClass('tiny blue-text material-icons')
                            .text('pause_circle_filled')
-                           .css('position','absolute')
-                           .css('left','5px')
-                           .css('padding-top','5px')
+                           .css('margin-left', '-1em')
                            .addClass('breakpoint')
     setClass(brkIcon, 'hide', startOn !== true)
     here.append(brkIcon)
@@ -202,6 +200,7 @@ function drawLine(dbgState,context,chunkId,here) {
           $('.' + mkClass(line.line)).slideToggle()
         })
       } else num.append(lineLab)
+
 
       jQuery.each(line.text, function(ix,t) {
         var it = $('<span/>')
