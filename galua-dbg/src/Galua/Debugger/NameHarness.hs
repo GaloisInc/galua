@@ -8,17 +8,17 @@ import           Control.Monad.IO.Class (liftIO)
 import           Control.Exception (Exception, throwIO)
 import qualified Data.ByteString.Lazy.Char8 as L8
 import qualified Data.ByteString.Char8 as B8
-import           Data.IORef (newIORef)
+import           Data.IORef (IORef, newIORef)
 import           Data.List (unfoldr, mapAccumR, intercalate)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Vector as Vector
 import           Galua.FunValue (funValueCode, luaFunction, FunCode(..))
 import           Galua.Reference (readRef, writeRef)
-import           Galua.Mach (NextStep(PrimStep), StackFrame(CallFrame), Thread(..), VM(vmCurThread), ApiCallStatus(NoApiCall), ExecEnv(..), parseLua)
+import           Galua.Mach (HandlerType(DefaultHandler), MachineEnv(..), NextStep(PrimStep), StackFrame(CallFrame), Thread(..), VM(..), ApiCallStatus(NoApiCall), ExecEnv(..), parseLua)
 import qualified Galua.Util.SizedVector as SV
 import qualified Galua.Util.Stack as Stack
-import           Galua.Value (Value(Nil), prettyValue)
+import           Galua.Value (Value(Table,Nil), prettyValue)
 import           Language.Lua.Bytecode
 import           Language.Lua.Bytecode.FunId (noFun)
 import           Language.Lua.Bytecode.Debug (lookupLocalName)
@@ -60,15 +60,16 @@ makeHarness params statement = unlines $
     ("return function(" ++ makeFunctionArgs params ++ ")"):
 
     -- Define the local variables in order to enforce register names
-    (if null (harnessUpvals params)
-        then []
-        else ["  do"
-             ,"    local _ = " ++ intercalate "," (harnessUpvals params)
-             ,"  end"]) ++
-
-    [ "  " ++ statement
+    [ "  do"
+    , "    local _ = " ++ intercalate "," upvals
+    , "  end"
+    , "  " ++ statement
     , "end"
     ]
+  where
+    upvals
+      | "_ENV" `elem` harnessUpvals params = harnessUpvals params
+      | otherwise                          = harnessUpvals params ++ ["_ENV"]
 
 makeFunctionArgs :: HarnessParams -> String
 makeFunctionArgs params = intercalate "," (names ++ ["..."])
@@ -115,11 +116,12 @@ paramsForExecEnv env pc =
     CCode {}        -> HarnessParams { harnessLocals = [], harnessUpvals = [] }
 
 execEnvForStatement ::
+  IORef Value ->
   ExecEnv {- ^ parent context         -} ->
   Int     {- ^ parent program counter -} ->
   String  {- ^ statement              -} ->
   IO ExecEnv
-execEnvForStatement env pc statement =
+execEnvForStatement globals env pc statement =
   do let params = paramsForExecEnv env pc
      func       <- harnessFunction params statement
      apiCallRef <- newIORef NoApiCall
@@ -127,6 +129,7 @@ execEnvForStatement env pc statement =
      stack      <- SV.shallowCopy (execStack env)
      return env
        { execStack    = stack
+       , execUpvals   = Vector.snoc (execUpvals env) globals
        , execFunction = luaFunction noFun func
        , execClosure  = Nil -- used for debug API
        , execApiCall  = apiCallRef
@@ -137,13 +140,21 @@ execEnvForStatement env pc statement =
 executeStatementOnVM :: VM -> NextStep -> String -> IO ()
 executeStatementOnVM vm next statement =
   do th <- readRef (vmCurThread vm)
-     env <- execEnvForStatement (stExecEnv th) (stPC th) statement
-     -- XXX: Install error handler
+
+     globRef <- newIORef (Table (machGlobals (vmMachineEnv vm)))
+     env <- execEnvForStatement
+              globRef
+              (stExecEnv th)
+              (stPC th)
+              statement
      -- XXX: Install breakpoint
      -- XXX: Display result in UI
+     -- XXX: Handle parser exeception
      let resume res = PrimStep (next <$ liftIO (mapM_ (putStrLn . prettyValue) res))
-         frame = CallFrame (stPC th) (stExecEnv th) Nothing resume
+         recover e  = resume [e]
+         frame = CallFrame (stPC th) (stExecEnv th) (Just recover) resume
      writeRef (vmCurThread vm)
          th { stExecEnv = env
+            , stHandlers = DefaultHandler : stHandlers th
             , stStack   = Stack.push frame (stStack th)
             }

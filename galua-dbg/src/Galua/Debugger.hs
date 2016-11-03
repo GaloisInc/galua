@@ -873,10 +873,9 @@ goto pc dbg =
 executeStatement :: Debugger -> Text -> IO ()
 executeStatement dbg statement =
   whenIdle dbg $
-  whenRunning dbg () $ \vm next ->
-    do executeStatementOnVM vm next (Text.unpack statement)
-       writeIORef (dbgStateVM dbg) (Running vm (Goto 0))
-
+    do whenRunning dbg () $ \vm next ->
+         do executeStatementOnVM vm next (Text.unpack statement)
+            writeIORef (dbgStateVM dbg) (Running vm (Goto 0))
 
 poll :: Debugger -> Word64 -> Int {- ^ Timeout in seconds -} -> IO Word64
 poll dbg _ secs =
