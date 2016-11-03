@@ -98,6 +98,7 @@ data TCon   = TNil
             | TMutable Bool
             | TUser Name
             | TUnion
+            | TNamespace [Name]   -- for naming things like X.Y
               deriving Eq
 
 

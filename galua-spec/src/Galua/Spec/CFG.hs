@@ -9,7 +9,7 @@ module Galua.Spec.CFG
   , Stat(..)
   , EndStat(..)
   , FunBody(..)
-  , Name(..)
+  , Name(..), nameOrigText
   , NameT(..)
   , Selector
   , Var(..)
@@ -128,6 +128,10 @@ data FunCall    = FunCall Annot PrefixExp (Maybe Selector) [Exp]
 --------------------------------------------------------------------------------
 nameUID :: Name -> (Int,NameT)
 nameUID Name { .. } = (nameId, nameType)
+
+nameOrigText :: Name -> Text
+nameOrigText Name { .. } = case nameOrig of
+                             Lua.Name _ x -> x
 
 instance Eq Name where
   (==) = (==) `on` nameUID

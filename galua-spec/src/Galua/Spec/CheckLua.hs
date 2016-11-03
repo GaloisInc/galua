@@ -8,8 +8,8 @@ import MonadLib.Derive
 import qualified Language.Lua.Annotated.Syntax as Lua
 import qualified Language.Lua.PrettyPrinter as Lua
 import qualified Language.Lua.Annotated.Simplify as Lua
-import Data.Map as Map
-import qualified Data.Map ( Map )
+import qualified Data.Map as Map
+import           Data.Map ( Map )
 import Data.Text(Text)
 
 import Galua.Spec.Parser(SourceRange(..))
@@ -191,15 +191,17 @@ newtype InferM a = IM { unIM :: ReaderT    RO (
                                 Id)) a }
 
 data RO = RO
-  { roSpecs :: !(Spec TypeChecked)
+  { roSpecs     :: !(Spec TypeChecked)
+  , roUpvalues  :: !(Map Name Type)
   }
 
 data RW = RW
   { rwNextVar     :: !Int
   , rwConstraints :: ![Constraint]
+  , rwLocals      :: !(Map Name Type)
   }
 
-data TypeError = TypeError
+data TypeError = UndefinedGlobal Name
 
 
 instance Functor InferM where
@@ -211,6 +213,9 @@ instance Applicative InferM where
 
 instance Monad InferM where
   (>>=) = derive_bind (Iso IM unIM)
+
+reportError :: TypeError -> InferM a
+reportError e = IM (raise e)
 
 -- | Generate a fresh type variable.  The range identifies the location
 -- of the entity whose type this variable stands for.
@@ -230,8 +235,40 @@ delay :: Constraint -> InferM ()
 delay c = IM $ sets_ $ \s -> s { rwConstraints = c : rwConstraints s }
 
 -- | Lookup a name
+lookupVarWithMutFlag :: Name -> InferM (Bool,Type)
+lookupVarWithMutFlag name =
+  case nameType name of
+
+    GlobalName  ->
+      do ds <- IM $ (specDecls . roSpecs) <$> ask
+         let matches d =
+               case d of
+                 DNamespace nd
+                   | AST.nameText (namespaceName nd) == nameOrigText name ->
+                     undefined
+                 DValDecl vd
+                   | AST.nameText (valName vd) == nameOrigText name ->
+                     undefined
+                 _ -> Nothing
+
+         case msum (map matches ds) of
+           Nothing  -> reportError (UndefinedGlobal name)
+           Just res -> return res
+
+    UpvalueName ->
+      do us <- IM $ roUpvalues <$> ask
+         case Map.lookup name us of
+           Just t  -> return (True,t)
+           Nothing -> panic "lookupVarWithMutFlag: undefined up-value"
+
+    LocalName ->
+      do ls <- IM $ rwLocals <$> get
+         case Map.lookup name ls of
+           Just t  -> return (True,t)
+           Nothing -> panic "lookupVarWithMutFlag: undefined local"
+
 lookupVar :: Name -> InferM Type
-lookupVar = undefined
+lookupVar nm = snd <$> lookupVarWithMutFlag nm
 
 setVarType :: Name -> Type -> InferM ()
 setVarType = undefined
@@ -250,6 +287,13 @@ instance InferStmt Stat where
   inferStmt stmt =
     case stmt of
       Assign a xs es -> undefined
+{-
+        where
+        match vs [e] =
+          do t <- inferExpr e
+             forM_ (zip [0..] vs) $ \(n,v) ->
+                do let r = annot v
+-}
 
       LocalAssign r xs Nothing ->
         forM_ xs $ \x ->
@@ -381,6 +425,17 @@ instance InferExpr PrefixExp where
       PEVar x      -> inferExpr x
       PEFunCall fc -> inferExpr fc
       Paren e      -> inferExpr e
+
+
+{-
+-- | Compute the type of an L-value.
+inferMutableVar :: Var -> InferM Type
+inferMutableVar var =
+  case var of
+    VarName x ->
+    Select r e i ->
+    SelectName r e l ->
+-}
 
 instance InferExpr Var where
   inferExpr expr =
