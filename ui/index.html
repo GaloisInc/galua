@@ -110,7 +110,18 @@
             Monitoring</a></li>
       </ul>
     </div>
-    <div class="col s12" id="console-pane"><ul id="prints" class="collection"></ul></div>
+    <div class="col s12" id="console-pane">
+      <ul id="prints" class="collection"></ul>
+      <div class="row">
+        <div class="input-field cols s12">
+          <textarea id="input-console"
+                    class="materialize-textarea"
+                    placeholder="Type a statement to evaluate."
+                    onkeyup="galuaConsoleInput()"
+          ></textarea>
+        </div>
+      </div>
+    </div>
     <div class="col s12" id="blocked_threads_pane">
         <ul id="blocked_threads-content" class="collection"></ul>
     </div>

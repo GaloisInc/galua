@@ -100,10 +100,16 @@ function drawPrints(dbgState,mbError, prints) {
                   .addClass('blue white-text new badge')
                   .attr('data-badge-caption','times')
                   .text(ln.num))
-
+      if (ln.type === 'input')
+        it.append($('<i/>')
+                  .addClass('material-icons')
+                  .text('keyboard_arrow_right')
+                  .css('vertical-align','bottom'))
       jQuery.each(ln.words, function(ix,w) {
-        it.append($('<span/>').addClass('gal_code_box code_line galua_code_word')
-                              .text(w))
+        var word = $('<span/>')
+                   .addClass('gal_code_box code_line galua_code_word')
+                   .text(w)
+        it.append(w)
       })
       here.append(it)
     })
@@ -490,4 +496,12 @@ function drawFunNameToolTip(obj) {
 }
 
 
-
+function galuaConsoleInput() {
+  var ev = this.event
+  if (ev.key === "Enter" && !ev.shiftKey) {
+    var con = $('#input-console')
+    jQuery.post('/exec', { stat: con.val() }, function() {
+      con.val('')
+    })
+  }
+}
