@@ -831,6 +831,9 @@ setPathValue dbg vid newVal =
 pause :: Debugger -> IO ()
 pause dbg = startExec dbg True Stop
 
+pauseNonBlock :: Debugger -> IO ()
+pauseNonBlock dbg = startExec dbg False Stop
+
 -- | Run until something causes us to stop.
 run :: Debugger -> IO ()
 run dbg = startExec dbg True Run
@@ -876,8 +879,10 @@ executeStatement dbg statement =
   whenIdle dbg $
     do whenRunning dbg () $ \vm next ->
          do recordConsoleInput statement
-            executeStatementOnVM vm next (Text.unpack statement)
+            let next' = PrimStep (next <$ liftIO (pauseNonBlock dbg))
+            executeStatementOnVM vm next' (Text.unpack statement)
             writeIORef (dbgStateVM dbg) (Running vm (Goto 0))
+       runNonBlock dbg
 
 poll :: Debugger -> Word64 -> Int {- ^ Timeout in seconds -} -> IO Word64
 poll dbg _ secs =
