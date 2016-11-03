@@ -147,6 +147,7 @@ apiRoutes st =
      , ("/clearBreakPoints", ioCmd clearBreakPoints)
 
      , ("/goto", cmd snapGoto)
+     , ("/exec", cmd snapExec)
 
      , ("/expand",      cmd snapExpand)
      , ("/expandTable", cmd snapExpandTable)
@@ -249,6 +250,12 @@ snapGoto st =
      case importBreakLoc (Text.unpack txt) of
        Nothing        -> badInput "Invalid location."
        Just (pc,_fun) -> liftIO (goto pc st)
+
+
+snapExec :: Debugger -> Snap ()
+snapExec st =
+  do txt <- textParam "stat"
+     liftIO (executeStatement st txt)
 
 
 snapAddBreakPoint :: Debugger -> Snap ()

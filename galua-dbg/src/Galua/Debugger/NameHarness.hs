@@ -1,22 +1,28 @@
-module Galua.Debugger.NameHarness where
+module Galua.Debugger.NameHarness
+  ( execEnvForStatement
+  , executeStatementOnVM
+  )
+  where
 
-import Control.Exception (Exception, throwIO)
-import Language.Lua.Bytecode
-import Language.Lua.Bytecode.FunId (noFun)
-import Language.Lua.Bytecode.Parser
-import Galua.Mach (ApiCallStatus(NoApiCall), ExecEnv(..), parseLua)
-import Galua.Value (Value(Nil))
-import Galua.FunValue (funValueCode, luaFunction, FunCode(..))
-import qualified Galua.Util.SizedVector as SV
-import Data.List (unfoldr, mapAccumR, intercalate)
-import Language.Lua.Bytecode.Debug (lookupLocalName)
+import           Control.Monad.IO.Class (liftIO)
+import           Control.Exception (Exception, throwIO)
 import qualified Data.ByteString.Lazy.Char8 as L8
 import qualified Data.ByteString.Char8 as B8
-import qualified Data.Vector as Vector
+import           Data.IORef (newIORef)
+import           Data.List (unfoldr, mapAccumR, intercalate)
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import qualified Data.Vector as Vector
+import           Galua.FunValue (funValueCode, luaFunction, FunCode(..))
+import           Galua.Reference (readRef, writeRef)
+import           Galua.Mach (NextStep(PrimStep), StackFrame(CallFrame), Thread(..), VM(vmCurThread), ApiCallStatus(NoApiCall), ExecEnv(..), parseLua)
+import qualified Galua.Util.SizedVector as SV
+import qualified Galua.Util.Stack as Stack
+import           Galua.Value (Value(Nil), prettyValue)
+import           Language.Lua.Bytecode
+import           Language.Lua.Bytecode.FunId (noFun)
+import           Language.Lua.Bytecode.Debug (lookupLocalName)
 import qualified System.Clock as Clock
-import Data.IORef (newIORef)
 
 data HarnessParams = HarnessParams
    { harnessLocals :: [Maybe String]
@@ -65,7 +71,7 @@ makeHarness params statement = unlines $
     ]
 
 makeFunctionArgs :: HarnessParams -> String
-makeFunctionArgs params = intercalate "," names ++ ", ..."
+makeFunctionArgs params = intercalate "," (names ++ ["..."])
   where
 
     names = snd (mapAccumR aux (0, Set.empty) (harnessLocals params))
@@ -127,3 +133,17 @@ execEnvForStatement env pc statement =
        , execCreateTime = now
        , execChildTime  = 0
        }
+
+executeStatementOnVM :: VM -> NextStep -> String -> IO ()
+executeStatementOnVM vm next statement =
+  do th <- readRef (vmCurThread vm)
+     env <- execEnvForStatement (stExecEnv th) (stPC th) statement
+     -- XXX: Install error handler
+     -- XXX: Install breakpoint
+     -- XXX: Display result in UI
+     let resume res = PrimStep (next <$ liftIO (mapM_ (putStrLn . prettyValue) res))
+         frame = CallFrame (stPC th) (stExecEnv th) Nothing resume
+     writeRef (vmCurThread vm)
+         th { stExecEnv = env
+            , stStack   = Stack.push frame (stStack th)
+            }
