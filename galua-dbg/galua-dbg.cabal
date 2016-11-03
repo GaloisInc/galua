@@ -31,6 +31,7 @@ library
                     Galua.Debugger.Console,
                     Galua.Debugger.View.Analysis,
                     Galua.Debugger.View.Spec
+                    Galua.Debugger.NameHarness
 
   other-modules:    HexFloatFormat
 

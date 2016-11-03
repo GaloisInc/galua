@@ -92,6 +92,10 @@ namespace io
   type: FILE -> string
   write: (number|string)* -> ()
 
+  stdin: FILE
+  stout: FILE
+  sterr: FILE
+
 namespace math
   abs: number -> number
   acos: number -> number

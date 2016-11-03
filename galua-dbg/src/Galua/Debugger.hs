@@ -17,6 +17,7 @@ module Galua.Debugger
   , runNonBlock
   , pause
   , goto
+  , executeStatement
   , addBreakPoint
   , removeBreakPoint
   , clearBreakPoints
@@ -50,6 +51,7 @@ import           Galua.CallIntoC (handleCCallState)
 import           Galua.Debugger.PrettySource
                   (lexChunk,Line,NameId,LocatedExprName)
 import           Galua.Debugger.Options
+import           Galua.Debugger.NameHarness
 
 import           Galua.Mach
 import           Galua.Stepper
@@ -867,6 +869,13 @@ goto pc dbg =
   whenRunning dbg () $ \vm _ ->
     writeIORef (dbgStateVM dbg) (Running vm (Goto pc))
 
+
+executeStatement :: Debugger -> Text -> IO ()
+executeStatement dbg statement =
+  whenIdle dbg $
+    do whenRunning dbg () $ \vm next ->
+         do executeStatementOnVM vm next (Text.unpack statement)
+            writeIORef (dbgStateVM dbg) (Running vm (Goto 0))
 
 poll :: Debugger -> Word64 -> Int {- ^ Timeout in seconds -} -> IO Word64
 poll dbg _ secs =

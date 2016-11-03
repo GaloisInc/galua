@@ -13,6 +13,7 @@ module Galua.Util.SizedVector
   , rotateSubset
   , fromList
   , toList
+  , shallowCopy
   ) where
 
 import Data.IORef
@@ -149,3 +150,9 @@ toList :: SizedVector a -> IO [a]
 toList (SizedVector ref) =
   do SizedVector'{..} <- readIORef ref
      Vector.toList <$> Vector.freeze (IOVector.unsafeTake svCount svArray)
+
+shallowCopy :: SizedVector a -> IO (SizedVector a)
+shallowCopy (SizedVector ref) =
+  do v  <- readIORef ref
+     v' <- IOVector.clone (svArray v)
+     SizedVector <$> newIORef v{svArray = v'}
