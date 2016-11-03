@@ -52,6 +52,7 @@ import           Galua.Debugger.PrettySource
                   (lexChunk,Line,NameId,LocatedExprName)
 import           Galua.Debugger.Options
 import           Galua.Debugger.NameHarness
+import           Galua.Debugger.Console(recordConsoleInput)
 
 import           Galua.Mach
 import           Galua.Stepper
@@ -874,7 +875,8 @@ executeStatement :: Debugger -> Text -> IO ()
 executeStatement dbg statement =
   whenIdle dbg $
     do whenRunning dbg () $ \vm next ->
-         do executeStatementOnVM vm next (Text.unpack statement)
+         do recordConsoleInput statement
+            executeStatementOnVM vm next (Text.unpack statement)
             writeIORef (dbgStateVM dbg) (Running vm (Goto 0))
 
 poll :: Debugger -> Word64 -> Int {- ^ Timeout in seconds -} -> IO Word64

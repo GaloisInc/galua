@@ -1,7 +1,9 @@
 module Galua.Debugger.Console
   ( Line(..)
+  , LineType(..)
   , getConsoleLines
-  , recordConsoleLine
+  , recordConsoleOutputLine
+  , recordConsoleInput
   ) where
 
 import qualified Data.Sequence as Seq
@@ -18,12 +20,17 @@ import Foreign.C
 data Line = Line
   { lineCount :: !Int
   , lineBody  :: !Text
+  , lineType  :: !LineType
   }
   deriving (Read, Show)
+
+data LineType = InputLine | OutputLine
+                deriving (Read, Show)
 
 data Console = Console
   { consoleLines :: !(Seq Line)
   , consoleBuffer :: !Text
+    -- ^ This is the last (incomplete) line that was printed
   }
 
 emptyConsole :: Console
@@ -35,8 +42,8 @@ emptyConsole = Console
 incLine :: Line -> Line
 incLine l = l { lineCount = lineCount l + 1 }
 
-newLine :: Text -> Line
-newLine txt = Line{ lineCount = 1, lineBody = txt }
+newLine :: LineType -> Text -> Line
+newLine t txt = Line{ lineCount = 1, lineBody = txt, lineType = t }
 
 consoleBufferRef :: IORef Console
 consoleBufferRef = unsafePerformIO (newIORef emptyConsole)
@@ -48,8 +55,19 @@ consoleBufferSize = 10
 getConsoleLines :: IO (Seq Line)
 getConsoleLines = consoleLines <$> readIORef consoleBufferRef
 
-recordConsoleLine :: Seq Line -> Text -> Seq Line
-recordConsoleLine buf txt =
+
+recordConsoleInput :: Text -> IO ()
+recordConsoleInput txt =
+  atomicModifyIORef' consoleBufferRef $ \con ->
+    ( con { consoleLines = foldr addLine (consoleLines con) (Text.lines txt) }
+    , ()
+    )
+  where
+  addLine l s = s Seq.|>
+                Line { lineCount = 1, lineBody = l, lineType = InputLine }
+
+recordConsoleOutputLine :: Seq Line -> Text -> Seq Line
+recordConsoleOutputLine buf txt =
 
   let snoc' xs x = x `seq` xs Seq.|> x in
 
@@ -59,13 +77,14 @@ recordConsoleLine buf txt =
           snoc' ls (incLine l)
 
     _ | Seq.length buf < consoleBufferSize ->
-          snoc' buf (newLine txt)
+          snoc' buf (newLine OutputLine txt)
 
-    _ -> snoc' (Seq.drop 1 buf) (newLine txt)
+    _ -> snoc' (Seq.drop 1 buf) (newLine OutputLine txt)
 
-recordConsoleInput :: Text -> Console -> Console
-recordConsoleInput txt console = Console
-  { consoleLines = foldl' recordConsoleLine (consoleLines console) completeLines
+recordConsoleOutput :: Text -> Console -> Console
+recordConsoleOutput txt console = Console
+  { consoleLines = foldl' recordConsoleOutputLine
+                                (consoleLines console) completeLines
   , consoleBuffer = incompleteLine
   }
   where
@@ -79,5 +98,5 @@ galua_writestring_dbg :: CString -> CSize -> IO CSize
 galua_writestring_dbg s l =
   do txt <- Text.peekCStringLen (s, fromIntegral l)
      atomicModifyIORef' consoleBufferRef $ \console ->
-       (recordConsoleInput txt console, ())
+       (recordConsoleOutput txt console, ())
      return l

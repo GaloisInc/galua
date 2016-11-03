@@ -182,9 +182,12 @@ exportIdleReason funs r =
 
 
 exportPrintedLine :: Line -> JS.Value
-exportPrintedLine Line { lineCount, lineBody } =
+exportPrintedLine Line { lineCount, lineBody, lineType } =
   JS.object [ "num"   .= lineCount
             , "words" .= Text.split (=='\t') lineBody
+            , "type"  .= (case lineType of
+                            InputLine  -> "input" :: Text
+                            OutputLine -> "output")
             ]
 
 exportSources :: [(Int,ChunkInfo)] -> JS.Value
