@@ -129,7 +129,6 @@ function fillInExecEnv(dbgState, threadParts, env) {
                             , drawValueList(dbgState, 'regs', env.registers)
                             ])
 
-  threadParts.code.empty()
 
   if (env.code) {
     var oldPC = dbgState.programCounter
@@ -142,7 +141,8 @@ function fillInExecEnv(dbgState, threadParts, env) {
     dbgState.programCounter = oldPC
   } else {
     var noCode = $('<div/>').text('No code available for this function')
-    threadParts.code.append(noCode)
+    threadParts.code.empty().append(noCode)
+               .data('galua-function',null)
   }
 
 }
