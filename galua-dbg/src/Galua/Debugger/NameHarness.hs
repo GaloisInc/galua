@@ -4,13 +4,15 @@ module Galua.Debugger.NameHarness
   )
   where
 
-import           Control.Monad (replicateM_)
+import           Control.Monad ((<=<), replicateM_)
 import           Control.Monad.IO.Class (liftIO)
 import           Control.Exception (Exception, throwIO)
 import qualified Data.ByteString.Lazy.Char8 as L8
 import qualified Data.ByteString.Char8 as B8
 import           Data.IORef (IORef, newIORef)
+import           Data.Foldable (traverse_)
 import           Data.List (unfoldr, mapAccumR, intercalate)
+import           Data.Maybe (catMaybes)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Vector as Vector
@@ -25,6 +27,7 @@ import           Language.Lua.Bytecode
 import           Language.Lua.Bytecode.FunId (noFun)
 import           Language.Lua.Bytecode.Debug (lookupLocalName)
 import qualified System.Clock as Clock
+import Debug.Trace
 
 data HarnessParams = HarnessParams
    { harnessLocals :: [Maybe String]
@@ -60,7 +63,7 @@ makeHarness params statement = unlines $
 
     -- The name _ doesn't shadow anything because it's
     -- not in scope until after the function is defined
-    ("return function(" ++ makeFunctionArgs params ++ ")"):
+    ("return function(" ++ args ++ ")"):
 
     -- Define the local variables in order to enforce register names
     [ "  do"
@@ -74,16 +77,7 @@ makeHarness params statement = unlines $
       | "_ENV" `elem` harnessUpvals params = harnessUpvals params
       | otherwise                          = harnessUpvals params ++ ["_ENV"]
 
-makeFunctionArgs :: HarnessParams -> String
-makeFunctionArgs params = intercalate "," (names ++ ["..."])
-  where
-
-    names = snd (mapAccumR aux (0, Set.empty) (harnessLocals params))
-
-    aux :: (Int, Set String) -> Maybe String -> ( (Int, Set String), String )
-    aux (freshNum, seen) (Just x)
-      | Set.notMember x seen = ( (freshNum, Set.insert x seen), x )
-    aux (freshNum, seen) _   = ( (freshNum+1, seen), "SOFRESH"++show freshNum )
+    args = intercalate "," (catMaybes (harnessLocals params) ++ ["..."])
 
 
 computeParams ::
@@ -92,12 +86,21 @@ computeParams ::
   HarnessParams
 computeParams func pc =
   HarnessParams
-  { harnessLocals = unfoldr aux 0
+  { harnessLocals = names
   , harnessUpvals = Vector.toList $ fmap B8.unpack
                   $ debugInfoUpvalues $ funcDebug func
         -- XXX: UTF-8
   }
   where
+    names = snd
+          $ mapAccumR aux Set.empty
+          $ unfoldr genLocal 0
+
+    aux :: Set String -> Maybe String -> ( Set String, Maybe String )
+    aux seen n@(Just x)
+      | Set.notMember x seen = ( Set.insert x seen, n       )
+    aux seen _               = ( seen             , Nothing )
+
     getLocalName = lookupLocalName func pc
 
     -- checking for space is our approximation of determining
@@ -107,8 +110,9 @@ computeParams func pc =
       | B8.elem ' ' n = Nothing
       | otherwise     = Just (B8.unpack n)
 
-    aux i = do name <- getLocalName (Reg i)
-               return (checkName name, i+1)
+    genLocal i =
+        do name <- getLocalName (Reg i)
+           return (checkName name, i+1)
 
 paramsForExecEnv ::
   ExecEnv {- ^ execution environment -} ->
@@ -130,7 +134,7 @@ execEnvForStatement globals env pc statement =
      func       <- harnessFunction params statement
      apiCallRef <- newIORef NoApiCall
      now        <- Clock.getTime Clock.ProcessCPUTime
-     stack      <- prepareStack (execStack env) func
+     stack      <- prepareStack params (execStack env) func
      return env
        { execStack    = stack
        , execUpvals   = Vector.snoc (execUpvals env) globals
@@ -141,14 +145,19 @@ execEnvForStatement globals env pc statement =
        , execChildTime  = 0
        }
 
-prepareStack :: SizedVector (IORef Value) -> Function -> IO (SizedVector (IORef Value))
-prepareStack parentStack func =
-  do stack <- SV.shallowCopy parentStack
+prepareStack ::
+  HarnessParams             {- ^ harness parameters -} ->
+  SizedVector (IORef Value) {- ^ parent's stack     -} ->
+  Function                  {- ^ dynamic function   -} ->
+  IO (SizedVector (IORef Value))
+prepareStack params parentStack func =
+  do stack <- SV.new
 
-     n <- SV.size stack
-     SV.shrink stack (n - funcNumParams func)
-     replicateM_ (funcMaxStackSize func - funcNumParams func)
-                 (SV.push stack =<< newIORef Nil)
+     let visible = catMaybes (zipWith (<$) [0..] (harnessLocals params))
+     traverse_ (SV.push stack <=< SV.get parentStack) visible
+
+     let extraSpace = funcMaxStackSize func - length visible
+     replicateM_ extraSpace (SV.push stack =<< newIORef Nil)
 
      return stack
 
