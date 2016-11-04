@@ -59,7 +59,17 @@ for i = 1, MAXGEN do
 
   if w == NOWORD then break end
 
-  io.write(w, " ")
+  print(w)
   w1, w2 = w2, w
 end
-io.write("\n")
+
+local function halfinteger(x)
+        if (x % 2 == 1) then
+                error('expected an even number')
+        end
+        return x / 2
+end
+
+print(pcall(halfinteger, 13))
+
+print 'END OF DEMO'

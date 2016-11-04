@@ -498,10 +498,18 @@ function drawFunNameToolTip(obj) {
 
 function galuaConsoleInput() {
   var ev = this.event
-  if (ev.key === "Enter" && !ev.shiftKey) {
+  if (ev.keyCode === 13 && !ev.shiftKey) {
     var con = $('#input-console')
     jQuery.post('/exec', { stat: con.val() }, function() {
       con.val('')
     })
+    //IE9 & Other Browsers
+    if (ev.stopPropagation) {
+      ev.stopPropagation();
+    }
+    //IE8 and Lower
+    else {
+      ev.cancelBubble = true;
+    }
   }
 }
