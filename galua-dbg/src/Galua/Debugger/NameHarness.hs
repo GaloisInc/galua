@@ -4,6 +4,7 @@ module Galua.Debugger.NameHarness
   )
   where
 
+import           Control.Monad (replicateM_)
 import           Control.Monad.IO.Class (liftIO)
 import           Control.Exception (Exception, throwIO)
 import qualified Data.ByteString.Lazy.Char8 as L8
@@ -17,6 +18,7 @@ import           Galua.FunValue (funValueCode, luaFunction, FunCode(..))
 import           Galua.Reference (readRef, writeRef)
 import           Galua.Mach (dumpNextStep, HandlerType(DefaultHandler), MachineEnv(..), NextStep(Goto,PrimStep), StackFrame(CallFrame), Thread(..), VM(..), ApiCallStatus(NoApiCall), ExecEnv(..), parseLua)
 import qualified Galua.Util.SizedVector as SV
+import           Galua.Util.SizedVector (SizedVector)
 import qualified Galua.Util.Stack as Stack
 import           Galua.Value (Value(Table,Nil), prettyValue)
 import           Language.Lua.Bytecode
@@ -128,7 +130,7 @@ execEnvForStatement globals env pc statement =
      func       <- harnessFunction params statement
      apiCallRef <- newIORef NoApiCall
      now        <- Clock.getTime Clock.ProcessCPUTime
-     stack      <- SV.shallowCopy (execStack env)
+     stack      <- prepareStack (execStack env) func
      return env
        { execStack    = stack
        , execUpvals   = Vector.snoc (execUpvals env) globals
@@ -139,6 +141,17 @@ execEnvForStatement globals env pc statement =
        , execChildTime  = 0
        }
 
+prepareStack :: SizedVector (IORef Value) -> Function -> IO (SizedVector (IORef Value))
+prepareStack parentStack func =
+  do stack <- SV.shallowCopy parentStack
+
+     n <- SV.size stack
+     SV.shrink stack (n - funcNumParams func)
+     replicateM_ (funcMaxStackSize func - funcNumParams func)
+                 (SV.push stack =<< newIORef Nil)
+
+     return stack
+
 executeStatementOnVM :: VM -> NextStep -> String -> IO ()
 executeStatementOnVM vm next statement =
   do th      <- readRef (vmCurThread vm)
@@ -148,9 +161,9 @@ executeStatementOnVM vm next statement =
                   (stExecEnv th)
                   (computeEffectivePC next (stPC th))
                   statement
-     -- XXX: Install breakpoint
      -- XXX: Display result in UI
      -- XXX: Handle parser exeception
+     -- XXX: Restore pause on exec logic
      let resume res = PrimStep (next <$ liftIO (mapM_ (putStrLn . prettyValue) res))
          recover e  = resume [e]
          frame = CallFrame (stPC th) (stExecEnv th) (Just recover) resume
