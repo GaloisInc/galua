@@ -880,7 +880,7 @@ executeStatement dbg statement =
     do whenRunning dbg () $ \vm next ->
          do recordConsoleInput statement
             let next' = PrimStep (next <$ liftIO (pauseNonBlock dbg))
-            executeStatementOnVM vm next' (Text.unpack statement)
+            executeStatementOnVM vm next (Text.unpack statement)
             writeIORef (dbgStateVM dbg) (Running vm (Goto 0))
        runNonBlock dbg
 

@@ -15,7 +15,7 @@ import qualified Data.Set as Set
 import qualified Data.Vector as Vector
 import           Galua.FunValue (funValueCode, luaFunction, FunCode(..))
 import           Galua.Reference (readRef, writeRef)
-import           Galua.Mach (HandlerType(DefaultHandler), MachineEnv(..), NextStep(PrimStep), StackFrame(CallFrame), Thread(..), VM(..), ApiCallStatus(NoApiCall), ExecEnv(..), parseLua)
+import           Galua.Mach (dumpNextStep, HandlerType(DefaultHandler), MachineEnv(..), NextStep(Goto,PrimStep), StackFrame(CallFrame), Thread(..), VM(..), ApiCallStatus(NoApiCall), ExecEnv(..), parseLua)
 import qualified Galua.Util.SizedVector as SV
 import qualified Galua.Util.Stack as Stack
 import           Galua.Value (Value(Table,Nil), prettyValue)
@@ -40,7 +40,8 @@ harnessFunction ::
   String      {- ^ statement                    -} ->
   IO Function {- ^ function for given statement -}
 harnessFunction params statement =
-  do res <- parseLua Nothing (L8.pack (makeHarness params statement))
+  do let harness = makeHarness params statement
+     res <- parseLua Nothing (L8.pack harness)
      case res of
        Left e                    -> throwIO (ParseError e)
        Right (Chunk _ outerFunc) ->
@@ -87,7 +88,8 @@ computeParams ::
   Function {- ^ context to run statement in -} ->
   Int      {- ^ program counter             -} ->
   HarnessParams
-computeParams func pc = HarnessParams
+computeParams func pc =
+  HarnessParams
   { harnessLocals = unfoldr aux 0
   , harnessUpvals = Vector.toList $ fmap B8.unpack
                   $ debugInfoUpvalues $ funcDebug func
@@ -139,14 +141,13 @@ execEnvForStatement globals env pc statement =
 
 executeStatementOnVM :: VM -> NextStep -> String -> IO ()
 executeStatementOnVM vm next statement =
-  do th <- readRef (vmCurThread vm)
-
+  do th      <- readRef (vmCurThread vm)
      globRef <- newIORef (Table (machGlobals (vmMachineEnv vm)))
-     env <- execEnvForStatement
-              globRef
-              (stExecEnv th)
-              (stPC th)
-              statement
+     env     <- execEnvForStatement
+                  globRef
+                  (stExecEnv th)
+                  (computeEffectivePC next (stPC th))
+                  statement
      -- XXX: Install breakpoint
      -- XXX: Display result in UI
      -- XXX: Handle parser exeception
@@ -158,3 +159,7 @@ executeStatementOnVM vm next statement =
             , stHandlers = DefaultHandler : stHandlers th
             , stStack   = Stack.push frame (stStack th)
             }
+
+computeEffectivePC :: NextStep -> Int -> Int
+computeEffectivePC (Goto pc) _  = pc
+computeEffectivePC _         pc = pc
