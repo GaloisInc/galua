@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings, TypeFamilies #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TypeSynonymInstances, FlexibleInstances #-}
 module Galua.Spec.CheckLua where
 
@@ -192,6 +193,7 @@ newtype InferM a = IM { unIM :: ReaderT    RO (
 
 data RO = RO
   { roSpecs     :: !(Spec TypeChecked)
+  , roParams    :: !(Map Name Type)
   , roUpvalues  :: !(Map Name Type)
   }
 
@@ -200,6 +202,7 @@ data RW = RW
   , rwConstraints :: ![Constraint]
   , rwLocals      :: !(Map Name Type)
   }
+
 
 data TypeError = UndefinedGlobal Name
 
@@ -259,19 +262,25 @@ lookupVarWithMutFlag name =
       do us <- IM $ roUpvalues <$> ask
          case Map.lookup name us of
            Just t  -> return (True,t)
-           Nothing -> panic "lookupVarWithMutFlag: undefined up-value"
+           Nothing -> panic "lookupVarWithMutFlag: missing up-value"
 
     LocalName ->
       do ls <- IM $ rwLocals <$> get
          case Map.lookup name ls of
            Just t  -> return (True,t)
-           Nothing -> panic "lookupVarWithMutFlag: undefined local"
+           Nothing -> panic "lookupVarWithMutFlag: missing local"
 
 lookupVar :: Name -> InferM Type
 lookupVar nm = snd <$> lookupVarWithMutFlag nm
 
 setVarType :: Name -> Type -> InferM ()
-setVarType = undefined
+setVarType x t =
+  case nameType x of
+    GlobalName  -> panic "setVarType: GlobalName"
+    UpvalueName -> panic "setVarType: UpvalueName"
+    LocalName   ->
+      IM $ sets_ $ \rw -> rw { rwLocals = Map.insert x t (rwLocals rw) }
+
 
 panic :: String -> a
 panic msg = error ("[bug] " ++ msg)
@@ -427,7 +436,41 @@ instance InferExpr PrefixExp where
       Paren e      -> inferExpr e
 
 
-{-
+{- Typechecking of assignment to Var:
+
+x = e
+  x global:
+      1. consult spec to ensure mutable
+      2. typeof(e) <= declared type
+  x upvalue:
+      1. typeof(e) = typeof(upvalue)
+  x local:
+    1. 
+
+e1[e2] = e
+  Set field of a map:
+    1. typeof(e1) <= Map key value
+    2. typeof(e2) <= key
+    3. typeof(e)  <= (value | nil)
+
+e1.l = e
+  1. 
+
+It looks like we need to support some sort of "change of type"
+to support initializing values step by step.  For example:
+
+point = {}
+point.x = 10
+point.y = 20
+
+This, `point` starts of as an empty record, but two lines
+later, the record has two fields.  This is OK to do as long
+as the value is not shared with others.
+
+
+
+
+
 -- | Compute the type of an L-value.
 inferMutableVar :: Var -> InferM Type
 inferMutableVar var =
