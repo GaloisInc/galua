@@ -18,7 +18,7 @@ import qualified Data.Set as Set
 import qualified Data.Vector as Vector
 import           Galua.FunValue (funValueCode, luaFunction, FunCode(..))
 import           Galua.Reference (readRef, writeRef)
-import           Galua.Mach (dumpNextStep, HandlerType(DefaultHandler), MachineEnv(..), NextStep(Goto,PrimStep), StackFrame(CallFrame), Thread(..), VM(..), ApiCallStatus(NoApiCall), ExecEnv(..), parseLua)
+import           Galua.Mach (dumpNextStep, HandlerType(DefaultHandler), MachineEnv(..), NextStep(PrimStep), StackFrame(CallFrame), Thread(..), VM(..), ApiCallStatus(NoApiCall), ExecEnv(..), parseLua)
 import qualified Galua.Util.SizedVector as SV
 import           Galua.Util.SizedVector (SizedVector)
 import qualified Galua.Util.Stack as Stack
@@ -168,7 +168,7 @@ executeStatementOnVM vm next statement =
      env     <- execEnvForStatement
                   globRef
                   (stExecEnv th)
-                  (computeEffectivePC next (stPC th))
+                  (stPC th)
                   statement
      -- XXX: Display result in UI
      -- XXX: Handle parser exeception
@@ -181,7 +181,3 @@ executeStatementOnVM vm next statement =
             , stHandlers = DefaultHandler : stHandlers th
             , stStack   = Stack.push frame (stStack th)
             }
-
-computeEffectivePC :: NextStep -> Int -> Int
-computeEffectivePC (Goto pc) _  = pc
-computeEffectivePC _         pc = pc

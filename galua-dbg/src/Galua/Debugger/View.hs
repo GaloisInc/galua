@@ -458,19 +458,16 @@ exportThread :: Chunks -> Maybe NextStep -> Reference Thread -> ExportM JS.Value
 exportThread funs mbNext tRef =
   do MkThread { stPC, stStack , stExecEnv, stHandlers,
                     threadStatus } <- io (readRef tRef)
-     let curPC = case mbNext of
-                   Just (Goto x) -> x
-                   _             -> stPC
      let eid = ThreadExecEnv (referenceId tRef)
-     env   <- exportExecEnv funs curPC eid stExecEnv
+     env   <- exportExecEnv funs stPC eid stExecEnv
      stack <- mapM (exportStackFrameShort funs) (toList stStack)
      hs    <- mapM (exportHandler funs) stHandlers
-     cur   <- exportCallStackFrameShort funs curPC stExecEnv mbNext
+     cur   <- exportCallStackFrameShort funs stPC stExecEnv mbNext
      return $ JS.object
                 [ tag "thread"
                 , "name"     .= prettyRef tRef
                 , "status"   .= exportThreadStatus threadStatus
-                , "pc"       .= curPC
+                , "pc"       .= stPC
                 , "stack"    .= (cur : stack)
                 , "handlers" .= hs
                 , "env"      .= env

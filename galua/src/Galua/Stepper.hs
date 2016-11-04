@@ -53,6 +53,7 @@ oneStep vm instr = do
     ApiStart apiCall op -> performApiStart vm apiCall op
     ApiEnd label next -> performApiEnd vm label next
     WaitForC          -> return (RunningInC vm)
+    Interrupt n       -> return (Running vm n)
 
 
 performApiEnd :: VM -> ApiCall -> NextStep -> Alloc VMState

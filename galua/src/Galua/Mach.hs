@@ -128,6 +128,8 @@ data NextStep
   | ApiStart ApiCall NextStep
   | ApiEnd ApiCall NextStep
 
+  | Interrupt NextStep -- ^ used to interrupt execution when in debugger
+
 
 dumpNextStep :: NextStep -> String
 dumpNextStep next =
@@ -146,6 +148,7 @@ dumpNextStep next =
     Yield _         -> "yield"
     ApiStart api _  -> "apistart " ++ apiCallMethod api
     ApiEnd api _    -> "apiend " ++ apiCallMethod api
+    Interrupt n     -> "interrupt " ++ dumpNextStep n
 
 
 

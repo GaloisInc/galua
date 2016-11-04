@@ -71,7 +71,7 @@ import           Language.Lua.Bytecode.Debug
                     (lookupLineNumber,inferSubFunctionNames,deepLineNumberMap)
 import           Language.Lua.Bytecode.FunId
 
-import           Data.Maybe (catMaybes,mapMaybe)
+import           Data.Maybe (catMaybes,mapMaybe,fromMaybe,maybeToList)
 import           Data.Map (Map)
 import qualified Data.Map as Map
 import           Data.IntMap (IntMap)
@@ -91,7 +91,6 @@ import qualified Data.ByteString as B
 import qualified Data.ByteString.Char8 as B
 
 import           Foreign (Ptr)
-import           Data.Maybe(fromMaybe,maybeToList)
 import           Data.Ord(comparing)
 import           Data.List(unfoldr,minimumBy)
 import           Data.Vector (Vector)
@@ -879,8 +878,8 @@ executeStatement dbg statement =
   whenIdle dbg $
     do whenRunning dbg () $ \vm next ->
          do recordConsoleInput statement
-            let next' = PrimStep (next <$ liftIO (pauseNonBlock dbg))
-            executeStatementOnVM vm next (Text.unpack statement)
+            let next' = Interrupt next
+            executeStatementOnVM vm next' (Text.unpack statement)
             writeIORef (dbgStateVM dbg) (Running vm (Goto 0))
        runNonBlock dbg
 
@@ -958,13 +957,19 @@ finishStep dbg =
      writeIORef (dbgClients dbg) []
      mapM_ (\client -> putMVar client ()) clients
 
-
+getCurrentLineNumber :: VM -> IO Int
+getCurrentLineNumber vm =
+    do th <- readRef (vmCurThread vm)
+       return $! fromMaybe 0 $
+              do (_,func) <- luaOpCodes (execFunction (stExecEnv th))
+                 lookupLineNumber func (stPC th)
 
 doStepMode :: Debugger -> VM -> NextStep -> StepMode -> Bool -> IO VMState
 doStepMode dbg vm next mode firstStep =
   case (mode,next) of
-    (Run, _         )     -> proceed Run
-    (_  , PrimStep{})     -> proceed mode
+    (_  , Interrupt n) -> done' vm n
+    (Run, _          ) -> proceed Run
+    (_  , PrimStep{} ) -> proceed mode
 
     (Stop, op) | breakImmune op -> proceed mode
                | otherwise      -> done
@@ -995,17 +1000,19 @@ doStepMode dbg vm next mode firstStep =
     (StepOverOp, ApiEnd  {}) -> done
     (StepOverOp, _         ) -> proceed mode
 
+    (StepOverLine l, _) | l < 0 ->
+       do l' <- getCurrentLineNumber vm
+          doStepMode dbg vm next (StepOverLine l') firstStep
     (StepOverLine{}, Resume  {})    -> proceed (StepOutYield mode)
     (StepOverLine{}, FunTailcall{}) -> proceed Stop
     (StepOverLine{}, FunCall {})    -> proceed (StepOut mode)
     (StepOverLine{}, ApiStart{})    -> proceed (StepOut mode)
     (StepOverLine l, Goto pc   )    ->
       do l' <- getLineNumber pc
-         if firstStep
-           then proceed (StepOverLine l')
-           else if l == l' && l' /= 0
-             then proceed mode
-             else done
+         if l == l' && l' /= 0 then
+           proceed mode
+         else
+           done
     (StepOverLine{}, _         ) | firstStep -> proceed mode
     (StepOverLine{}, ApiEnd  {}) -> done
     (StepOverLine{}, FunReturn{}) -> proceed Stop
@@ -1042,11 +1049,24 @@ doStepMode dbg vm next mode firstStep =
            Just (_,func) | Just l' <- lookupLineNumber func pc -> l'
            _ -> 0
 
-  done = do r <- readIORef (dbgIdleReason dbg)
-            case r of
-              Executing -> setIdleReason dbg Ready
-              _         -> return ()
-            return (Running vm next)
+  -- Resolve all the Goto operations
+  done = done' vm next
+
+  done' vm next =
+    case next of
+      Goto i -> do let Debugger { dbgNames } = dbg
+                   Running vm' next' <- runAllocWith dbgNames (oneStep vm next)
+                   case next' of
+                     Goto j | j == i -> finish vm' next'
+                     _ -> done' vm' next'
+      _ -> finish vm next
+    where
+      finish vm next =
+        do r <- readIORef (dbgIdleReason dbg)
+           case r of
+               Executing -> setIdleReason dbg Ready
+               _         -> return ()
+           return (Running vm next)
 
   breakImmune Goto{}        = False
   breakImmune ApiStart{}    = False
