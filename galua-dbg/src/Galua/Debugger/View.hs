@@ -138,13 +138,14 @@ exportDebugger dbg =
      brks    <- exportBreaks dbg
      modifyIORef' dbgExportable $ \r -> newExportableState
                                           { openThreads = openThreads r }
-     (jsWatches, jsSt, jsIdle)
+     (jsWatches, jsSt, jsIdle, jsLines)
        <- runExportM dbg $
          do jsWatches <- traverse (exportValuePath funs)
                                   (watchListToList watches)
             jsSt      <- exportVMState funs st
             jsIdle <- exportIdleReason funs idle
-            return (jsWatches, jsSt, jsIdle)
+            jsLines <- mapM (exportPrintedLine funs) outs
+            return (jsWatches, jsSt, jsIdle, jsLines)
 
      cnt <- readIORef dbgCommandCounter
      return $ JS.object [ "sources" .= exportSources
@@ -153,7 +154,7 @@ exportDebugger dbg =
                         , "state"       .= jsSt
                         , "breakOnError".= brkErr
                         , "watches"     .= jsWatches
-                        , "prints"      .= fmap exportPrintedLine outs
+                        , "prints"      .= jsLines
                         , "idle"        .= jsIdle
                         , "stateCounter".= cnt
                         ]
@@ -181,14 +182,23 @@ exportIdleReason funs r =
 
 
 
-exportPrintedLine :: Line -> JS.Value
-exportPrintedLine Line { lineCount, lineBody, lineType } =
-  JS.object [ "num"   .= lineCount
-            , "words" .= Text.split (=='\t') lineBody
-            , "type"  .= (case lineType of
-                            InputLine  -> "input" :: Text
-                            OutputLine -> "output")
-            ]
+exportPrintedLine :: Chunks -> Line -> ExportM JS.Value
+exportPrintedLine funs Line { lineCount, lineBody, lineType } =
+  do ws <- mapM (exportPrintedWord funs) lineBody
+     return ( JS.object [ "num"   .= lineCount
+                        , "words" .= ws
+                        , "type"  .= (case lineType of
+                                        InputLine  -> "input" :: Text
+                                        OutputLine -> "output")
+                        ] )
+
+exportPrintedWord :: Chunks -> LineWord -> ExportM JS.Value
+exportPrintedWord funs w =
+  case w of
+    TextWord t  -> return (JS.object [ tag "text", "word" .=  t ])
+    ValueWord v -> do js <- exportValue funs VP_None v
+                      return (JS.object [ tag "value", "value" .= js ])
+
 
 exportSources :: [(Int,ChunkInfo)] -> JS.Value
 exportSources = toJSON . map exportTree . groupSources getPath

@@ -52,7 +52,7 @@ import           Galua.Debugger.PrettySource
                   (lexChunk,Line,NameId,LocatedExprName)
 import           Galua.Debugger.Options
 import           Galua.Debugger.NameHarness
-import           Galua.Debugger.Console(recordConsoleInput)
+import           Galua.Debugger.Console(recordConsoleInput,recordConsoleValues)
 
 import           Galua.Mach
 import           Galua.Stepper
@@ -880,6 +880,7 @@ executeStatement dbg statement =
          do recordConsoleInput statement
             let next' = Interrupt next
             executeStatementOnVM vm next' (Text.unpack statement)
+              recordConsoleValues
             writeIORef (dbgStateVM dbg) (Running vm (Goto 0))
        runNonBlock dbg
 

@@ -161,8 +161,8 @@ prepareStack params parentStack func =
 
      return stack
 
-executeStatementOnVM :: VM -> NextStep -> String -> IO ()
-executeStatementOnVM vm next statement =
+executeStatementOnVM :: VM -> NextStep -> String -> ([Value] -> IO ()) -> IO ()
+executeStatementOnVM vm next statement k =
   do th      <- readRef (vmCurThread vm)
      globRef <- newIORef (Table (machGlobals (vmMachineEnv vm)))
      env     <- execEnvForStatement
@@ -170,10 +170,9 @@ executeStatementOnVM vm next statement =
                   (stExecEnv th)
                   (stPC th)
                   statement
-     -- XXX: Display result in UI
      -- XXX: Handle parser exeception
      -- XXX: Restore pause on exec logic
-     let resume res = PrimStep (next <$ liftIO (mapM_ (putStrLn . prettyValue) res))
+     let resume res = PrimStep (next <$ liftIO (k res))
          recover e  = resume [e]
          frame = CallFrame (stPC th) (stExecEnv th) (Just recover) resume
      writeRef (vmCurThread vm)
@@ -181,3 +180,6 @@ executeStatementOnVM vm next statement =
             , stHandlers = DefaultHandler : stHandlers th
             , stStack   = Stack.push frame (stStack th)
             }
+
+
+

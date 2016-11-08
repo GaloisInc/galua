@@ -106,10 +106,16 @@ function drawPrints(dbgState,mbError, prints) {
                   .text('keyboard_arrow_right')
                   .css('vertical-align','bottom'))
       jQuery.each(ln.words, function(ix,w) {
-        var word = $('<span/>')
-                   .addClass('gal_code_box code_line galua_code_word')
-                   .text(w)
-        it.append(w)
+        switch (w.tag) {
+          case 'text':
+            var word = $('<span/>')
+                       .addClass('gal_code_box code_line galua_code_word')
+                       .text(w.word)
+            it.append(word)
+            break
+          case 'value':
+            it.append(drawValue (dbgState,w.value))
+        }
       })
       here.append(it)
     })
