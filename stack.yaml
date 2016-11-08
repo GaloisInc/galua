@@ -7,13 +7,10 @@ packages:
 - location: galua-spec
 - location: lib/dwarf-tools
 - location: lib/language-lua
-- location:
-        git: git@github.com:GaloisInc/lua-bc
-        commit: v0.1.0.2
-resolver: lts-7.7
+resolver: lts-7.8
 extra-deps:
 - config-value-0.5
 - config-value-getopt-0.1.0.0
 - elf-0.27
-- lua-bc-0.1.0.1
+- lua-bc-0.1.0.2
 - alex-tools-0.1.1.0
