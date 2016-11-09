@@ -1,5 +1,7 @@
 module Galua.Debugger.NameHarness
-  ( execEnvForStatement
+  ( CompiledStatment
+  , compileStatementForLocation
+  , executeCompiledStatment
   , executeStatementOnVM
   )
   where
@@ -114,72 +116,88 @@ computeParams func pc =
         do name <- getLocalName (Reg i)
            return (checkName name, i+1)
 
-paramsForExecEnv ::
-  ExecEnv {- ^ execution environment -} ->
-  Int     {- ^ program counter       -} ->
-  HarnessParams
-paramsForExecEnv env pc =
-  case funValueCode (execFunction env) of
+paramsForFunCode :: FunCode -> Int -> HarnessParams
+paramsForFunCode code pc =
+  case code of
     LuaOpCodes func -> computeParams func pc
     CCode {}        -> HarnessParams { harnessLocals = [], harnessUpvals = [] }
 
-execEnvForStatement ::
+
+
+data CompiledStatment = CompiledStatment
+  { csFunc    :: Function
+  , csParams  :: HarnessParams
+  }
+
+execEnvForCompiledStatment ::
   IORef Value ->
-  ExecEnv {- ^ parent context         -} ->
-  Int     {- ^ parent program counter -} ->
-  String  {- ^ statement              -} ->
+  ExecEnv         {- ^ parent context             -} ->
+  CompiledStatment                                   ->
   IO ExecEnv
-execEnvForStatement globals env pc statement =
-  do let params = paramsForExecEnv env pc
-     func       <- harnessFunction params statement
-     apiCallRef <- newIORef NoApiCall
+execEnvForCompiledStatment globals env stat =
+  do apiCallRef <- newIORef NoApiCall
      now        <- Clock.getTime Clock.ProcessCPUTime
-     stack      <- prepareStack params (execStack env) func
+     stack      <- prepareStack stat (execStack env)
      return env
        { execStack    = stack
        , execUpvals   = Vector.snoc (execUpvals env) globals
-       , execFunction = luaFunction noFun func
+       , execFunction = luaFunction noFun (csFunc stat)
        , execClosure  = Nil -- used for debug API
        , execApiCall  = apiCallRef
        , execCreateTime = now
        , execChildTime  = 0
        }
 
+-- | Prepare a statement for execution at the specific program location.
+-- XXX: Handle parser exeception
+compileStatementForLocation ::
+  FunCode  {- ^ Context function -}                   ->
+  Int      {- ^ Program counter (used only in Lua) -} ->
+  String   {- ^ Statement text  -}                    ->
+  IO CompiledStatment
+compileStatementForLocation fun pc statText =
+  do let ps = paramsForFunCode fun pc
+     func <- harnessFunction ps statText
+     return CompiledStatment { csFunc = func, csParams = ps }
+
 prepareStack ::
-  HarnessParams             {- ^ harness parameters -} ->
+  CompiledStatment                                     ->
   SizedVector (IORef Value) {- ^ parent's stack     -} ->
-  Function                  {- ^ dynamic function   -} ->
   IO (SizedVector (IORef Value))
-prepareStack params parentStack func =
+prepareStack stat parentStack =
   do stack <- SV.new
 
-     let visible = catMaybes (zipWith (<$) [0..] (harnessLocals params))
+     let locals  = harnessLocals (csParams stat)
+         visible = catMaybes (zipWith (<$) [0..] locals)
      traverse_ (SV.push stack <=< SV.get parentStack) visible
 
-     let extraSpace = funcMaxStackSize func - length visible
+     let extraSpace = funcMaxStackSize (csFunc stat) - length visible
      replicateM_ extraSpace (SV.push stack =<< newIORef Nil)
 
      return stack
 
-executeStatementOnVM :: VM -> NextStep -> String -> ([Value] -> IO ()) -> IO ()
-executeStatementOnVM vm next statement k =
+executeCompiledStatment ::
+  VM -> CompiledStatment -> ([Value] -> NextStep) -> IO ()
+executeCompiledStatment vm cs resume =
   do th      <- readRef (vmCurThread vm)
      globRef <- newIORef (Table (machGlobals (vmMachineEnv vm)))
-     env     <- execEnvForStatement
-                  globRef
-                  (stExecEnv th)
-                  (stPC th)
-                  statement
-     -- XXX: Handle parser exeception
-     -- XXX: Restore pause on exec logic
-     let resume res = PrimStep (next <$ liftIO (k res))
-         recover e  = resume [e]
+     env     <- execEnvForCompiledStatment globRef (stExecEnv th) cs
+
+     let recover e  = resume [e]
          frame = CallFrame (stPC th) (stExecEnv th) (Just recover) resume
      writeRef (vmCurThread vm)
-         th { stExecEnv = env
+         th { stExecEnv  = env
             , stHandlers = DefaultHandler : stHandlers th
-            , stStack   = Stack.push frame (stStack th)
+            , stStack    = Stack.push frame (stStack th)
             }
+
+executeStatementOnVM :: VM -> String -> ([Value] -> NextStep) -> IO ()
+executeStatementOnVM vm statement resume =
+  do th <- readRef (vmCurThread vm)
+     let fun = funValueCode (execFunction (stExecEnv th))
+     cs  <- compileStatementForLocation fun (stPC th) statement
+     executeCompiledStatment vm cs resume
+
 
 
 

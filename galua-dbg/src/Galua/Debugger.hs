@@ -32,6 +32,7 @@ module Galua.Debugger
   , setPathValue
 
   , FunVisName(..)
+  , BreakCondition(..)
 
   , ExecEnvId(..)
   , exportExecEnvId
@@ -148,7 +149,11 @@ data Debugger = Debugger
 
   , dbgStateVM   :: !(IORef VMState)                -- ^ The interpreter state
 
-  , dbgBreaks    :: !(IORef (Set (Int,FunId)))      -- ^ Static break points
+  , dbgBreaks    :: !(IORef (Map (Int,FunId) (Maybe BreakCondition)))
+    -- ^ Static break points.  The key of the map is the break point,
+    -- the value is an optional condition.  The breakpoint will only
+    -- be active if the condition is true.
+
   , dbgBreakOnError :: !(IORef Bool)
     -- ^ Should we stop automatically, when we encounter an error.
 
@@ -167,14 +172,25 @@ data Debugger = Debugger
   , dbgDeclaredTypes :: !(IORef GlobalTypeMap)
   }
 
-
 type SpecType = Spec.ValDecl Spec.Parsed
 type SpecDecl = Spec.Decl Spec.Parsed
+
+
+data EvalCondMode = NotEvaluatingCondition
+                  | EvaluatingConditionFor (Int,FunId)
+                  | EvaluatedConditionFor (Int,FunId) Bool
 
 data IdleReason = Ready
                 | ReachedBreakPoint
                 | ThrowingError Value
                 | Executing
+
+data BreakCondition = BreakCondition
+  { brkCond :: CompiledStatment
+    -- ^ Use this to evaluate the condition
+  , brkText :: Text
+    -- ^ Use this to display the condition
+  }
 
 
 --------------------------------------------------------------------------------
@@ -669,7 +685,7 @@ lexSourceFile chunkId srcName bytes = Source { srcName, srcLines, srcNames }
 
 -- | Keep track of the source code for loaded modules.
 addSourceFile :: IORef CommandLineBreakPoints ->
-                 IORef (Set (Int,FunId)) ->
+                 IORef (Map (Int,FunId) (Maybe BreakCondition)) ->
                  IORef Chunks ->
                  Maybe String -> ByteString -> Int -> Function -> IO ()
 addSourceFile brks breakRef sources mbName bytes cid fun =
@@ -688,9 +704,11 @@ addSourceFile brks breakRef sources mbName bytes cid fun =
        Just c  ->
          do let lineInfo = chunkLineInfo c
                 newBrk   = catMaybes [ findClosest lineInfo ln | ln <- todo ]
-            modifyIORef' breakRef $ Set.union $ Set.fromList newBrk
+            modifyIORef' breakRef $ \old -> foldr addBrk old newBrk
 
   where
+  addBrk b mp = Map.insertWith (\_ y -> y) b Nothing mp
+
   -- Line 0 is special cased to stop on the first instruction of a chunk.
   findClosest _ 0 = Just (0, FunId [cid])
 
@@ -729,7 +747,7 @@ newEmptyDebugger threadVar opts =
      dbgSources <- newIORef chunks
      dbgWatches <- newIORef watchListEmpty
      dbgBrkAddOnLoad <- newIORef (optBreakPoints opts)
-     dbgBreaks       <- newIORef Set.empty
+     dbgBreaks       <- newIORef Map.empty
 
      let query "port" = return (Number 8000)
          query _      = return Nil
@@ -773,39 +791,45 @@ newEmptyDebugger threadVar opts =
 
 
 
+data BreakResult = Break | NoBreak (Maybe NextStep)
+
 
 -- | Check for a break point or interruption.
 -- Returns 'True' if we should stop.
-checkBreak :: Debugger -> VM -> NextStep -> IO Bool
-checkBreak d@Debugger { dbgBreaks, dbgBreakOnError } vm next =
-  mOr [ checkForErr, checkStaticBreak ]
+checkBreak :: Debugger -> VM -> NextStep -> IO BreakResult
+checkBreak d@Debugger { dbgStateVM, dbgBreaks, dbgBreakOnError } vm next =
+  do breakOnErr <- readIORef dbgBreakOnError
+     if breakOnErr
+       then case next of
+              ThrowError e -> do setIdleReason d (ThrowingError e)
+                                 return Break
+              _            -> checkStaticBreak
+       else checkStaticBreak
+
   where
-  mOr opts =
-    case opts of
-      [] -> return False
-      m : ms -> do mb <- m
-                   if mb then return True else mOr ms
-
-  checkForErr =
-    do breakOnErr <- readIORef dbgBreakOnError
-       if breakOnErr
-          then case next of
-                 ThrowError e -> do setIdleReason d (ThrowingError e)
-                                    return True
-                 _            -> return False
-          else return False
-
   checkStaticBreak =
     do th <- readRef (vmCurThread vm)
-       case funValueName (execFunction (stExecEnv th)) of
-         LuaFID fid ->
+       case (funValueName (execFunction (stExecEnv th)), next) of
+         (LuaFID fid, Goto pc) ->
            do breaks <- readIORef dbgBreaks
-              case next of
-                Goto pc | (pc, fid) `Set.member` breaks ->
-                  do setIdleReason d ReachedBreakPoint
-                     return True
-                _  -> return False
-         _ -> return False
+              let loc = (pc,fid)
+              case Map.lookup (pc, fid) breaks of
+                Just mbCond ->
+                  case mbCond of
+                    Nothing -> do setIdleReason d ReachedBreakPoint
+                                  return Break
+                    Just c ->
+                      do executeCompiledStatment vm (brkCond c)
+                          $ \vs ->
+                            let stop = valueBool (trimResult1 vs)
+                            in if stop
+                                 then Interrupt next
+                                 else next
+                         let next' = Goto 0
+                         writeIORef dbgStateVM (Running vm next')
+                         return (NoBreak (Just next'))
+                _ -> return (NoBreak Nothing)
+         _ -> return (NoBreak Nothing)
 
 setIdleReason :: Debugger -> IdleReason -> IO ()
 setIdleReason Debugger { .. } x = writeIORef dbgIdleReason x
@@ -878,9 +902,8 @@ executeStatement dbg statement =
   whenIdle dbg $
     do whenRunning dbg () $ \vm next ->
          do recordConsoleInput statement
-            let next' = Interrupt next
-            executeStatementOnVM vm next' (Text.unpack statement)
-              recordConsoleValues
+            executeStatementOnVM vm (Text.unpack statement) $ \vs ->
+              PrimStep (Interrupt next <$ liftIO (recordConsoleValues vs))
             writeIORef (dbgStateVM dbg) (Running vm (Goto 0))
        runNonBlock dbg
 
@@ -895,17 +918,45 @@ poll dbg _ secs =
 --------------------------------------------------------------------------------
 
 
-addBreakPoint :: Debugger -> (Int,FunId) -> IO ()
-addBreakPoint dbg@Debugger { dbgBreaks } loc =
-  whenStable dbg True $ modifyIORef' dbgBreaks (Set.insert loc)
+addBreakPoint ::
+  Debugger -> (Int,FunId) -> Maybe Text -> IO (Maybe BreakCondition)
+addBreakPoint dbg@Debugger { dbgBreaks, dbgSources } loc txtCon =
+  whenStable dbg True $
+    do mb <- case txtCon of
+               Nothing  -> return Nothing
+               Just txt -> Just <$> prepareCondition dbg loc txt
+       modifyIORef dbgBreaks (Map.insert loc mb)
+       return mb
+
+prepareCondition :: Debugger -> (Int,FunId) -> Text -> IO BreakCondition
+prepareCondition dbg (pc,fid) expr =
+  do fun  <- lookupFID dbg fid
+     let stat = "return " ++ Text.unpack expr
+     cp   <- compileStatementForLocation (LuaOpCodes fun) pc stat
+     return BreakCondition { brkCond = cp, brkText = expr }
+
+lookupFID :: Debugger -> FunId -> IO Function
+lookupFID dbg fid =
+  case funIdList fid of
+    [] -> fail "Invalid chunk"
+    r : rs ->
+      do chunks <- readIORef (dbgSources dbg)
+         case (go rs . chunkFunction) =<< Map.lookup r (topLevelChunks chunks) of
+           Nothing  -> fail "Invalid chunk."
+           Just fun -> return fun
+  where
+  go path fun =
+    case path of
+      []     -> return fun
+      x : xs -> go xs =<< (funcProtos fun Vector.!? x)
 
 removeBreakPoint :: Debugger -> (Int,FunId) -> IO ()
 removeBreakPoint dbg@Debugger { dbgBreaks } loc =
-  whenStable dbg True $ modifyIORef' dbgBreaks (Set.delete loc)
+  whenStable dbg True $ modifyIORef' dbgBreaks (Map.delete loc)
 
 clearBreakPoints :: Debugger -> IO ()
 clearBreakPoints dbg@Debugger { dbgBreaks } =
-  whenStable dbg True $ writeIORef dbgBreaks Set.empty
+  whenStable dbg True $ writeIORef dbgBreaks Map.empty
 
 doStartExec :: Debugger -> VM -> NextStep -> StepMode -> IO VMState
 doStartExec dbg vm next newMode =
@@ -1075,47 +1126,47 @@ doStepMode dbg vm next mode firstStep =
   breakImmune ThrowError {} = False
   breakImmune _             = True
 
-  goOn vm1 mode' =
-    do let Debugger { dbgNames } = dbg
-       st <- runAllocWith dbgNames (oneStep vm1 next)
-       case st of
-         Running vm' next' -> doStepMode dbg vm' next' mode' False
-
-         RunningInC vm' ->
-            do let luaTMVar = machLuaServer (vmMachineEnv vm')
-               res <- atomically $ Left  <$> waitForCommandSTM dbg
-                               <|> Right <$> takeTMVar luaTMVar
-               case res of
-                 Left m ->
-                   do command <- m
-                      mbMode <- handleCommand dbg False command
-                      case mbMode of
-                        Nothing      -> goOn vm' mode'
-                        Just newMode -> doStartExec dbg vm' WaitForC newMode
-
-                 Right cResult ->
-                   do let next' = runMach vm' (handleCCallState cResult)
-                      doStepMode dbg vm' next' mode' False
-
-         _                 -> return st
 
   proceed mode' =
     do let Debugger { dbgNames } = dbg
        breaked <- if firstStep || breakImmune next
-                    then return False
+                    then return (NoBreak Nothing)
                     else checkBreak dbg vm next
 
+       case breaked of
+         Break -> done
+         NoBreak mbNext ->
+          do mb <- peekCmd dbg
+             let next' = fromMaybe next mbNext
+             case mb of
+               Nothing      -> doOneStep dbg vm next' mode
+               Just command -> uiCommand dbg vm next' mode command
 
-       if breaked
-         then done
-         else do mb <- peekCmd dbg
-                 case mb of
-                   Nothing -> goOn vm mode'
-                   Just command ->
-                     do mbMode <- handleCommand dbg False command
-                        case mbMode of
-                          Nothing      -> goOn vm mode'
-                          Just newMode -> doStartExec dbg vm next newMode
+
+doOneStep dbg vm next mode =
+  do let Debugger { dbgNames } = dbg
+     st <- runAllocWith dbgNames (oneStep vm next)
+     case st of
+       Running vm' next' -> doStepMode dbg vm' next' mode False
+
+       RunningInC vm' ->
+          do let luaTMVar = machLuaServer (vmMachineEnv vm')
+             res <- atomically $ Left  <$> waitForCommandSTM dbg
+                             <|> Right <$> takeTMVar luaTMVar
+             case res of
+               Left m -> uiCommand dbg vm' WaitForC mode =<< m
+               Right cResult ->
+                 do let next' = runMach vm' (handleCCallState cResult)
+                    doStepMode dbg vm' next' mode False
+
+       _  -> return st
+
+
+uiCommand dbg vm next mode command =
+  do mbNewMode <- handleCommand dbg False command
+     case mbNewMode of
+       Nothing      -> doOneStep dbg vm next mode
+       Just newMode -> doStartExec dbg vm next newMode
 
 
 
