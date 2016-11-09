@@ -1021,6 +1021,7 @@ doStepMode :: Debugger -> VM -> NextStep -> StepMode -> IO VMState
 doStepMode dbg vm next mode =
   do vmstate <- runAllocWith (dbgNames dbg) (oneStep vm next)
      let mode' = nextMode next mode
+     putStrLn $ unwords [ "nextMode",dumpNextStep next, show mode, "=", show mode' ]
      case vmstate of
        RunningInC vm' ->
           do let luaTMVar = machLuaServer (vmMachineEnv vm')
@@ -1076,7 +1077,7 @@ nextMode _          StepIntoOp = StepIntoOp
 nextMode Goto    {} StepOverOp = Stop
 nextMode ApiStart{} StepOverOp = StepOut StepOverOp
 nextMode FunCall {} StepOverOp = StepOut StepOverOp
-nextMode _          StepOverOp = StepIntoOp
+nextMode _          StepOverOp = StepOverOp
 
 nextMode FunCall  {} (StepOut m) = StepOut (StepOut m)
 nextMode ApiStart {} (StepOut m) = StepOut (StepOut m)
