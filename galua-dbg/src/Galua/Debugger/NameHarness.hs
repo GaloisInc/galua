@@ -177,28 +177,26 @@ prepareStack stat parentStack =
      return stack
 
 executeCompiledStatment ::
-  VM -> NextStep -> CompiledStatment -> ([Value] -> IO ()) -> IO ()
-executeCompiledStatment vm next cs k =
+  VM -> CompiledStatment -> ([Value] -> NextStep) -> IO ()
+executeCompiledStatment vm cs resume =
   do th      <- readRef (vmCurThread vm)
      globRef <- newIORef (Table (machGlobals (vmMachineEnv vm)))
      env     <- execEnvForCompiledStatment globRef (stExecEnv th) cs
 
-     -- XXX: Restore pause on exec logic
-     let resume res = PrimStep (next <$ liftIO (k res))
-         recover e  = resume [e]
+     let recover e  = resume [e]
          frame = CallFrame (stPC th) (stExecEnv th) (Just recover) resume
      writeRef (vmCurThread vm)
-         th { stExecEnv = env
+         th { stExecEnv  = env
             , stHandlers = DefaultHandler : stHandlers th
-            , stStack   = Stack.push frame (stStack th)
+            , stStack    = Stack.push frame (stStack th)
             }
 
-executeStatementOnVM :: VM -> NextStep -> String -> ([Value] -> IO ()) -> IO ()
-executeStatementOnVM vm next statement k =
+executeStatementOnVM :: VM -> String -> ([Value] -> NextStep) -> IO ()
+executeStatementOnVM vm statement resume =
   do th <- readRef (vmCurThread vm)
      let fun = funValueCode (execFunction (stExecEnv th))
      cs  <- compileStatementForLocation fun (stPC th) statement
-     executeCompiledStatment vm next cs k
+     executeCompiledStatment vm cs resume
 
 
 

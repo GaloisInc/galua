@@ -341,16 +341,17 @@ exportBreaks :: Debugger -> IO JS.Value
 exportBreaks Debugger { dbgBreaks, dbgSources } =
   do funs <- readIORef dbgSources
      brks <- readIORef dbgBreaks
-     return $ toJSON $ map (exportBreakLoc funs) $ Set.toList brks
+     return $ toJSON $ map (exportBreakLoc funs) $ Map.toList brks
 
-exportBreakLoc :: Chunks -> (Int,FunId) -> JS.Value
-exportBreakLoc funs (op,fid) =
+exportBreakLoc :: Chunks -> ((Int,FunId),Maybe BreakCondition) -> JS.Value
+exportBreakLoc funs ((op,fid),c) =
   JS.object [ "name" .= getFunctionName funs fid
             , "file" .= fmap unpackUtf8 (funcSource =<< fun)
             , "op"   .= op
             , "line" .= ((`lookupLineNumber` op) =<< fun)
             , "id"   .= exportBreakLocStr (op,fid)
             , "fid"  .= exportFID fid
+            , "cond" .= fmap brkText c
             ]
   where
   fun = fmap snd (lookupFun funs fid)

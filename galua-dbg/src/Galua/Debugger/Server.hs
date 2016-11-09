@@ -143,6 +143,7 @@ apiRoutes st =
      , ("/pause",        ioCmd pause)
 
      , ("/addBreakPoint",    cmd snapAddBreakPoint)
+     , ("/addCondition",     cmd snapAddCondition)
      , ("/removeBreakPoint", cmd snapRemoveBreakPoint)
      , ("/clearBreakPoints", ioCmd clearBreakPoints)
 
@@ -263,9 +264,19 @@ snapAddBreakPoint st =
   do txt <- textParam "loc"
      case importBreakLoc (Text.unpack txt) of
        Nothing  -> badInput "Invalid location."
-       Just loc -> do liftIO (addBreakPoint st loc)
+       Just loc -> do _ <- liftIO (addBreakPoint st loc Nothing)
                       funs <- liftIO (readIORef (dbgSources st))
-                      sendJSON (exportBreakLoc funs loc)
+                      sendJSON (exportBreakLoc funs (loc,Nothing))
+
+snapAddCondition :: Debugger -> Snap ()
+snapAddCondition st =
+  do txtLoc <- textParam "loc"
+     txtCon <- textParam "cond"
+     case importBreakLoc (Text.unpack txtLoc) of
+       Nothing  -> badInput "Invalid location."
+       Just loc -> do cnd <- liftIO (addBreakPoint st loc (Just txtCon))
+                      funs <- liftIO (readIORef (dbgSources st))
+                      sendJSON (exportBreakLoc funs (loc,cnd))
 
 snapRemoveBreakPoint :: Debugger -> Snap ()
 snapRemoveBreakPoint st =
