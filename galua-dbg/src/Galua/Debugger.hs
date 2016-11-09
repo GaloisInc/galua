@@ -967,13 +967,41 @@ doStartExec dbg vm next newMode =
 
 data StepMode
   = Run
+    -- ^ Evaluate until something causes us to stop.
+
   | StepIntoOp
+    -- ^ Evaluate one op-code.
+    -- If the op-code is a function call, stop at the beginning of the
+    -- function.
+
   | StepOverOp
+    -- ^ Evaluate one op-code.
+    -- If the op-code is a function call, do not stop until the function
+    -- returns, or something else causes us to stop.
+
   | Stop
+    -- ^ Evaluate until the closest safe place to stop.
+
   | StepOut StepMode
+    -- ^ Evaluate until we return from the current function.
+    -- After that, procdeed with the given mode.
+
+
   | StepOverLine Int
+    -- ^ Evaluate while we are on this line number.
+    -- If we encoutner functions, do not stop until they return
+    -- or some other condition caused us to stop.
+
   | StepIntoLine Int
+    -- ^ Evaluate while we are on this line number.
+    -- ^ If we encoutner a function-call, then we stop at the beginning
+    -- of the called function.
+
   | StepOutYield StepMode
+    -- ^ Evaluate until the current thread yeilds (or something else
+    -- causes us to stop).
+    -- After that, proceed with the given mode.
+
   deriving Show
 
 runDebugger :: Debugger -> IO ()
