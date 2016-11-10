@@ -923,16 +923,18 @@ addBreakPoint dbg@Debugger { dbgBreaks, dbgSources } loc txtCon =
   whenStable dbg True $
     do mb <- case txtCon of
                Nothing  -> return Nothing
-               Just txt -> Just <$> prepareCondition dbg loc txt
+               Just txt -> prepareCondition dbg loc txt
        modifyIORef dbgBreaks (Map.insert loc mb)
        return mb
 
-prepareCondition :: Debugger -> (Int,FunId) -> Text -> IO BreakCondition
+prepareCondition :: Debugger -> (Int,FunId) -> Text -> IO (Maybe BreakCondition)
 prepareCondition dbg (pc,fid) expr =
   do fun  <- lookupFID dbg fid
      let stat = "return " ++ Text.unpack expr
-     cp   <- compileStatementForLocation (LuaOpCodes fun) pc stat
-     return BreakCondition { brkCond = cp, brkText = expr }
+     res <- try (compileStatementForLocation (LuaOpCodes fun) pc stat)
+     return $! case res of
+       Left ParseError{} -> Nothing
+       Right cp -> Just BreakCondition { brkCond = cp, brkText = expr }
 
 lookupFID :: Debugger -> FunId -> IO Function
 lookupFID dbg fid =

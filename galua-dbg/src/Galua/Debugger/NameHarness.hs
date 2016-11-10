@@ -3,6 +3,7 @@ module Galua.Debugger.NameHarness
   , compileStatementForLocation
   , executeCompiledStatment
   , executeStatementOnVM
+  , ParseError(..)
   )
   where
 
@@ -161,6 +162,7 @@ compileStatementForLocation fun pc statText =
      func <- harnessFunction ps statText
      return CompiledStatment { csFunc = func, csParams = ps }
 
+
 prepareStack ::
   CompiledStatment                                     ->
   SizedVector (IORef Value) {- ^ parent's stack     -} ->
@@ -177,29 +179,30 @@ prepareStack stat parentStack =
 
      return stack
 
+
 executeCompiledStatment ::
   VM -> CompiledStatment -> ([Value] -> NextStep) -> IO NextStep
 executeCompiledStatment vm cs resume =
   do th      <- readRef (vmCurThread vm)
      globRef <- newIORef (Table (machGlobals (vmMachineEnv vm)))
-     res     <- try (execEnvForCompiledStatment globRef (stExecEnv th) cs)
-     case res of
-       Left (ParseError e) ->
-          do b <- fromByteString (B8.pack e)
-             return (resume [String b])
-       Right env ->
-          do let recover e  = resume [e]
-                 frame = CallFrame (stPC th) (stExecEnv th) (Just recover) resume
-             writeRef (vmCurThread vm)
-                 th { stExecEnv  = env
-                    , stHandlers = DefaultHandler : stHandlers th
-                    , stStack    = Stack.push frame (stStack th)
-                    }
-             return (Goto 0)
+     env     <- execEnvForCompiledStatment globRef (stExecEnv th) cs
+     let recover e  = resume [e]
+         frame = CallFrame (stPC th) (stExecEnv th) (Just recover) resume
+     writeRef (vmCurThread vm)
+         th { stExecEnv  = env
+            , stHandlers = DefaultHandler : stHandlers th
+            , stStack    = Stack.push frame (stStack th)
+            }
+     return (Goto 0)
+
 
 executeStatementOnVM :: VM -> String -> ([Value] -> NextStep) -> IO NextStep
 executeStatementOnVM vm statement resume =
   do th <- readRef (vmCurThread vm)
      let fun = funValueCode (execFunction (stExecEnv th))
-     cs  <- compileStatementForLocation fun (stPC th) statement
-     executeCompiledStatment vm cs resume
+     res <- try (compileStatementForLocation fun (stPC th) statement)
+     case res of
+       Left (ParseError e) ->
+          do b <- fromByteString (B8.pack e)
+             return (resume [String b])
+       Right cs -> executeCompiledStatment vm cs resume
