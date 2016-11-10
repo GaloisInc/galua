@@ -79,8 +79,6 @@ import           Data.IntMap (IntMap)
 import qualified Data.IntMap as IntMap
 import           Data.Set ( Set )
 import qualified Data.Set as Set
-import           Data.Sequence (Seq)
-import qualified Data.Sequence as Seq
 import           Data.Word(Word64)
 import           Data.Text(Text)
 import qualified Data.Text as Text
@@ -100,7 +98,7 @@ import           Data.IORef(IORef,readIORef,writeIORef,
                             modifyIORef,modifyIORef',newIORef,
                             atomicModifyIORef')
 
-import           Control.Concurrent.Async (cancel, waitCatch, Async)
+import           Control.Concurrent.Async (cancel, Async)
 import            Control.Concurrent
                     ( MVar, newEmptyMVar, putMVar, takeMVar, forkIO )
 import           Control.Applicative ((<|>))
@@ -175,10 +173,6 @@ data Debugger = Debugger
 type SpecType = Spec.ValDecl Spec.Parsed
 type SpecDecl = Spec.Decl Spec.Parsed
 
-
-data EvalCondMode = NotEvaluatingCondition
-                  | EvaluatingConditionFor (Int,FunId)
-                  | EvaluatedConditionFor (Int,FunId) Bool
 
 data IdleReason = Ready
                 | ReachedBreakPoint
@@ -569,7 +563,7 @@ makeGlobalTypeMap = mk . mapMaybe decl
   jn (GlobalType xs) (GlobalType ys) = GlobalType (xs ++ ys)
   jn (GlobalNamespace (GTM x)) (GlobalNamespace (GTM y)) =
       GlobalNamespace (GTM (Map.unionWith jn x y))
-  jn x y = x -- XXX: shouldn't happen
+  jn x _ = x -- XXX: shouldn't happen
 
   mk = GTM . Map.fromListWith jn
 
@@ -790,46 +784,6 @@ newEmptyDebugger threadVar opts =
 
 
 
-
-data BreakResult = Break | NoBreak (Maybe NextStep)
-
-
--- | Check for a break point or interruption.
--- Returns 'True' if we should stop.
-checkBreak :: Debugger -> VM -> NextStep -> IO BreakResult
-checkBreak d@Debugger { dbgStateVM, dbgBreaks, dbgBreakOnError } vm next =
-  do breakOnErr <- readIORef dbgBreakOnError
-     if breakOnErr
-       then case next of
-              ThrowError e -> do setIdleReason d (ThrowingError e)
-                                 return Break
-              _            -> checkStaticBreak
-       else checkStaticBreak
-
-  where
-  checkStaticBreak =
-    do th <- readRef (vmCurThread vm)
-       case (funValueName (execFunction (stExecEnv th)), next) of
-         (LuaFID fid, Goto pc) ->
-           do breaks <- readIORef dbgBreaks
-              let loc = (pc,fid)
-              case Map.lookup (pc, fid) breaks of
-                Just mbCond ->
-                  case mbCond of
-                    Nothing -> do setIdleReason d ReachedBreakPoint
-                                  return Break
-                    Just c ->
-                      do next' <- executeCompiledStatment vm (brkCond c)
-                          $ \vs ->
-                            let stop = valueBool (trimResult1 vs)
-                            in if stop
-                                 then Interrupt next
-                                 else next
-                         writeIORef dbgStateVM (Running vm next')
-                         return (NoBreak (Just next'))
-                _ -> return (NoBreak Nothing)
-         _ -> return (NoBreak Nothing)
-
 setIdleReason :: Debugger -> IdleReason -> IO ()
 setIdleReason Debugger { .. } x = writeIORef dbgIdleReason x
 
@@ -852,9 +806,6 @@ setPathValue dbg vid newVal =
 -- | Interrupt an executing command.
 pause :: Debugger -> IO ()
 pause dbg = startExec dbg True Stop
-
-pauseNonBlock :: Debugger -> IO ()
-pauseNonBlock dbg = startExec dbg False Stop
 
 -- | Run until something causes us to stop.
 run :: Debugger -> IO ()
@@ -919,7 +870,7 @@ poll dbg _ secs =
 
 addBreakPoint ::
   Debugger -> (Int,FunId) -> Maybe Text -> IO (Maybe BreakCondition)
-addBreakPoint dbg@Debugger { dbgBreaks, dbgSources } loc txtCon =
+addBreakPoint dbg@Debugger { dbgBreaks } loc txtCon =
   whenStable dbg True $
     do mb <- case txtCon of
                Nothing  -> return Nothing
@@ -1126,13 +1077,13 @@ checkBreakPoint dbg mode vm nextStep k =
                   Nothing -> do setIdleReason dbg ReachedBreakPoint
                                 return (Running vm nextStep)
                   Just c ->
-                    do executeCompiledStatment vm (brkCond c)
-                        $ \vs ->
-                          let stop = valueBool (trimResult1 vs)
-                          in if stop
-                               then Interrupt nextStep
-                               else nextStep
-                       doStepMode dbg vm (Goto 0) (StepOut mode)
+                    do nextStep' <- executeCompiledStatment vm (brkCond c)
+                                  $ \vs ->
+                                    let stop = valueBool (trimResult1 vs)
+                                    in if stop
+                                         then Interrupt nextStep
+                                         else nextStep
+                       doStepMode dbg vm nextStep' (StepOut mode)
               _ -> k
        _ -> k
 
