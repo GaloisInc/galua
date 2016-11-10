@@ -1002,7 +1002,17 @@ handleCommand dbg isIdle cmd =
                            return Nothing
     StartExec mode client ->
       do modifyIORef (dbgClients dbg) (client :)
-         return (Just mode)
+         case mode of
+           StepOverLine n | n < 0 -> setLine StepOverLine
+           StepIntoLine n | n < 0 -> setLine StepIntoLine
+           _ -> return (Just mode)
+
+  where
+  setLine f = do st <- readIORef (dbgStateVM dbg)
+                 case st of
+                   Running vm _ -> do l <- getCurrentLineNumber vm
+                                      return (Just (f l))
+                   _ -> return (Just (f (-42)))
 
 finishStep :: Debugger -> IO ()
 finishStep dbg =
@@ -1020,7 +1030,7 @@ getCurrentLineNumber vm =
 doStepMode :: Debugger -> VM -> NextStep -> StepMode -> IO VMState
 doStepMode dbg vm next mode =
   do vmstate <- runAllocWith (dbgNames dbg) (oneStep vm next)
-     let mode' = nextMode next mode
+     mode' <- nextMode vm next mode
      putStrLn $ unwords [ "nextMode",dumpNextStep next, show mode, "=", show mode' ]
      case vmstate of
        RunningInC vm' ->
@@ -1037,23 +1047,38 @@ doStepMode dbg vm next mode =
                  do let next' = runMach vm' (handleCCallState cResult)
                     doStepMode dbg vm' next' mode'
 
-       Running vm' next'
-         | breakImmune next -> doStepMode dbg vm' next' mode'
-         | mode' /= Stop    ->
-             do mb <- peekCmd dbg
-                case mb of
-                  Nothing      -> doStepMode dbg vm' next' mode'
-                  Just command ->
-                    do mbNewMode <- handleCommand dbg False command
-                       let mode'' = fromMaybe mode' mbNewMode
-
-                       -- external stop directive and we're already at a safe point
-                       if mode'' == Stop then
-                          return vmstate
-                       else
-                          doStepMode dbg vm' next' mode''
+       Running vm' next' ->
+        checkStopError dbg vm' next' $
+          if breakImmune next
+            then doStepMode dbg vm' next' mode'
+            else do mb <- peekCmd dbg
+                    case mb of
+                      Nothing      -> doStepMode dbg vm' next' mode'
+                      Just command ->
+                        do mbNewMode <- handleCommand dbg False command
+                           let mode'' = fromMaybe mode' mbNewMode
+                           -- external stop directive and we're already
+                           -- at a safe point
+                           if mode'' == Stop then
+                              return vmstate
+                           else
+                              doStepMode dbg vm' next' mode''
 
        _ -> return vmstate
+
+
+
+checkStopError :: Debugger -> VM -> NextStep -> IO VMState -> IO VMState
+checkStopError dbg vm next k =
+  case next of
+    ThrowError e ->
+      do stopOnErr <- readIORef (dbgBreakOnError dbg)
+         if stopOnErr
+            then do setIdleReason dbg (ThrowingError e)
+                    return (Running vm next)
+            else k
+    _ -> k
+
 
 -- | After executing this "step" we may pause execution.
 breakImmune :: NextStep -> Bool
@@ -1064,28 +1089,46 @@ breakImmune ThrowError {} = False
 breakImmune _             = True
 
 
-nextMode :: NextStep -> StepMode -> StepMode
+nextMode :: VM -> NextStep -> StepMode -> IO StepMode
 
-nextMode _ Stop = Stop
+nextMode _ _ Stop = return Stop
 
-nextMode Interrupt{} _ = Stop
+nextMode _ Interrupt{} _ = return Stop
 
-nextMode Goto    {} StepIntoOp = Stop
-nextMode ApiStart{} StepIntoOp = Stop
-nextMode _          StepIntoOp = StepIntoOp
 
-nextMode Goto    {} StepOverOp = Stop
-nextMode ApiStart{} StepOverOp = StepOut StepOverOp
-nextMode FunCall {} StepOverOp = StepOut StepOverOp
-nextMode _          StepOverOp = StepOverOp
+nextMode _ Goto    {} StepIntoOp = return Stop
+nextMode _ ApiStart{} StepIntoOp = return Stop
+nextMode _ _          StepIntoOp = return StepIntoOp
 
-nextMode FunCall  {} (StepOut m) = StepOut (StepOut m)
-nextMode ApiStart {} (StepOut m) = StepOut (StepOut m)
-nextMode FunReturn{} (StepOut m) = m
-nextMode ApiEnd   {} (StepOut m) = m
-nextMode _           (StepOut m) = StepOut m
+nextMode _ Goto    {} StepOverOp = return Stop
+nextMode _ ApiStart{} StepOverOp = return (StepOut StepOverOp)
+nextMode _ FunCall {} StepOverOp = return (StepOut StepOverOp)
+nextMode _ _          StepOverOp = return StepOverOp
 
-nextMode _ _    = Run
+nextMode _ FunCall  {} (StepOut m) = return (StepOut (StepOut m))
+nextMode _ ApiStart {} (StepOut m) = return (StepOut (StepOut m))
+nextMode _ FunReturn{} (StepOut m) = return m
+nextMode _ ApiEnd   {} (StepOut m) = return m
+nextMode _ _           (StepOut m) = return (StepOut m)
+
+nextMode _ FunCall {}  (StepIntoLine _) = return Stop
+nextMode _ ApiStart {} (StepIntoLine _) = return Stop
+nextMode vm (Goto {}) (StepIntoLine n) =
+  do l <- getCurrentLineNumber vm
+     return (if n /= l then Stop else StepIntoLine l)
+nextMode _ _ (StepIntoLine n) = return (StepIntoLine n)
+
+nextMode _ FunCall {}  (StepOverLine n) = return (StepOut (StepOverLine n))
+nextMode _ ApiStart {} (StepOverLine n) = return (StepOut (StepOverLine n))
+nextMode vm (Goto {}) (StepOverLine n) =
+  do l <- getCurrentLineNumber vm
+     return (if n /= l then Stop else StepOverLine l)
+nextMode _ _ (StepOverLine n) = return (StepOverLine n)
+
+
+
+
+nextMode _ _ _ = return Run
 
 {-
   case (mode,next) of
