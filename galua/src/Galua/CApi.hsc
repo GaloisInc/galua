@@ -241,7 +241,7 @@ lua_pushboolean_hs l r b =
 
 foreign export ccall lua_pushstring_hs :: EntryPoint (CString -> Ptr CString -> IO CInt)
 
--- | [-0, +1, e]
+-- | [-0, +1, m]
 lua_pushstring_hs :: EntryPoint (CString -> Ptr CString -> IO CInt)
 lua_pushstring_hs l r ptr out =
   reentryIO "lua_pushstring" [cstringArg0 ptr] l r $ \args ->
@@ -258,7 +258,7 @@ lua_pushstring_hs l r ptr out =
 foreign export ccall lua_pushlstring_hs
   :: EntryPoint (CString -> CSize -> Ptr CString -> IO CInt)
 
--- | [-0, +1, e]
+-- | [-0, +1, m]
 lua_pushlstring_hs :: EntryPoint (CString -> CSize -> Ptr CString -> IO CInt)
 lua_pushlstring_hs l r ptr sz out =
   reentryIO "lua_pushlstring" [cstringArg (ptr, fromIntegral sz)] l r $ \args ->
@@ -750,9 +750,12 @@ lua_rawequal_hs l r ix1 ix2 out =
           (Just a, Just b) | a == b -> 1
           _                         -> 0
 
+------------------------------------------------------------------------
+
 foreign export ccall lua_compare_hs
   :: EntryPoint (CInt -> CInt -> CInt -> Ptr CInt -> IO CInt)
 
+-- [-0, +0, e]
 lua_compare_hs :: EntryPoint (CInt -> CInt -> CInt -> Ptr CInt -> IO CInt)
 lua_compare_hs l r ix1 ix2 op out =
   reentry "lua_compare" [cArg ix1, cArg ix2, cArg op] l r $ \args ->
@@ -771,8 +774,11 @@ lua_compare_hs l r ix1 ix2 op out =
        _ -> return 0
      liftIO (poke out ans)
 
+------------------------------------------------------------------------
+
 foreign export ccall lua_arith_hs :: EntryPoint (CInt -> IO CInt)
 
+-- [-(2|1), +1, e]
 lua_arith_hs :: EntryPoint (CInt -> IO CInt)
 lua_arith_hs l r opNum =
   reentry "lua_arith" [cArg opNum] l r $
@@ -893,7 +899,7 @@ lua_multret = (#const LUA_MULTRET)
 foreign export ccall lua_callk_hs
   :: EntryPoint (CInt -> CInt -> Lua_KContext -> Lua_KFunction -> IO CInt)
 
--- | [-0, +1, e]
+-- [-(nargs+1), +nresults, e]
 lua_callk_hs :: EntryPoint (CInt -> CInt -> Lua_KContext -> Lua_KFunction -> IO CInt)
 lua_callk_hs l r narg nresult ctx k =
   reentry "lua_callk" [cArg narg, cArg nresult, cArg ctx, cArg k] l r $ \args ->
@@ -1032,6 +1038,7 @@ lua_getglobal_hs l r cname out =
 
 foreign export ccall lua_concat_hs :: EntryPoint (CInt -> IO CInt)
 
+-- [-n, +1, e]
 lua_concat_hs :: EntryPoint (CInt -> IO CInt)
 lua_concat_hs l r n =
   reentry "lua_concat" [cArg n] l r $ \args ->
@@ -1039,9 +1046,12 @@ lua_concat_hs l r n =
      res <- opConcat xs
      push args res
 
+------------------------------------------------------------------------
+
 foreign export ccall lua_dump_hs ::
   EntryPoint (FunPtr () -> Ptr () -> CInt -> Ptr CInt -> IO CInt)
 
+-- [-0, +0, -]
 lua_dump_hs :: EntryPoint (FunPtr () -> Ptr () -> CInt -> Ptr CInt -> IO CInt)
 lua_dump_hs l r writer dat strip _out =
   reentry "lua_dump" [cArg writer, cArg dat, cArg strip] l r $ \_args ->
@@ -1604,6 +1614,8 @@ lua_topointer_hs l r ix out =
 type ApiLuaClose = EntryPoint (IO CInt)
 
 foreign export ccall lua_close_hs :: ApiLuaClose
+
+-- [-0, +0, -]
 lua_close_hs :: ApiLuaClose
 lua_close_hs l r = reentry "lua_close" [] l r $ \_args ->
   do cfg <- getsMachEnv machConfig

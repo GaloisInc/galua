@@ -819,13 +819,12 @@ checkBreak d@Debugger { dbgStateVM, dbgBreaks, dbgBreakOnError } vm next =
                     Nothing -> do setIdleReason d ReachedBreakPoint
                                   return Break
                     Just c ->
-                      do executeCompiledStatment vm (brkCond c)
+                      do next' <- executeCompiledStatment vm (brkCond c)
                           $ \vs ->
                             let stop = valueBool (trimResult1 vs)
                             in if stop
                                  then Interrupt next
                                  else next
-                         let next' = Goto 0
                          writeIORef dbgStateVM (Running vm next')
                          return (NoBreak (Just next'))
                 _ -> return (NoBreak Nothing)
@@ -902,9 +901,9 @@ executeStatement dbg statement =
   whenIdle dbg $
     do whenRunning dbg () $ \vm next ->
          do recordConsoleInput statement
-            executeStatementOnVM vm (Text.unpack statement) $ \vs ->
+            next' <- executeStatementOnVM vm (Text.unpack statement) $ \vs ->
               PrimStep (Interrupt next <$ liftIO (recordConsoleValues vs))
-            writeIORef (dbgStateVM dbg) (Running vm (Goto 0))
+            writeIORef (dbgStateVM dbg) (Running vm next')
        runNonBlock dbg
 
 poll :: Debugger -> Word64 -> Int {- ^ Timeout in seconds -} -> IO Word64

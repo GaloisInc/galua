@@ -8,7 +8,7 @@ module Galua.Debugger.NameHarness
 
 import           Control.Monad ((<=<), replicateM_)
 import           Control.Monad.IO.Class (liftIO)
-import           Control.Exception (Exception, throwIO)
+import           Control.Exception (Exception, try, throwIO)
 import qualified Data.ByteString.Lazy.Char8 as L8
 import qualified Data.ByteString.Char8 as B8
 import           Data.IORef (IORef, newIORef)
@@ -19,12 +19,13 @@ import           Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Vector as Vector
 import           Galua.FunValue (funValueCode, luaFunction, FunCode(..))
+import           Galua.LuaString (fromByteString)
 import           Galua.Reference (readRef, writeRef)
-import           Galua.Mach (dumpNextStep, HandlerType(DefaultHandler), MachineEnv(..), NextStep(PrimStep), StackFrame(CallFrame), Thread(..), VM(..), ApiCallStatus(NoApiCall), ExecEnv(..), parseLua)
+import           Galua.Mach (dumpNextStep, HandlerType(DefaultHandler), MachineEnv(..), NextStep(PrimStep, Goto), StackFrame(CallFrame), Thread(..), VM(..), ApiCallStatus(NoApiCall), ExecEnv(..), parseLua)
 import qualified Galua.Util.SizedVector as SV
 import           Galua.Util.SizedVector (SizedVector)
 import qualified Galua.Util.Stack as Stack
-import           Galua.Value (Value(Table,Nil), prettyValue)
+import           Galua.Value (Value(String,Table,Nil), prettyValue)
 import           Language.Lua.Bytecode
 import           Language.Lua.Bytecode.FunId (noFun)
 import           Language.Lua.Bytecode.Debug (lookupLocalName)
@@ -177,27 +178,28 @@ prepareStack stat parentStack =
      return stack
 
 executeCompiledStatment ::
-  VM -> CompiledStatment -> ([Value] -> NextStep) -> IO ()
+  VM -> CompiledStatment -> ([Value] -> NextStep) -> IO NextStep
 executeCompiledStatment vm cs resume =
   do th      <- readRef (vmCurThread vm)
      globRef <- newIORef (Table (machGlobals (vmMachineEnv vm)))
-     env     <- execEnvForCompiledStatment globRef (stExecEnv th) cs
+     res     <- try (execEnvForCompiledStatment globRef (stExecEnv th) cs)
+     case res of
+       Left (ParseError e) ->
+          do b <- fromByteString (B8.pack e)
+             return (resume [String b])
+       Right env ->
+          do let recover e  = resume [e]
+                 frame = CallFrame (stPC th) (stExecEnv th) (Just recover) resume
+             writeRef (vmCurThread vm)
+                 th { stExecEnv  = env
+                    , stHandlers = DefaultHandler : stHandlers th
+                    , stStack    = Stack.push frame (stStack th)
+                    }
+             return (Goto 0)
 
-     let recover e  = resume [e]
-         frame = CallFrame (stPC th) (stExecEnv th) (Just recover) resume
-     writeRef (vmCurThread vm)
-         th { stExecEnv  = env
-            , stHandlers = DefaultHandler : stHandlers th
-            , stStack    = Stack.push frame (stStack th)
-            }
-
-executeStatementOnVM :: VM -> String -> ([Value] -> NextStep) -> IO ()
+executeStatementOnVM :: VM -> String -> ([Value] -> NextStep) -> IO NextStep
 executeStatementOnVM vm statement resume =
   do th <- readRef (vmCurThread vm)
      let fun = funValueCode (execFunction (stExecEnv th))
      cs  <- compileStatementForLocation fun (stPC th) statement
      executeCompiledStatment vm cs resume
-
-
-
-
