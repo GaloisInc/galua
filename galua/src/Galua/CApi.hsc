@@ -245,9 +245,15 @@ foreign export ccall lua_pushstring_hs :: EntryPoint (CString -> Ptr CString -> 
 lua_pushstring_hs :: EntryPoint (CString -> Ptr CString -> IO CInt)
 lua_pushstring_hs l r ptr out =
   reentryIO "lua_pushstring" [cstringArg0 ptr] l r $ \args ->
-  do str <- peekLuaString0 ptr
-     poke out =<< luaStringPtr str
-     push args (String str)
+
+    if nullPtr == ptr
+
+      then do poke out nullPtr
+              push args Nil
+
+      else do str <- peekLuaString0 ptr
+              poke out =<< luaStringPtr str
+              push args (String str)
 
 foreign export ccall lua_pushlstring_hs
   :: EntryPoint (CString -> CSize -> Ptr CString -> IO CInt)
