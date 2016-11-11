@@ -8,7 +8,6 @@ module Galua.Debugger.NameHarness
   where
 
 import           Control.Monad ((<=<), replicateM_)
-import           Control.Monad.IO.Class (liftIO)
 import           Control.Exception (Exception, try, throwIO)
 import qualified Data.ByteString.Lazy.Char8 as L8
 import qualified Data.ByteString.Char8 as B8
@@ -22,16 +21,15 @@ import qualified Data.Vector as Vector
 import           Galua.FunValue (funValueCode, luaFunction, FunCode(..))
 import           Galua.LuaString (fromByteString)
 import           Galua.Reference (readRef, writeRef)
-import           Galua.Mach (dumpNextStep, HandlerType(DefaultHandler), MachineEnv(..), NextStep(PrimStep, Goto), StackFrame(CallFrame), Thread(..), VM(..), ApiCallStatus(NoApiCall), ExecEnv(..), parseLua)
+import           Galua.Mach (HandlerType(DefaultHandler), MachineEnv(..), NextStep(Goto), StackFrame(CallFrame), Thread(..), VM(..), ApiCallStatus(NoApiCall), ExecEnv(..), parseLua)
 import qualified Galua.Util.SizedVector as SV
 import           Galua.Util.SizedVector (SizedVector)
 import qualified Galua.Util.Stack as Stack
-import           Galua.Value (Value(String,Table,Nil), prettyValue)
+import           Galua.Value (Value(String,Table,Nil))
 import           Language.Lua.Bytecode
 import           Language.Lua.Bytecode.FunId (noFun)
 import           Language.Lua.Bytecode.Debug (lookupLocalName)
 import qualified System.Clock as Clock
-import Debug.Trace
 
 data HarnessParams = HarnessParams
    { harnessLocals :: [Maybe String]

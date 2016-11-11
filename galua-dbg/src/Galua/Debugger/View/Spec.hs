@@ -6,8 +6,7 @@ import Galua.Spec.Parser(Parsed)
 import Galua.Debugger(GlobalTypeEntry(..))
 
 import qualified Data.Aeson as JS
-import qualified Data.Aeson.Types as JS
-import           Data.Aeson (toJSON, (.=))
+import           Data.Aeson ((.=))
 import           Text.PrettyPrint
 import qualified Data.Text as Text
 

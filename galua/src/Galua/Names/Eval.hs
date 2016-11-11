@@ -64,7 +64,7 @@ globalInfo eenv pc expr =
 
     ENonLocal x ->
       case getUpValue (nrFunction eenv) x of
-        Just u  -> return Nothing
+        Just _  -> return Nothing
         Nothing -> return (Just (x,[]))
 
     ESelectFrom x y ->

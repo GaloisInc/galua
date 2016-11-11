@@ -12,7 +12,7 @@ import Language.Lua.Annotated.Lexer
          , dropWhiteSpace )
 import Language.Lua.Annotated.Parser(parseTokens,chunk)
 import qualified Language.Lua.Token as L
-import Language.Lua.Bytecode.FunId (FunId, funIdList)
+import Language.Lua.Bytecode.FunId (FunId)
 
 import Galua.Names.Find (chunkLocations,LocatedExprName(..))
 import Galua.Debugger.View.Utils (exportFID)
@@ -116,6 +116,7 @@ addFunIds xxs@(funId:xs) (y:ys)
   | isFunction y = setFunId funId y : addFunIds xs ys
   | otherwise = y : addFunIds xxs ys
 
+isFunction :: AnnotToken -> Bool
 isFunction (AnnotToken t _ _ _) = lexemeToken t == L.TokFunction
 
 addNames :: [ [LocatedExprName] ] -> [LexToken] -> [ AnnotToken ]
