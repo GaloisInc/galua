@@ -974,23 +974,11 @@ runDebugger dbg =
 handleCommand :: Debugger -> Bool -> DebuggerCommand -> IO (Maybe StepMode)
 handleCommand dbg isIdle cmd =
   case cmd of
-    WhenIdle io -> when isIdle io >> return Nothing
-    TemporaryStop m -> m >> return Nothing
-    AddClient client -> do modifyIORef (dbgClients dbg) (client :)
-                           return Nothing
-    StartExec mode client ->
-      do modifyIORef (dbgClients dbg) (client :)
-         case mode of
-           StepOverLine n | n < 0 -> setLine StepOverLine
-           StepIntoLine n | n < 0 -> setLine StepIntoLine
-           _ -> return (Just mode)
+    WhenIdle io        -> Nothing <$ when isIdle io
+    TemporaryStop m    -> Nothing <$ m
+    AddClient client   -> Nothing <$ modifyIORef (dbgClients dbg) (client :)
+    StartExec m client -> Just m  <$ modifyIORef (dbgClients dbg) (client :)
 
-  where
-  setLine f = do st <- readIORef (dbgStateVM dbg)
-                 case st of
-                   Running vm _ -> do l <- getCurrentLineNumber vm
-                                      return (Just (f l))
-                   _ -> return (Just (f (-42)))
 
 getCurrentLineNumber :: VM -> IO Int
 getCurrentLineNumber vm =
@@ -1134,7 +1122,10 @@ nextMode vm step mode =
         ApiEnd    {}    -> m
         _               -> mode
 
-    StepIntoLine n ->
+    StepIntoLine n
+      | n < 0 -> do l <- getCurrentLineNumber vm
+                    nextMode vm step (StepIntoLine l)
+      | otherwise ->
       case step of
         FunCall {}      -> return Stop
         FunTailcall {}  -> return Stop
@@ -1145,7 +1136,10 @@ nextMode vm step mode =
                               return (if n /= l then Stop else StepIntoLine l)
         _               -> return mode
 
-    StepOverLine n ->
+    StepOverLine n
+      | n < 0 -> do l <- getCurrentLineNumber vm
+                    nextMode vm step (StepOverLine l)
+      | otherwise ->
       case step of
         FunCall {}      -> return (StepOut mode)
         FunTailcall {}  -> return (StepOut mode)

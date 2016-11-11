@@ -54,10 +54,11 @@ bad msg = throwIO (NotFound msg)
 
 data Flavor = Local | UpValue | Global
 
-globalInfo :: NameResolveEnv {-^ execution frame -}  ->
-               Maybe PC       {-^ cur pc -}           ->
-               ExprName                               ->
-               IO (Maybe (ByteString,[ByteString]))
+globalInfo ::
+  NameResolveEnv {-^ execution frame -} ->
+  Maybe PC       {-^ cur pc          -} ->
+  ExprName                              ->
+  IO (Maybe (ByteString,[ByteString]))
 globalInfo eenv pc expr =
 
   case expr of
@@ -239,5 +240,3 @@ readReg eenv (Reg n) =
 
 sh :: PP a => a -> String
 sh = show . pp blankPPInfo
-
-
