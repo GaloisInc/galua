@@ -141,9 +141,18 @@ function redrawFunction(dbgState, here, f) {
         return false
       }
     })
+
+    // Fix up the "in scope"
+    jQuery.each(line.text, function(ix,t) {
+      if (t.name === null) return true
+      $('#' + t.name.ref)
+      .removeClass('active inactive')
+      .addClass(t.name.active ? 'active' : 'inactive')
+      .data('galua-pc',pc)
+    })
   })
 
-  // Fix up the "in scope"
+
 }
 
 
@@ -266,6 +275,7 @@ function drawLine(dbgState,context,chunkId,here) {
         var it = $('<span/>')
                  .text(t.lexeme)
                  .addClass(t.token)
+                 .addClass('galua-token ' + t.token)
 
         if (context.eid !== null) {
           jQuery.each(t.names, function(ix,cl) {
@@ -284,6 +294,8 @@ function drawLine(dbgState,context,chunkId,here) {
          }
 
          if (t.name !== null) {
+            it.attr('id',t.name.ref)
+            it.data('galua-pc',context.pc)
             it.addClass(t.name.active ? 'active' : 'inactive')
             it.hover(function() {
               $('.exp' + t.name.ref).addClass('gal_highlight_name')
@@ -291,17 +303,16 @@ function drawLine(dbgState,context,chunkId,here) {
               $('.exp' + t.name.ref).removeClass('gal_highlight_name')
             })
 
-            if (t.name.active) {
-              it.click(function () {
-                 jQuery.post('/watchName', { eid: context.eid
-                                           , pc: context.pc
-                                           , id: t.name.ref
-                                           }, renderResult)
-                       .fail(disconnected)
-                  $('#value-pane').openModal()
-               return false
-              })
-            }
+            it.click(function () {
+              if (it.hasClass('inactive')) return true
+              jQuery.post('/watchName', { eid: context.eid
+                                        , pc: it.data('galua-pc')
+                                        , id: t.name.ref
+                                        }, renderResult)
+              .fail(disconnected)
+              $('#value-pane').openModal()
+              return false
+            })
           }
 
           function renderResult(x) {
