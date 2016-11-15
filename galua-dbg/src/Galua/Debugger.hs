@@ -792,13 +792,21 @@ setIdleReason Debugger { .. } x = writeIORef dbgIdleReason x
 -- Entry points
 
 
-setPathValue :: Debugger -> Integer -> Value -> IO ()
+setPathValue :: Debugger -> Integer -> Value -> IO (Maybe ValuePath)
 setPathValue dbg vid newVal =
-  whenStable dbg True $ whenNotFinishied dbg () $ \_ _ ->
+  -- NOTE:  This action is marked as invisible, because when we set a value
+  -- we take care to patch up the UI state appropriately.  In this way,
+  -- we don't need to redraw the entire debugger state, which preserves
+  -- open tabs, etc.
+  -- XXX: One day we should probalby do something smarter, where we
+  -- can compute exactly what changed, and only redraw those things...
+  whenStable dbg False $ whenNotFinishied dbg Nothing $ \_ _ ->
     do ExportableState { expClosed } <- readIORef dbgExportable
        case Map.lookup vid expClosed of
-         Just (ExportableValue path _) -> setValue path newVal
-         _                             -> return ()
+         Just (ExportableValue path _) ->
+           do setValue path newVal
+              return (Just path)
+         _   -> return Nothing
   where
   Debugger { dbgExportable } = dbg
 

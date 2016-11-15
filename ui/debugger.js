@@ -2,7 +2,7 @@ function doPoll(cmd) {
   jQuery.post('/poll', { timeout: 10, command: cmd },
     function(res) {
       if (cmd !== res) {
-        jQuery.get('/view', drawDebugger()).fail(disconnected)
+        jQuery.get('/view', drawDebugger).fail(disconnected)
       } else {
         window.setTimeout(doPoll, 0, res)
       }
@@ -137,7 +137,7 @@ function makeStep(how) {
 function drawStep(meth) {
   jQuery.post(meth,{}).fail(disconnected)
   if (meth === 'run')
-    jQuery.post('/view',{},drawDebugger()).fail(disconnected)
+    jQuery.post('/view',{},drawDebugger).fail(disconnected)
 }
 
 
@@ -282,7 +282,7 @@ function drawRegistry( dbgState, val) {
 }
 
 
-function drawDebugger() { return function (d) {
+function drawDebugger(d) {
 
   $('#pause-on-error').prop('checked', d.breakOnError)
 
@@ -361,7 +361,7 @@ function drawDebugger() { return function (d) {
   }
 
   doPoll(d.stateCounter)
-}}
+}
 
 
 function drawWatches(dbgState, vs) {

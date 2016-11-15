@@ -198,16 +198,19 @@
 </div>
 
 
-<!-- Edit break-point condition -->
-<div id="condition-pane" class="modal">
+<!-- Edit text expressions.
+This is used to set break-point conditions, as well as setting values
+for things. -->
+<div id="text-expression-pane" class="modal">
   <div class="modal-content">
-    <h5>Break-point Condition</h5>
+    <h5 id="text-expression-pane-title">Editting Expression</h5>
     <div class="row">
       <div class="input-field col s12">
-        <textarea id="condition-text"
+        <label for="text-expression-text">Enter Lua expression:</label>
+        <textarea id="text-expression-text"
                   class="materialize-textarea"
-                  onkeypress="conditionBoxKeyPressed()"
-        ></textarea>
+                  onkeypress="textExpressionBoxKeyPressed()"
+        > </textarea>
       </div>
     </div>
   </div>
@@ -223,6 +226,7 @@
 <script src="thread.js"></script>
 <script src="analysis.js"></script>
 <script src="popUpMenu.js"></script>
+<script src="editExpression.js"></script>
 </body>
 </html>
 

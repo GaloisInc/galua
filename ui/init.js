@@ -3,7 +3,7 @@
     $('.modal-trigger').leanModal()
     $('.tooltipped').tooltip({delay:1000})
 
-    jQuery.get('/view', drawDebugger(false))
+    jQuery.get('/view', drawDebugger)
           .fail(disconnected)
   })
 })(jQuery)

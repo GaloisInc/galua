@@ -485,24 +485,18 @@ function drawLine(dbgState,context,chunkId,here) {
 
     function editBreakOnOpCode(i) {
       var id = subs[i].id
-      var pane = $('#condition-pane')
-      var txt  = $('#condition-text')
-
       var cond = dbgState.breakPoints[id]
       var hasBrk = cond !== undefined
       var hasCond = cond !== null
+      editExpression('Break point condition'
+                    , hasCond ? cond : ' '
+                    , onDone)
 
-      txt.val(hasCond ? cond : '')
-
-
-      txt.data('galua-break-loc-set-condition', function() {
-        var newCond = jQuery.trim(txt.val())
-
+      function onDone(expr) {
+        var newCond = jQuery.trim(expr)
 
         jQuery.post('/addCondition', { loc: id, cond: newCond }, ok)
               .fail(disconnected) // XXX: Or syntax error?
-
-        pane.closeModal()
 
         // This happens on successs
         function ok(res) {
@@ -531,17 +525,8 @@ function drawLine(dbgState,context,chunkId,here) {
           }
 
         }
-      })
-
-     pane.openModal()
+      }
     }
-  }
-}
-
-function conditionBoxKeyPressed() {
-  var ev = this.event
-  if (ev.key === 'Enter' && !ev.shift) {
-    $('#condition-text').data('galua-break-loc-set-condition')()
   }
 }
 

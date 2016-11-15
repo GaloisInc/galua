@@ -246,28 +246,25 @@ function drawViewThreadIcon(dbgState,v) {
 
 
 
-function drawSetValueIcon(dbgState,v) {
-  function makeTextBox(){
-    var txt = $('<input/>').attr('type','text')
-    txt.keypress(function(e) {
-      if (e.which && e.which === 13 ||
-          e.keyCode && e.keyCode === 13) {
-        var newVal = txt.val()
-        txt.remove()
-        jQuery.post('/setValue', { id: v.ref, value: newVal })
-              .fail(disconnected)
-      }
-    })
-    return txt
-  }
+function drawSetValueIcon(dbgState,lab,v,opts) {
 
-  var me = roundButton (
+  return roundButton (
       'black white-text'
     , 'mode_edit'
     , 'Change value'
-    , function () { me.parent().append(makeTextBox()) })
+    , function() {
+        editExpression('Set value', v.text, function(txt) {
+          jQuery.post( '/setValue'
+                     , { id: v.ref, value: jQuery.trim(txt) }
+                     , function(newV) {
+                          lab.replaceWith(drawValueOpts(dbgState,newV,opts))
+                       }
+                     )
+                .fail(disconnected)
+        })
+      }
+    )
 
-  return me
 }
 
 function drawAnalyzeIcon(dbgState, v) {
@@ -370,8 +367,7 @@ function drawCollapsedEx(dbgState, lab, v, opts) {
       break;
   }
 
-  icons.push(drawSetValueIcon(dbgState,v))
-
+  icons.push(drawSetValueIcon(dbgState,lab,v,opts))
 
 
 
