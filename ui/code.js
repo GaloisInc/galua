@@ -182,8 +182,6 @@ function drawLine(dbgState,context,chunkId,here) {
                            .addClass('breakpoint')
     setClass(brkIcon, 'hide', startOn !== true)
     here.append(brkIcon)
-
-    return {}
   }
 
 
@@ -196,7 +194,7 @@ function drawLine(dbgState,context,chunkId,here) {
     return { row: row, num: num, text: text }
   }
 
-  function lineMenu(lab, clickBrk, clickGoto) {
+  function lineMenu(lab, clickBrk, clickEditBrk, clickGoto) {
 
     return makeMenu ( lab.css('font-weight','bold')
                     , [ roundButton( 'blue white-text'
@@ -204,10 +202,17 @@ function drawLine(dbgState,context,chunkId,here) {
                                    , 'Add/remove break-point'
                                    , clickBrk )
 
+                      , roundButton ( 'amber white-text'
+                                    , 'edit'
+                                    , 'Edit break-point condition'
+                                    , clickEditBrk
+                                    )
+
                       , roundButton ( 'green white-text'
                                     , 'play_arrow'
                                     , 'Continue from here'
                                     , clickGoto)
+
                       ]
                     )
 
@@ -234,7 +239,7 @@ function drawLine(dbgState,context,chunkId,here) {
 
     jQuery.each(line.opcodes, function(i,o) {
       var key = opCodeKey(o)
-      if (dbgState.breakPoints[key] === true) ++breakNum
+      if (dbgState.breakPoints[key] !== undefined) ++breakNum
       if (key === pcKey) isCurrent = true
     })
 
@@ -253,7 +258,8 @@ function drawLine(dbgState,context,chunkId,here) {
       skel.row.addClass(srcLineClass)
               .data('galua-line',line.line)
 
-      theLine = addBrkPoint(num, breakNum !== 0)
+      addBrkPoint(num, breakNum !== 0)
+      theLine = {}
 
       var lineLab = $('<span/>')
                     .addClass('galua-line-number')
@@ -261,7 +267,8 @@ function drawLine(dbgState,context,chunkId,here) {
 
 
       if (line.opcodes.length > 0) {
-        var menu = lineMenu(lineLab,toggleBreakOnSourceLine,gotoSourceLine)
+        var menu = lineMenu(lineLab,toggleBreakOnSourceLine,
+                              editBreakOnSourceLine,gotoSourceLine)
         num.append(menu)
         text
         .css('cursor','pointer')
@@ -348,14 +355,23 @@ function drawLine(dbgState,context,chunkId,here) {
     }
 
 
+    // Editing the condition on a source line always refers
+    // to the first op-code on the line.
+    function editBreakOnSourceLine() {
+     if (line.opcodes.length === 0) return
+     var op = line.opcodes[0]
+     editBreakOnOpCode(0)
+    }
+
+
     // When we click a source line we either:
-    //  1. Remove all break points (if any), or
+    //  1. Remove all breakpoints (if any), or
     //  2. Add a break point to the first instruction.
     function toggleBreakOnSourceLine() {
 
       var todo = []
       jQuery.each(line.opcodes, function(i,o) {
-        if (dbgState.breakPoints[opCodeKey(o)] === true) todo.push(i)
+        if (dbgState.breakPoints[opCodeKey(o)] !== undefined) todo.push(i)
       })
 
       if (todo.length > 0) {
@@ -387,9 +403,9 @@ function drawLine(dbgState,context,chunkId,here) {
       if (!(isCurrent && openCur)) skel.row.hide()
 
       var key     = opCodeKey(op)
-      subs[i]     = addBrkPoint(num,dbgState.breakPoints[key] === true)
-      subs[i].id  = key
-      subs[i].row = skel.row
+      addBrkPoint(num,dbgState.breakPoints[key] !== undefined)
+
+      subs[i]     = { id: key, row: skel.row }
       skel.row.addClass(key)
 
       if (pcKey === key) skel.row.addClass('cur-line')
@@ -399,6 +415,7 @@ function drawLine(dbgState,context,chunkId,here) {
                     .text(' ' + op.opcode)
       var menu = lineMenu( lineLab
                          , function() { toggleBreakOnOpCode(i, function() {}) }
+                         , function() { editBreakOnOpCode(i) }
                          , function() { gotoOpCode(i) } )
 
       num.append(menu)
@@ -424,16 +441,16 @@ function drawLine(dbgState,context,chunkId,here) {
 
     // Toggles the breakpoint on the given op-code
     function toggleBreakOnOpCode(i,k) {
-      var me      = subs[i]
-      var id      = me.id
-      var hasBrk  = dbgState.breakPoints[id] === true
+      var id      = subs[i].id
+      var hasBrk  = (dbgState.breakPoints[id] !== undefined) ? true : false
 
       // Server interaction went OK
       function ok(res) {
 
         setClass($('.' + id + ' .breakpoint'), 'hide', hasBrk)
         hasBrk = !hasBrk
-        dbgState.breakPoints[id] = hasBrk
+        if (hasBrk) dbgState.breakPoints[id] = null
+        else dbgState.breakPoints[id] = undefined
 
         if (theLine !== null) {
             var lineHasBrk = false
@@ -465,8 +482,71 @@ function drawLine(dbgState,context,chunkId,here) {
             .fail(disconnected)
 
     }
+
+    function editBreakOnOpCode(i) {
+      var id = subs[i].id
+      var pane = $('#condition-pane')
+      var txt  = $('#condition-text')
+
+      var cond = dbgState.breakPoints[id]
+      var hasBrk = cond !== undefined
+      var hasCond = cond !== null
+
+      txt.val(hasCond ? cond : '')
+
+
+      txt.data('galua-break-loc-set-condition', function() {
+        var newCond = jQuery.trim(txt.val())
+
+
+        jQuery.post('/addCondition', { loc: id, cond: newCond }, ok)
+              .fail(disconnected) // XXX: Or syntax error?
+
+        pane.closeModal()
+
+        // This happens on successs
+        function ok(res) {
+          // Remeber the new condition
+          dbgState.breakPoints[id] = (newCond === '' ? null : newCond)
+
+          // Add the break point to the list; first we remove it,
+          // then we redraw it.  This is because the list contains the
+          // conditoin
+          $('.brk_menu.' + id).remove()
+          $('#breakpoint-list').append(drawBreakPoint(dbgState,res))
+
+          // if this is not a new break point we are done.
+          if (hasBrk) return
+
+          // Otherwise we need to:
+
+          //  1. add break point to the op-code
+          setClass($('.' + id + ' .breakpoint'), 'hide', false)
+
+
+          //  2. reveal the break point on the source line
+          if (theLine !== null) {
+            var brks = $('.' + srcLineClass + ' .breakpoint')
+            setClass(brks,'hide', false)
+          }
+
+        }
+      })
+
+     pane.openModal()
+    }
   }
 }
+
+function conditionBoxKeyPressed() {
+  var ev = this.event
+  if (ev.key === 'Enter' && !ev.shift) {
+    $('#condition-text').data('galua-break-loc-set-condition')()
+  }
+}
+
+
+
 
 
 

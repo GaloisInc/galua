@@ -39,7 +39,9 @@ function newDebuggerState(d) {
   if (d.state.tag === 'running')
     pc = { fid: d.state.vm.thread.env.fid, pc: d.state.pc }
 
-  jQuery.each(d.breakPoints, function(ix,loc) { brks[loc.id] = true })
+  jQuery.each(d.breakPoints, function(ix,loc) {
+     brks[loc.id] = loc.cond
+  })
 
   return { breakPoints:     brks
          , programCounter:  pc
@@ -146,16 +148,22 @@ function clearBreakPoints() {
      }).fail(disconnected)
 }
 
+// XXX: Add condition?
 function drawBreakPoint(dbgState,brk) {
-  return $('<a/>')
-         .addClass('collection-item tooltipped brk_menu')
-         .addClass(brk.id)
-         .attr('data-tooltip', brk.file ? brk.file : '???')
-         .append( [ brk.name
-                  , $('<span/>')
-                    .addClass('secondary-content')
-                    .text('line ' + brk.line)
-                  ] )
+
+  var me = $('<a/>')
+           .addClass('collection-item tooltipped brk_menu')
+           .addClass(brk.id)
+           .attr('data-tooltip', brk.file ? brk.file : '???')
+           .append( brk.name )
+  if (brk.cond !== null) {
+    me.append([$('<br/>')
+              , $('<span/>').addClass('galua_remark').text(brk.cond)])
+  }
+  me.append($('<span/>')
+            .addClass('secondary-content')
+            .text('line ' + brk.line)
+            )
          .click(function() {
             $('#breakpoint-pane').closeModal()
             jQuery.post('/function', { fid: brk.fid },
@@ -163,6 +171,8 @@ function drawBreakPoint(dbgState,brk) {
             ).fail(disconnected)
           })
           .tooltip()
+
+  return me
 }
 
 function drawBreakPoints(dbgState, breaks) {
