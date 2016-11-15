@@ -119,6 +119,7 @@ staticContent =
                     ".png", ".min.js", ".min.css", ".html",
                     "thread.js", "values.js", "debugger.js", "code.js",
                     "init.js", "popUpMenu.js", "style.css",
+                    "editExpression.js",
                     "analysis.js", "code.css"]
     in embedDirectory p (takeDirectory __FILE__ </>
                             ".." </> ".." </>
@@ -201,7 +202,7 @@ snapWatchName dbg =
               case mb of
                 Left (NotFound err) -> return $ JS.object [ "error" JS..= err ]
                 Right (n,v,mbT) ->
-                    do jv <- exportV dbg v
+                    do jv <- exportV dbg VP_None v
                        return $ JS.object [ "name" JS..= n
                                           , "value" JS..= jv
                                           , "type" JS..= (exportT <$> mbT)
@@ -220,8 +221,12 @@ snapSetValue dbg =
                 -- XXX: Currently we parse these as Haskell strings...
               _ | Just s <- readMaybe (B8.unpack txt) -> liftIO (G.String <$> fromByteString (B8.pack s))
                 | otherwise -> badInput "Invalid value"
-     liftIO (setPathValue dbg n val)
-     snapGetState dbg
+
+     mb <- liftIO (setPathValue dbg n val)
+     case mb of
+       Nothing   -> notFound
+       Just path -> sendJSON =<< liftIO (exportV dbg path val)
+     -- snapGetState dbg
 
 snapExpand :: Debugger -> Snap ()
 snapExpand dbg =

@@ -2,7 +2,7 @@
 module Galua.Debugger.View
   ( exportDebugger, exportFun, expandExportable, expandSubtable
   , watchExportable, unwatchExportable
-  , exportV -- MAYBE NOT
+  , exportV
   , importBreakLoc
   , exportBreakLoc
   , analyze
@@ -162,10 +162,10 @@ exportDebugger dbg =
                    dbgStateVM, dbgWatches, dbgBreakOnError,
                    dbgCommandCounter } = dbg
 
-exportV :: Debugger -> Value -> IO JS.Value
-exportV dbg v =
+exportV :: Debugger -> ValuePath -> Value -> IO JS.Value
+exportV dbg path v =
   do chunks <- readIORef (dbgSources dbg)
-     runExportM dbg (exportValue chunks VP_None v)
+     runExportM dbg (exportValue chunks path v)
 
 exportIdleReason :: Chunks -> IdleReason -> ExportM JS.Value
 exportIdleReason funs r =
