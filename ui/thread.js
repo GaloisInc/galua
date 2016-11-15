@@ -104,7 +104,7 @@ function drawNewThread(dbgState, thread) {
   threadParts.stack.empty()
   jQuery.each(thread.stack, function(ix,f) {
     var fst = ix === 0
-    threadParts.stack.append(drawStackFrame(dbgState, threadParts, f, fst))
+    threadParts.stack.append(drawStackFrame(dbgState, threadParts, ix, f, fst))
   })
 
   threadParts.handlers.empty()
@@ -150,7 +150,7 @@ function fillInExecEnv(dbgState, threadParts, env) {
 
 // The `threadParts` are passed in so that we can fill in the correct
 // elements when the user asks for details of the stack frame.
-function drawStackFrame(dbgState,threadParts,f,focused) {
+function drawStackFrame(dbgState,threadParts,ix,f,focused) {
   var box = $('<li/>').addClass('collection-item')
 
   switch (f.tag) {
@@ -164,6 +164,9 @@ function drawStackFrame(dbgState,threadParts,f,focused) {
       box.append(drawFunName(f))
       box.css('cursor','pointer')
       box.click(function() {
+
+          dbgState.currentStackFrame = ix
+
           jQuery.post('/expand', { id: f.ref }, function(exp) {
             fillInExecEnv(dbgState,threadParts, exp)
             box.siblings().children()

@@ -45,6 +45,8 @@ function newDebuggerState(d) {
 
   return { breakPoints:     brks
          , programCounter:  pc
+         , currentStackFrame: 0
+         // , currentThread: 0 XXX
          , fun_counter:     0
 
          // Read only
@@ -293,6 +295,10 @@ function drawDebugger() { return function (d) {
   }
 
   var dbgState = newDebuggerState(d)
+
+  $('#input-console').off('keypress')
+  $('#input-console').on ('keypress', mkInputConsoleKeypressHandler(dbgState))
+
   drawSources(dbgState, d.sources)
   drawBreakPoints(dbgState, d.breakPoints)
 
@@ -512,20 +518,24 @@ function drawFunNameToolTip(obj) {
 }
 
 
-function galuaConsoleInput() {
-  var ev = this.event
-  if (ev.keyCode === 13 && !ev.shiftKey) {
-    var con = $('#input-console')
-    jQuery.post('/exec', { stat: con.val() }, function() {
-      con.val('')
-    })
-    //IE9 & Other Browsers
-    if (ev.stopPropagation) {
-      ev.stopPropagation();
-    }
-    //IE8 and Lower
-    else {
-      ev.cancelBubble = true;
+function mkInputConsoleKeypressHandler(dbgState) {
+  return function(ev) {
+    if (ev.keyCode === 13 && !ev.shiftKey) {
+      var con = $('#input-console')
+      var args = { stat: con.val(),
+                   stackframe: dbgState.currentStackFrame
+                 }
+      jQuery.post('/exec', args, function() {
+        con.val('')
+      })
+      //IE9 & Other Browsers
+      if (ev.stopPropagation) {
+        ev.stopPropagation();
+      }
+      //IE8 and Lower
+      else {
+        ev.cancelBubble = true;
+      }
     }
   }
 }

@@ -255,8 +255,9 @@ snapGoto st =
 
 snapExec :: Debugger -> Snap ()
 snapExec st =
-  do txt <- textParam "stat"
-     liftIO (executeStatement st txt)
+  do txt   <- textParam "stat"
+     frame <- natParam  "stackframe"
+     liftIO (executeStatement st (fromIntegral frame) txt)
 
 
 snapAddBreakPoint :: Debugger -> Snap ()

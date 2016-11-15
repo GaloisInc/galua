@@ -12,7 +12,7 @@ import           Control.Exception (Exception, try, throwIO)
 import qualified Data.ByteString.Lazy.Char8 as L8
 import qualified Data.ByteString.Char8 as B8
 import           Data.IORef (IORef, newIORef)
-import           Data.Foldable (traverse_)
+import           Data.Foldable (traverse_,toList)
 import           Data.List (unfoldr, mapAccumR, intercalate)
 import           Data.Maybe (catMaybes)
 import           Data.Set (Set)
@@ -179,11 +179,12 @@ prepareStack stat parentStack =
 
 
 executeCompiledStatment ::
-  VM -> CompiledStatment -> ([Value] -> NextStep) -> IO NextStep
-executeCompiledStatment vm cs resume =
+  VM -> Int -> CompiledStatment -> ([Value] -> NextStep) -> IO NextStep
+executeCompiledStatment vm frame cs resume =
   do th      <- readRef (vmCurThread vm)
      globRef <- newIORef (Table (machGlobals (vmMachineEnv vm)))
-     env     <- execEnvForCompiledStatment globRef (stExecEnv th) cs
+     (_,cenv) <- lookupExecutionContext vm frame
+     env     <- execEnvForCompiledStatment globRef cenv cs
      let recover e  = resume [e]
          frame = CallFrame (stPC th) (stExecEnv th) (Just recover) resume
      writeRef (vmCurThread vm)
@@ -194,13 +195,25 @@ executeCompiledStatment vm cs resume =
      return (Goto 0)
 
 
-executeStatementOnVM :: VM -> String -> ([Value] -> NextStep) -> IO NextStep
-executeStatementOnVM vm statement resume =
+lookupExecutionContext :: VM -> Int -> IO (Int, ExecEnv)
+lookupExecutionContext vm frame =
   do th <- readRef (vmCurThread vm)
-     let fun = funValueCode (execFunction (stExecEnv th))
-     res <- try (compileStatementForLocation fun (stPC th) statement)
+     let current = (stPC th, stExecEnv th)
+     if frame == 0 then
+       return current
+     else
+       case drop (frame-1) (toList (stStack th)) of
+         CallFrame pc env _ _:_ -> return (pc,env)
+         _                      -> return current -- fallback to current
+
+
+executeStatementOnVM :: VM -> Int -> String -> ([Value] -> NextStep) -> IO NextStep
+executeStatementOnVM vm frame statement resume =
+  do (pc,env) <- lookupExecutionContext vm frame
+     let fun = funValueCode (execFunction env)
+     res <- try (compileStatementForLocation fun pc statement)
      case res of
        Left (ParseError e) ->
           do b <- fromByteString (B8.pack e)
              return (resume [String b])
-       Right cs -> executeCompiledStatment vm cs resume
+       Right cs -> executeCompiledStatment vm frame cs resume
