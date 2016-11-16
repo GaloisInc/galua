@@ -20,6 +20,9 @@ import Galua.Spec.AST hiding (Type,Name)
 import Galua.Spec.CFG
 
 
+
+
+
 --------------------------------------------------------------------------------
 -- Types and Constraints
 --------------------------------------------------------------------------------
@@ -94,8 +97,8 @@ data Ctr  = C_Add
           | C_Neg
           | C_Complement
 
-          | C_Select
-          | C_Project Selector
+          | C_Array_Index
+          | C_Get_Field Selector
 
           | C_Call
 
@@ -157,8 +160,8 @@ instance Pretty Constraint where
       (C_Neg,[a])         -> prefix1 "-" a
       (C_Complement ,[a]) -> prefix1 "~" a
 
-      (C_Select, [a,_,c]) -> returns (a <> brackets (pretty (ts !! 1))) c
-      (C_Project x, [a,b])-> returns (a <> "." <> pretty x) b
+      (C_Array_Index, [a,_,c]) -> returns (a <> brackets (pretty (ts !! 1))) c
+      (C_Get_Field x, [a,b])-> returns (a <> "." <> pretty x) b
 
       (C_Call, [a,_,c])   -> returns (a <> parens (pretty (ts !! 1))) c
 
@@ -292,9 +295,61 @@ class InferExpr a where
 class InferStmt a where
   inferStmt :: a -> InferM ()
 
+
+instance InferStmt BasicBlock where
+  inferStmt bb =
+     do mapM_ inferStmt (bbStmts bb)
+        inferStmt (bbExit bb)
+
+instance InferStmt EndStat where
+  inferStmt end =
+    case end of
+      Goto ls -> undefined
+      Return es -> undefined
+      If e lTrue lFalse -> undefined
+      ForRange r x e1 e2 mbE3 lBody lEnd -> undefined
+      ForIn r s es lBody lEnd -> undefined
+
+
+getArg :: SourceRange -> Int -> Type -> InferM Type
+getArg r n t =
+  do a <- newTVar r
+     constraint (c2 r (C_TupleSel n) t a)
+     return a
+
 instance InferStmt Stat where
   inferStmt stmt =
     case stmt of
+
+      -- x = e
+      -- global x:  typeOf e `subtypeOf` typeOf x
+      -- upvalue x: typeOf e `subtypeOf` typeOf x
+      -- local x (captured):  typeOf e `subtypeOf` typeOf x
+      -- local x (free):      setTyp x (typeOf e)
+
+      {- If we are going to be type-checking local functions just once,
+         we should watch out about changing the types of catured locals.
+         Consider, for example:
+
+                local x
+                function f() print(x) end
+
+                f()   // x :: nil
+                x = 3
+                f()   // x :: integer
+
+         Furthermore, the challenge is that it may not be obvious that a
+         function call referes to a local function that has captured
+         one of the locals.
+
+         Proposed solution: the type of a local may only change before
+         the local has been captured.
+
+      -}
+
+
+
+
       Assign a xs es -> undefined
 {-
         where
@@ -305,37 +360,28 @@ instance InferStmt Stat where
 -}
 
       LocalAssign r xs Nothing ->
-        forM_ xs $ \x ->
-          do a <- newTVar r
-             setVarType x a
-             constraint (c2 r C_SubtypeOf (tNil r) a)
+        forM_ xs $ \x -> setVarType x (tNil r)
 
       LocalAssign _ xs (Just es) -> match xs es
         where
         match vs [e] =
           do t <- inferExpr e
              forM_ (zip [0..] vs) $ \(n,v) ->
-               do let r = annot v
-                  a <- newTVar r
-                  constraint (c2 r (C_TupleSel n) t a)
-                  b <- newTVar r
-                  setVarType v b
-                  constraint (c2 r C_SubtypeOf a b)
+               setVarType v =<< getArg (annot v) n t
+
+        match (v:vs) (e:more) =
+          do setVarType v =<< (getArg (annot e) 0 =<< inferExpr e)
+             match vs more
 
         match [] _ = panic "LocalAssign: Just []"
 
-        match (v:vs) (e1:e2:more) =
-          do t <- inferExpr e1
-             a <- newTVar (annot e1)
-             constraint (c2 (annot e1) (C_TupleSel 0) t a)
-             b <- newTVar (annot v)
-             constraint (c2 (annot v) C_SubtypeOf a b)
-             setVarType v b
-             match vs (e2:more)
+
 
       SetMethod a x sel m fb -> undefined
 
-      FunCallStat fc -> undefined
+      FunCallStat fc ->
+        do _ <- inferExpr fc
+           return ()
 
 
 
@@ -343,26 +389,16 @@ instance InferExpr Exp where
   inferExpr expr =
     case expr of
 
-      Nil r       -> do a <- newTVar r
-                        constraint (c2 r C_SubtypeOf (tNil r) a)
-                        return a
-
-      Bool r _    -> do a <- newTVar r
-                        constraint (c2 r C_SubtypeOf (tBoolean r) a)
-                        return a
+      Nil r       -> return (tNil r)
+      Bool r _    -> return (tBoolean r)
 
       Number r nt _ ->
         do a <- newTVar r
-           let t = case nt of
-                     FloatNum -> tNumber r
-                     IntNum   -> tInteger r
-           constraint (c2 r C_SubtypeOf t a)
-           return a
+           case nt of
+             FloatNum -> return (tNumber r)
+             IntNum   -> return (tInteger r)
 
-      String r t ->
-        do a <- newTVar r
-           constraint (c2 r C_SubtypeOf (tStringLit t r) a)
-           return a
+      String r t -> return (tStringLit t r)
 
 {-
       Vararg r          -> lookupVarArg r
@@ -436,53 +472,11 @@ instance InferExpr PrefixExp where
       Paren e      -> inferExpr e
 
 
-{- Typechecking of assignment to Var:
-
-x = e
-  x global:
-      1. consult spec to ensure mutable
-      2. typeof(e) <= declared type
-  x upvalue:
-      1. typeof(e) = typeof(upvalue)
-  x local:
-    1. 
-
-e1[e2] = e
-  Set field of a map:
-    1. typeof(e1) <= Map key value
-    2. typeof(e2) <= key
-    3. typeof(e)  <= (value | nil)
-
-e1.l = e
-  1. 
-
-It looks like we need to support some sort of "change of type"
-to support initializing values step by step.  For example:
-
-point = {}
-point.x = 10
-point.y = 20
-
-This, `point` starts of as an empty record, but two lines
-later, the record has two fields.  This is OK to do as long
-as the value is not shared with others.
-
-
-
-
-
--- | Compute the type of an L-value.
-inferMutableVar :: Var -> InferM Type
-inferMutableVar var =
-  case var of
-    VarName x ->
-    Select r e i ->
-    SelectName r e l ->
--}
 
 instance InferExpr Var where
   inferExpr expr =
     case expr of
+
       VarName x -> lookupVar x
 
       -- Arrays / maps
@@ -490,19 +484,22 @@ instance InferExpr Var where
         do te  <- inferExpr e
            ti  <- inferExpr i
            res <- newTVar r
-           constraint (c3 r C_Select te ti res)
+           constraint (c3 r C_Array_Index te ti res)
            return res
 
       -- Records / modules
       SelectName r e l ->
         do te <- inferExpr e
            res <- newTVar r
-           constraint (c2 r (C_Project l) te res)
+           constraint (c2 r (C_Get_Field l) te res)
            return res
 
 instance InferExpr FunCall where
   inferExpr (FunCall r pe mb es) =
+
     case mb of
+
+      -- Not a method
       Nothing ->
         do t   <- inferExpr pe
            ts  <- mapM inferExpr es
@@ -510,12 +507,13 @@ instance InferExpr FunCall where
            constraint (c3 r C_Call t (tTuple rng ts) res)
            return res
 
+      -- A method
       Just m ->
         do objT <- inferExpr pe
            ts   <- mapM inferExpr es
            res  <- newTVar r
            fun  <- newTVar (Lua.ann m)
-           constraint (c2 r (C_Project m) objT fun)
+           constraint (c2 r (C_Get_Field m) objT fun)
            constraint (c3 r C_Call fun (tTuple rng (objT : ts)) res)
            return res
 
