@@ -159,8 +159,18 @@ function drawStackFrame(dbgState,threadParts,ix,f,focused) {
                 .addClass('secondary-content stack-ptr')
                 .append($('<i/>').addClass('material-icons')
                                  .text('chevron_left'))
-      if (!focused) ptr.addClass('hide')
-      box.append(ptr)
+      var kbd = $('<i/>')
+                .addClass('material-icons secondary-content stack-ptr')
+                .text('keyboard')
+                .click(function() {
+                   editExpression('Evaluate Statment','',
+                    function(txt) {
+                      var args = { stat: txt, stackframe: f.ref }
+                      jQuery.post('/exec', args, function() {}) // XXX: redraw
+                    })
+                 })
+      if (!focused) { ptr.addClass('hide'); kbd.addClass('hide') }
+      box.append([ptr,kbd])
       box.append(drawFunName(f))
       box.css('cursor','pointer')
       box.click(function() {
@@ -173,6 +183,7 @@ function drawStackFrame(dbgState,threadParts,ix,f,focused) {
                           .filter('.stack-ptr')
                           .addClass('hide')
             ptr.removeClass('hide')
+            kbd.removeClass('hide')
           }).fail(disconnected)
       })
       break

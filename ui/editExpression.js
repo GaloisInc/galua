@@ -1,8 +1,9 @@
-function textExpressionBoxKeyPressed() {
-  var ev = this.event
+function textExpressionBoxKeyPressed(ev) {
   if (ev.key === 'Enter' && !ev.shift) {
     $('#text-expression-text').data('galua-new-text-expression')()
+    return false // stop propagation, we handled it
   }
+  return true // propagate as normal
 }
 
 

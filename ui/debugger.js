@@ -296,9 +296,6 @@ function drawDebugger(d) {
 
   var dbgState = newDebuggerState(d)
 
-  $('#input-console').off('keypress')
-  $('#input-console').on ('keypress', mkInputConsoleKeypressHandler(dbgState))
-
   drawSources(dbgState, d.sources)
   drawBreakPoints(dbgState, d.breakPoints)
 
@@ -517,25 +514,3 @@ function drawFunNameToolTip(obj) {
   return file + line
 }
 
-
-function mkInputConsoleKeypressHandler(dbgState) {
-  return function(ev) {
-    if (ev.keyCode === 13 && !ev.shiftKey) {
-      var con = $('#input-console')
-      var args = { stat: con.val(),
-                   stackframe: dbgState.currentStackFrame
-                 }
-      jQuery.post('/exec', args, function() {
-        con.val('')
-      })
-      //IE9 & Other Browsers
-      if (ev.stopPropagation) {
-        ev.stopPropagation();
-      }
-      //IE8 and Lower
-      else {
-        ev.cancelBubble = true;
-      }
-    }
-  }
-}
