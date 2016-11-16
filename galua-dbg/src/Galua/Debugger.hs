@@ -1112,12 +1112,14 @@ nextMode vm step mode =
       case step of
         Goto    {}      -> Stop
         ApiStart{}      -> Stop
+        ApiEnd {}       -> Stop
         _               -> mode
 
     StepOverOp -> return $
       case step of
         Goto    {}      -> Stop
         ApiStart{}      -> StepOut mode
+        ApiEnd {}       -> Stop
         FunCall {}      -> StepOut mode
         Resume  {}      -> StepOutYield mode
         _               -> mode
@@ -1142,6 +1144,7 @@ nextMode vm step mode =
         FunReturn {}    -> return Stop
         ErrorReturn {}  -> return Stop
         ApiStart {}     -> return Stop
+        ApiEnd {}       -> return Stop
         Goto {}         -> do l <- getCurrentLineNumber vm
                               return (if n /= l then Stop else StepIntoLine l)
         _               -> return mode
@@ -1156,6 +1159,7 @@ nextMode vm step mode =
         FunReturn {}    -> return Stop
         ErrorReturn {}  -> return Stop
         ApiStart {}     -> return (StepOut mode)
+        ApiEnd {}       -> return Stop
         Resume {}       -> return (StepOutYield mode)
         Goto {}         -> do l <- getCurrentLineNumber vm
                               return (if n /= l then Stop else StepOverLine l)
