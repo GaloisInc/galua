@@ -5,6 +5,8 @@
 
     jQuery.get('/view', drawDebugger)
           .fail(disconnected)
+
+    $('#text-expression-text').keypress(textExpressionBoxKeyPressed)
   })
 })(jQuery)
 

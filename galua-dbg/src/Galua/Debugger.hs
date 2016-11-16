@@ -855,16 +855,24 @@ goto pc dbg =
     writeIORef (dbgStateVM dbg) (Running vm (Goto pc))
 
 
-executeStatement :: Debugger -> Int -> Text -> IO ()
+executeStatement :: Debugger -> Integer -> Text -> IO ()
 executeStatement dbg frame statement =
   whenIdle dbg $
-    do whenRunning dbg () $ \vm next ->
-         do recordConsoleInput statement
-            th <- readRef (vmCurThread vm)
-            next' <- executeStatementOnThread vm th frame (Text.unpack statement) $ \vs ->
-              PrimStep (Interrupt next <$ liftIO (recordConsoleValues vs))
-            writeIORef (dbgStateVM dbg) (Running vm next')
-       runNonBlock dbg
+    do things <- expClosed <$> readIORef (dbgExportable dbg)
+       case Map.lookup frame things of
+         Just (ExportableStackFrame pc env) ->
+           do whenRunning dbg () $ \vm next ->
+                do recordConsoleInput statement
+                   th <- readRef (vmCurThread vm)
+                   let stat = Text.unpack statement
+                   next' <- executeStatementInContext vm pc env stat $ \vs ->
+                     PrimStep (Interrupt next <$ liftIO (recordConsoleValues vs))
+                   writeIORef (dbgStateVM dbg) (Running vm next')
+
+              runNonBlock dbg
+
+         _ -> return ()
+
 
 poll :: Debugger -> Word64 -> Int {- ^ Timeout in seconds -} -> IO Word64
 poll dbg _ secs =
@@ -1075,7 +1083,8 @@ checkBreakPoint dbg mode vm nextStep k =
                                 return (Running vm nextStep)
                   Just c ->
                     do th <- readRef (vmCurThread vm)
-                       nextStep' <- executeCompiledStatment vm th 0 (brkCond c)
+                       nextStep' <- executeCompiledStatment vm (stExecEnv th)
+                                                               (brkCond c)
                                   $ \vs ->
                                     let stop = valueBool (trimResult1 vs)
                                     in if stop

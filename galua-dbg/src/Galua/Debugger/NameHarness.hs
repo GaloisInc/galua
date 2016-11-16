@@ -2,7 +2,7 @@ module Galua.Debugger.NameHarness
   ( CompiledStatment
   , compileStatementForLocation
   , executeCompiledStatment
-  , executeStatementOnThread
+  , executeStatementInContext
   , ParseError(..)
   )
   where
@@ -178,22 +178,6 @@ prepareStack stat parentStack =
      return stack
 
 
-executeCompiledStatment ::
-  VM -> Thread -> Int -> CompiledStatment -> ([Value] -> NextStep) -> IO NextStep
-executeCompiledStatment vm th frame cs resume =
-  do globRef <- newIORef (Table (machGlobals (vmMachineEnv vm)))
-     (_,cenv) <- lookupExecutionContext th frame
-     env     <- execEnvForCompiledStatment globRef cenv cs
-     let recover e  = resume [e]
-         frame = CallFrame (stPC th) (stExecEnv th) (Just recover) resume
-     writeRef (vmCurThread vm)
-         th { stExecEnv  = env
-            , stHandlers = DefaultHandler : stHandlers th
-            , stStack    = Stack.push frame (stStack th)
-            }
-     return (Goto 0)
-
-
 lookupExecutionContext :: Thread -> Int -> IO (Int, ExecEnv)
 lookupExecutionContext th frame =
   do let current = (stPC th, stExecEnv th)
@@ -205,14 +189,46 @@ lookupExecutionContext th frame =
          _                      -> return current -- fallback to current
 
 
-executeStatementOnThread ::
-  VM -> Thread -> Int -> String -> ([Value] -> NextStep) -> IO NextStep
-executeStatementOnThread vm th frame statement resume =
-  do (pc,env) <- lookupExecutionContext th frame
-     let fun = funValueCode (execFunction env)
+
+
+
+
+executeCompiledStatment ::
+  VM                  {- ^ For globals, and the currently executing thread -} ->
+  ExecEnv             {- ^ Lookup free variables here -} ->
+  CompiledStatment    {- ^ "Code pointer" -} ->
+  ([Value] -> NextStep) {- ^ Do this when we return -} ->
+  IO NextStep
+executeCompiledStatment vm cenv cs resume =
+  do globRef <- newIORef (Table (machGlobals (vmMachineEnv vm)))
+     env     <- execEnvForCompiledStatment globRef cenv cs
+     th      <- readRef (vmCurThread vm)
+     let recover e  = resume [e]
+         frame = CallFrame (stPC th) (stExecEnv th) (Just recover) resume
+     writeRef (vmCurThread vm)
+         th { stExecEnv  = env
+            , stHandlers = DefaultHandler : stHandlers th
+            , stStack    = Stack.push frame (stStack th)
+            }
+     return (Goto 0)
+
+
+
+
+executeStatementInContext ::
+  VM -> Int -> ExecEnv -> String -> ([Value] -> NextStep) -> IO NextStep
+executeStatementInContext vm pc env statement resume =
+  do let fun = funValueCode (execFunction env)
      res <- try (compileStatementForLocation fun pc statement)
      case res of
        Left (ParseError e) ->
           do b <- fromByteString (B8.pack e)
              return (resume [String b])
-       Right cs -> executeCompiledStatment vm th frame cs resume
+       Right cs -> executeCompiledStatment vm env cs resume
+
+
+
+
+
+
+
