@@ -860,7 +860,8 @@ executeStatement dbg frame statement =
   whenIdle dbg $
     do whenRunning dbg () $ \vm next ->
          do recordConsoleInput statement
-            next' <- executeStatementOnVM vm frame (Text.unpack statement) $ \vs ->
+            th <- readRef (vmCurThread vm)
+            next' <- executeStatementOnThread vm th frame (Text.unpack statement) $ \vs ->
               PrimStep (Interrupt next <$ liftIO (recordConsoleValues vs))
             writeIORef (dbgStateVM dbg) (Running vm next')
        runNonBlock dbg
@@ -1073,7 +1074,8 @@ checkBreakPoint dbg mode vm nextStep k =
                   Nothing -> do setIdleReason dbg ReachedBreakPoint
                                 return (Running vm nextStep)
                   Just c ->
-                    do nextStep' <- executeCompiledStatment vm 0 (brkCond c)
+                    do th <- readRef (vmCurThread vm)
+                       nextStep' <- executeCompiledStatment vm th 0 (brkCond c)
                                   $ \vs ->
                                     let stop = valueBool (trimResult1 vs)
                                     in if stop

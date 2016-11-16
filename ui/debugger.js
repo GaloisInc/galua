@@ -46,7 +46,7 @@ function newDebuggerState(d) {
   return { breakPoints:     brks
          , programCounter:  pc
          , currentStackFrame: 0
-         // , currentThread: 0 XXX
+         , currentThread: d.state.vm.thread.name
          , fun_counter:     0
 
          // Read only

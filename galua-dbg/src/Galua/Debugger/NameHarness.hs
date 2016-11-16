@@ -2,7 +2,7 @@ module Galua.Debugger.NameHarness
   ( CompiledStatment
   , compileStatementForLocation
   , executeCompiledStatment
-  , executeStatementOnVM
+  , executeStatementOnThread
   , ParseError(..)
   )
   where
@@ -179,11 +179,10 @@ prepareStack stat parentStack =
 
 
 executeCompiledStatment ::
-  VM -> Int -> CompiledStatment -> ([Value] -> NextStep) -> IO NextStep
-executeCompiledStatment vm frame cs resume =
-  do th      <- readRef (vmCurThread vm)
-     globRef <- newIORef (Table (machGlobals (vmMachineEnv vm)))
-     (_,cenv) <- lookupExecutionContext vm frame
+  VM -> Thread -> Int -> CompiledStatment -> ([Value] -> NextStep) -> IO NextStep
+executeCompiledStatment vm th frame cs resume =
+  do globRef <- newIORef (Table (machGlobals (vmMachineEnv vm)))
+     (_,cenv) <- lookupExecutionContext th frame
      env     <- execEnvForCompiledStatment globRef cenv cs
      let recover e  = resume [e]
          frame = CallFrame (stPC th) (stExecEnv th) (Just recover) resume
@@ -195,10 +194,9 @@ executeCompiledStatment vm frame cs resume =
      return (Goto 0)
 
 
-lookupExecutionContext :: VM -> Int -> IO (Int, ExecEnv)
-lookupExecutionContext vm frame =
-  do th <- readRef (vmCurThread vm)
-     let current = (stPC th, stExecEnv th)
+lookupExecutionContext :: Thread -> Int -> IO (Int, ExecEnv)
+lookupExecutionContext th frame =
+  do let current = (stPC th, stExecEnv th)
      if frame == 0 then
        return current
      else
@@ -207,13 +205,14 @@ lookupExecutionContext vm frame =
          _                      -> return current -- fallback to current
 
 
-executeStatementOnVM :: VM -> Int -> String -> ([Value] -> NextStep) -> IO NextStep
-executeStatementOnVM vm frame statement resume =
-  do (pc,env) <- lookupExecutionContext vm frame
+executeStatementOnThread ::
+  VM -> Thread -> Int -> String -> ([Value] -> NextStep) -> IO NextStep
+executeStatementOnThread vm th frame statement resume =
+  do (pc,env) <- lookupExecutionContext th frame
      let fun = funValueCode (execFunction env)
      res <- try (compileStatementForLocation fun pc statement)
      case res of
        Left (ParseError e) ->
           do b <- fromByteString (B8.pack e)
              return (resume [String b])
-       Right cs -> executeCompiledStatment vm frame cs resume
+       Right cs -> executeCompiledStatment vm th frame cs resume
