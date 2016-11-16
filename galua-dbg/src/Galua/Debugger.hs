@@ -855,12 +855,12 @@ goto pc dbg =
     writeIORef (dbgStateVM dbg) (Running vm (Goto pc))
 
 
-executeStatement :: Debugger -> Text -> IO ()
-executeStatement dbg statement =
+executeStatement :: Debugger -> Int -> Text -> IO ()
+executeStatement dbg frame statement =
   whenIdle dbg $
     do whenRunning dbg () $ \vm next ->
          do recordConsoleInput statement
-            next' <- executeStatementOnVM vm (Text.unpack statement) $ \vs ->
+            next' <- executeStatementOnVM vm frame (Text.unpack statement) $ \vs ->
               PrimStep (Interrupt next <$ liftIO (recordConsoleValues vs))
             writeIORef (dbgStateVM dbg) (Running vm next')
        runNonBlock dbg
@@ -1073,7 +1073,7 @@ checkBreakPoint dbg mode vm nextStep k =
                   Nothing -> do setIdleReason dbg ReachedBreakPoint
                                 return (Running vm nextStep)
                   Just c ->
-                    do nextStep' <- executeCompiledStatment vm (brkCond c)
+                    do nextStep' <- executeCompiledStatment vm 0 (brkCond c)
                                   $ \vs ->
                                     let stop = valueBool (trimResult1 vs)
                                     in if stop
