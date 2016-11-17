@@ -84,7 +84,7 @@ data CCallState
         String         -- entry point name
         CObjInfo       -- lazily computed return location
         [PrimArgument] -- api call arguments
-        (Mach ())      -- api call implementation
+        (Mach (Maybe PrimArgument)) -- api call implementation
 
 data CNextStep = CAbort | CResume | CCallback CFun
 
@@ -126,7 +126,7 @@ data NextStep
   | ThreadFail Value
 
   | ApiStart ApiCall NextStep
-  | ApiEnd ApiCall NextStep
+  | ApiEnd ApiCall (Maybe PrimArgument) NextStep
 
   | Interrupt NextStep -- ^ used to interrupt execution when in debugger
 
@@ -147,7 +147,7 @@ dumpNextStep next =
     Resume r _      -> "resume " ++ show (prettyRef r)
     Yield _         -> "yield"
     ApiStart api _  -> "apistart " ++ apiCallMethod api
-    ApiEnd api _    -> "apiend " ++ apiCallMethod api
+    ApiEnd api _ _  -> "apiend " ++ apiCallMethod api
     Interrupt n     -> "interrupt " ++ dumpNextStep n
 
 
@@ -300,7 +300,8 @@ data ExecEnv = ExecEnv
     -- ^ This is because the debug API can return the current closure.
 
     -- Interaction with the C world
-  , execApiCall  :: !(IORef ApiCallStatus)
+  , execApiCall    :: !(IORef ApiCallStatus)
+  , execLastResult :: !(IORef (Maybe PrimArgument))
 
     -- Profiling
   , execCreateTime :: {-# UNPACK #-} !Clock.TimeSpec
@@ -336,12 +337,14 @@ newThreadExecEnv =
   do stack <- SV.new
      api   <- newIORef NoApiCall
      var   <- newIORef []
+     resultRef <- newIORef Nothing
      time  <- Clock.getTime Clock.ProcessCPUTime
      return ExecEnv { execStack    = stack
                     , execUpvals   = Vector.empty
                     , execFunction = cFunction blankCFunName
                     , execVarargs  = var
                     , execApiCall  = api
+                    , execLastResult = resultRef
                     , execClosure  = Nil
                     , execCreateTime = time
                     , execChildTime  = 0
@@ -417,9 +420,11 @@ machResume t = Mach $ \_ -> Resume t
 machYield :: Mach ()
 machYield = Mach $ \_ k -> Yield (k ())
 
-machApiCall :: ApiCall -> Mach a -> Mach a
+machApiCall :: ApiCall -> Mach (Maybe PrimArgument) -> Mach ()
 machApiCall apiCall impl =
-  Mach $ \vm k -> ApiStart apiCall (runMach vm (abort . ApiEnd apiCall . k =<< impl))
+  Mach $ \vm k -> ApiStart apiCall $ runMach vm $
+     do res <- impl
+        abort (ApiEnd apiCall res (k ()))
 
 machVM :: Mach VM
 machVM = Mach $ \e k -> k e

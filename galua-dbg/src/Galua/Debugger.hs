@@ -863,7 +863,6 @@ executeStatement dbg frame statement =
          Just (ExportableStackFrame pc env) ->
            do whenRunning dbg () $ \vm next ->
                 do recordConsoleInput statement
-                   th <- readRef (vmCurThread vm)
                    let stat = Text.unpack statement
                    next' <- executeStatementInContext vm pc env stat $ \vs ->
                      PrimStep (Interrupt next <$ liftIO (recordConsoleValues vs))
@@ -1082,8 +1081,7 @@ checkBreakPoint dbg mode vm nextStep k =
                   Nothing -> do setIdleReason dbg ReachedBreakPoint
                                 return (Running vm nextStep)
                   Just c ->
-                    do th <- readRef (vmCurThread vm)
-                       nextStep' <- executeCompiledStatment vm (stExecEnv th)
+                    do nextStep' <- executeCompiledStatment vm (stExecEnv th)
                                                                (brkCond c)
                                   $ \vs ->
                                     let stop = valueBool (trimResult1 vs)

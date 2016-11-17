@@ -12,7 +12,7 @@ import           Control.Exception (Exception, try, throwIO)
 import qualified Data.ByteString.Lazy.Char8 as L8
 import qualified Data.ByteString.Char8 as B8
 import           Data.IORef (IORef, newIORef)
-import           Data.Foldable (traverse_,toList)
+import           Data.Foldable (traverse_)
 import           Data.List (unfoldr, mapAccumR, intercalate)
 import           Data.Maybe (catMaybes)
 import           Data.Set (Set)
@@ -178,20 +178,6 @@ prepareStack stat parentStack =
      return stack
 
 
-lookupExecutionContext :: Thread -> Int -> IO (Int, ExecEnv)
-lookupExecutionContext th frame =
-  do let current = (stPC th, stExecEnv th)
-     if frame == 0 then
-       return current
-     else
-       case drop (frame-1) (toList (stStack th)) of
-         CallFrame pc env _ _:_ -> return (pc,env)
-         _                      -> return current -- fallback to current
-
-
-
-
-
 
 executeCompiledStatment ::
   VM                  {- ^ For globals, and the currently executing thread -} ->
@@ -225,10 +211,3 @@ executeStatementInContext vm pc env statement resume =
           do b <- fromByteString (B8.pack e)
              return (resume [String b])
        Right cs -> executeCompiledStatment vm env cs resume
-
-
-
-
-
-
-
