@@ -46,7 +46,7 @@ reentryFromC ::
   String         {- ^ name of entry point      -} ->
   CObjInfo       {- ^ return address           -} ->
   [PrimArgument] {- ^ arguments at entry point -} ->
-  Mach ()        {- ^ code to run              -} ->
+  Mach (Maybe PrimArgument) {- ^ code to run   -} ->
   Mach ()
 reentryFromC label returnAddress primargs k =
   do let apiCall = ApiCall

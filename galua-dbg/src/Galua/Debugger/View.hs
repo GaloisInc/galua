@@ -614,15 +614,15 @@ exportCallStackFrameShort funs pc env mbnext =
   do ref <- newThing (ExportableStackFrame pc env)
      st  <- io (readIORef (execApiCall env))
      apiInfo <- case mbnext of
-                  Just (ApiStart api _) -> exportApiCall api ApiCallStarting
-                  Just (ApiEnd   api _) -> exportApiCall api ApiCallEnding
+                  Just (ApiStart api _)   -> exportApiCall api ApiCallStarting
+                  Just (ApiEnd   api _ _) -> exportApiCall api ApiCallEnding
                   _ -> case st of
                          NoApiCall -> pure []
                          ApiCallAborted api  -> exportApiCall api ApiCallRunning
                          ApiCallActive api   -> exportApiCall api ApiCallRunning
      return (JS.object ( apiInfo ++
                          tag "call"
-                       : "ref" .= ref
+                       : "ref"    .= ref
                        : exportFunctionValue funs pc (execFunction env)))
 
 data ApiCallPhase = ApiCallStarting | ApiCallRunning | ApiCallEnding
@@ -816,10 +816,13 @@ exportExecEnv funs pc eid
 
      vAs <- zipWithM (\n -> named (VP_Varargs env n) Nothing) [0..] =<<
                                                     io (readIORef execVarargs)
+
+     cRes <- traverse exportPrimArg =<< io (readIORef (execLastResult env))
      return $ JS.object $ [ "registers" .= regVs
                           , "upvalues"  .= uVs
                           , "varargs"   .= vAs
                           , "code"      .= code
+                          , "result"    .= cRes
                           ] ++ exportFunctionValue funs pc execFunction
 
   where

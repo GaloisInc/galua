@@ -863,7 +863,6 @@ executeStatement dbg frame statement =
          Just (ExportableStackFrame pc env) ->
            do whenRunning dbg () $ \vm next ->
                 do recordConsoleInput statement
-                   th <- readRef (vmCurThread vm)
                    let stat = Text.unpack statement
                    next' <- executeStatementInContext vm pc env stat $ \vs ->
                      PrimStep (Interrupt next <$ liftIO (recordConsoleValues vs))
@@ -1082,8 +1081,7 @@ checkBreakPoint dbg mode vm nextStep k =
                   Nothing -> do setIdleReason dbg ReachedBreakPoint
                                 return (Running vm nextStep)
                   Just c ->
-                    do th <- readRef (vmCurThread vm)
-                       nextStep' <- executeCompiledStatment vm (stExecEnv th)
+                    do nextStep' <- executeCompiledStatment vm (stExecEnv th)
                                                                (brkCond c)
                                   $ \vs ->
                                     let stop = valueBool (trimResult1 vs)
@@ -1121,12 +1119,14 @@ nextMode vm step mode =
       case step of
         Goto    {}      -> Stop
         ApiStart{}      -> Stop
+        ApiEnd {}       -> Stop
         _               -> mode
 
     StepOverOp -> return $
       case step of
         Goto    {}      -> Stop
         ApiStart{}      -> StepOut mode
+        ApiEnd {}       -> Stop
         FunCall {}      -> StepOut mode
         Resume  {}      -> StepOutYield mode
         _               -> mode
@@ -1151,6 +1151,7 @@ nextMode vm step mode =
         FunReturn {}    -> return Stop
         ErrorReturn {}  -> return Stop
         ApiStart {}     -> return Stop
+        ApiEnd {}       -> return Stop
         Goto {}         -> do l <- getCurrentLineNumber vm
                               return (if n /= l then Stop else StepIntoLine l)
         _               -> return mode
@@ -1165,6 +1166,7 @@ nextMode vm step mode =
         FunReturn {}    -> return Stop
         ErrorReturn {}  -> return Stop
         ApiStart {}     -> return (StepOut mode)
+        ApiEnd {}       -> return Stop
         Resume {}       -> return (StepOutYield mode)
         Goto {}         -> do l <- getCurrentLineNumber vm
                               return (if n /= l then Stop else StepOverLine l)
