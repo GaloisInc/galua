@@ -241,9 +241,51 @@ function drawSources(dbgState, sources) {
 }
 
 
-function drawProfiling(dbgState,stats) {
+function drawProfiling(dbgState,stats,sortOn) {
+
   var list = $('#profiling-list')
+  var lastMarker = list.data('galua-sorted-marker')
   list.empty()
+
+  function clickSort(how) {
+    var me = $('#prof-by-' + how)
+    me
+    .css('cursor','pointer')
+    .off('click')
+    .click(function() { drawProfiling(dbgState,stats,how) })
+  }
+
+  clickSort('name')
+  clickSort('cum')
+  clickSort('ind')
+  clickSort('calls')
+
+  function byMostCalls(a,b)   { return b.calls - a.calls }
+  function byMostIndTime(a,b) { return b.ind   - a.ind   }
+  function byMostCumTime(a,b) { return b.cum   - a.cum   }
+  function byName(a,b) {
+    var al = a.loc
+    var bl = b.loc
+    if (al.type === 'Lua' && bl.type === 'C')   return -1
+    if (al.type === 'C'   && bl.type === 'Lua') return  1
+    if (al.name === bl.name)                    return 0
+    return al.name < bl.name ? -1 : 1
+  }
+
+  var sortFuns = { cum:   byMostCumTime
+                 , ind:   byMostIndTime
+                 , calls: byMostCalls
+                 , name:  byName
+                 }
+
+  var sortFun = sortFuns[sortOn]
+  if (sortFun !== undefined) {
+    if (lastMarker) lastMarker.remove()
+    var mark = $('<i/>').addClass('tiny material-icons').text('sort')
+    $('#prof-by-' + sortOn).append(mark)
+    list.data('galua-sorted-marker', mark)
+    stats.calls.sort(sortFun)
+  }
 
   jQuery.each(stats.calls, function(ix,entry) {
     var count = $('<td/>').text(entry.calls)
@@ -314,7 +356,7 @@ function drawDebugger(d) {
 
       drawWatches(dbgState, d.watches)
 
-      drawProfiling(dbgState, state.vm.stats)
+      drawProfiling(dbgState, state.vm.stats, 'ind')
       drawRegistry(dbgState,  state.vm.registry )
 
       drawNewThread(dbgState, state.vm.thread)
