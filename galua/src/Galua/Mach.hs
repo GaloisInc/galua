@@ -269,7 +269,6 @@ data MachineEnv = MachineEnv
 
 data ProfilingInfo = ProfilingInfo
   { profCallCounters  :: {-# UNPACK #-} !(IORef (Map FunName Int))
-  , profAllocCounters :: {-# UNPACK #-} !(IORef (Map CodeLoc Int))
   , profFunctionTimers :: {-# UNPACK #-} !(IORef (Map FunName FunctionRuntimes))
     -- ^ How many times was a particular function called.
   }
@@ -543,11 +542,7 @@ machNewTable ::
   Mach (Reference Table)
 machNewTable aSz hSz =
   do loc <- machRefLoc
-     ref <- newTable loc aSz hSz
-     counts <- getsMachEnv (profAllocCounters . machProfiling)
-     liftIO $
-        do incrementCounter ref counts
-           return ref
+     newTable loc aSz hSz
 
 machNewUserData :: ForeignPtr () -> Int -> Mach (Reference UserData)
 machNewUserData fp n =
