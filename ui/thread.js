@@ -169,7 +169,8 @@ function drawStackFrame(dbgState,threadParts,ix,f,focused) {
                 .append($('<i/>').addClass('material-icons')
                                  .text('chevron_left'))
       var kbd = $('<i/>')
-                .addClass('material-icons secondary-content stack-ptr')
+                .addClass('material-icons secondary-content stack-ptr tooltipped')
+                .attr('data-tooltip', 'Evaluate statement')
                 .text('keyboard')
                 .click(function() {
                    editExpression('Evaluate Statment','',
@@ -178,6 +179,7 @@ function drawStackFrame(dbgState,threadParts,ix,f,focused) {
                       jQuery.post('/exec', args, function() {}) // XXX: redraw
                     })
                  })
+                 .tooltip()
       if (!focused) { ptr.addClass('hide'); kbd.addClass('hide') }
       box.append([ptr,kbd])
       box.append(drawFunName(f))
