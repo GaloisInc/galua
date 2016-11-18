@@ -41,8 +41,8 @@ constantValue k =
 -- in the currently executing function.
 loadInstruction :: Int {- ^ instruction counter -} -> Mach OpCode
 loadInstruction i =
-  do (_,fun) <- asLuaFunction =<< getsExecEnv execFunction
-     case funcCode fun Vector.!? i of
+  do code <- getsExecEnv execInstructions
+     case code Vector.!? i of
        Nothing -> interpThrow (BadPc i)
        Just x -> return x
 

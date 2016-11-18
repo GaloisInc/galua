@@ -393,7 +393,7 @@ enterClosure ::
 enterClosure c vs = liftIO $
   do MkClosure { cloFun, cloUpvalues } <- readRef c
 
-     let (stackElts, vas, start) =
+     let (stackElts, vas, start, code) =
            case funValueCode cloFun of
              LuaOpCodes f ->
                   let n = funcMaxStackSize f
@@ -405,9 +405,9 @@ enterClosure c vs = liftIO $
                         | funcIsVararg f = extraArgs
                         | otherwise      = []
 
-                  in (stack, varargs, machGoto 0)
+                  in (stack, varargs, machGoto 0, funcCode f)
 
-             CCode cfun -> (vs, [], execCFunction cfun)
+             CCode cfun -> (vs, [], execCFunction cfun, mempty)
 
      stack    <- SV.new
      traverse_ (SV.push stack <=< newIORef) stackElts
@@ -425,6 +425,7 @@ enterClosure c vs = liftIO $
                           , execClosure  = Closure c
                           , execCreateTime = time
                           , execChildTime  = 0
+                          , execInstructions  = code
                           }
 
-     return (newEnv, \vm -> runMach vm start)
+     newEnv `seq` return (newEnv, \vm -> runMach vm start)

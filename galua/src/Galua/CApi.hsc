@@ -148,9 +148,9 @@ stackFromList stack vs =
 
 cServiceLoop :: Ptr () -> MVar CNextStep -> TMVar CCallState -> IO CInt
 cServiceLoop l resultMVar interpMVar =
-  do result <- takeMVar resultMVar
+  do res <- takeMVar resultMVar
                 `catch` \SomeException{} -> return CAbort
-     case result of
+     case res of
        CAbort  -> return 1
        CResume -> return 0
        CCallback cfun ->

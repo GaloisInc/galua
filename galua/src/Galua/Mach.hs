@@ -289,18 +289,19 @@ data MachConfig = MachConfig
 
 
 data ExecEnv = ExecEnv
-  { execStack    :: !(SV.SizedVector (IORef Value))
+  { execStack    :: {-# UNPACK #-} !(SV.SizedVector (IORef Value))
 
     -- The currently executing function
-  , execUpvals   :: !(Vector (IORef Value))
+  , execUpvals   :: {-# UNPACK #-} !(Vector (IORef Value))
   , execFunction :: !FunctionValue
-  , execVarargs  :: !(IORef [Value])
+  , execVarargs  :: {-# UNPACK #-} !(IORef [Value])
   , execClosure  :: !Value
     -- ^ This is because the debug API can return the current closure.
 
     -- Interaction with the C world
-  , execApiCall    :: !(IORef ApiCallStatus)
-  , execLastResult :: !(IORef (Maybe PrimArgument))
+  , execApiCall    :: {-# UNPACK #-} !(IORef ApiCallStatus)
+  , execLastResult :: {-# UNPACK #-} !(IORef (Maybe PrimArgument))
+  , execInstructions :: {-# UNPACK #-} !(Vector OpCode)
 
     -- Profiling
   , execCreateTime :: {-# UNPACK #-} !Clock.TimeSpec
@@ -344,6 +345,7 @@ newThreadExecEnv =
                     , execVarargs  = var
                     , execApiCall  = api
                     , execLastResult = resultRef
+                    , execInstructions = Vector.empty
                     , execClosure  = Nil
                     , execCreateTime = time
                     , execChildTime  = 0
@@ -472,6 +474,7 @@ getsExecEnv f =
   do ref <- machCurrentThread
      th  <- readRef ref
      return (f (stExecEnv th))
+{-# INLINE getsExecEnv #-}
 
 getsVM :: (VM -> a) -> Mach a
 getsVM f = fmap f machVM
