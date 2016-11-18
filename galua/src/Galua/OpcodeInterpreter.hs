@@ -39,6 +39,7 @@ constantValue k =
 
 -- | Attempt to load the instruction stored at the given address
 -- in the currently executing function.
+{-# INLINE loadInstruction #-}
 loadInstruction :: Int {- ^ instruction counter -} -> Mach OpCode
 loadInstruction i =
   do code <- getsExecEnv execInstructions
@@ -48,6 +49,7 @@ loadInstruction i =
 
 -- | Attempt to load the EXTRAARG instruction stored at the given address
 -- in the currently executing function.
+{-# INLINE loadExtraArg #-}
 loadExtraArg :: Int {- ^ program counter -} -> Mach Int
 loadExtraArg pc =
   do instr <- loadInstruction pc
@@ -62,7 +64,7 @@ loadExtraArg pc =
 -- | Compute the result of executing the opcode at the given address
 -- within the current function execution environment.
 execute :: Int {- ^ program counter -} -> Mach a
-execute pc =
+execute !pc =
 
   do instr <- loadInstruction pc
      let advance      = jump 0

@@ -2,6 +2,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE BangPatterns #-}
 module Galua.Mach where
 
 
@@ -91,10 +92,10 @@ data CNextStep = CAbort | CResume | CCallback CFun
 
 -- | Machine instructions to do with control flow.
 data NextStep
-  = Goto Int
+  = Goto {-# UNPACK #-} !Int
     -- ^ Continue executing this function at a new address
 
-  | FunCall (Reference Closure) [Value]   -- call this
+  | FunCall {-# UNPACK #-} !(Reference Closure) [Value]   -- call this
             (Maybe Handler)               -- using this handler
             ([Value] -> NextStep)         -- result goes here
 
@@ -104,7 +105,7 @@ data NextStep
   | ErrorReturn Value
     -- ^ Function execution succeeded with results
 
-  | FunTailcall (Reference Closure) [Value]
+  | FunTailcall {-# UNPACK #-} !(Reference Closure) [Value]
     -- ^ Call a function and return its result
 
   | ThrowError Value
@@ -117,7 +118,7 @@ data NextStep
     -- ^ Yield to C, wait for a response from the C reentry thread
     -- See 'CCallState' for possible responses
 
-  | Resume (Reference Thread) (ThreadResult -> NextStep)
+  | Resume {-# UNPACK #-} !(Reference Thread) (ThreadResult -> NextStep)
     -- ^ Resume the given suspended thread
 
   | Yield NextStep
@@ -431,7 +432,7 @@ machVM :: Mach VM
 machVM = Mach $ \e k -> k e
 
 machGoto :: Int -> Mach a
-machGoto n = abort (Goto n)
+machGoto !n = abort (Goto n)
 
 machRefLoc :: Mach RefLoc
 machRefLoc =
