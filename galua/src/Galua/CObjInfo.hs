@@ -92,7 +92,7 @@ cfunInfoFun =
                                  , cObjLine = Nothing
                                  }
 #else
-  return $ \_ -> return (noFunInfo fptr)
+  return $ \fptr -> return (noFunInfo fptr)
 #endif
 
 
