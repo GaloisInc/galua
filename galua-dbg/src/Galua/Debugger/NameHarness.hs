@@ -144,6 +144,7 @@ execEnvForCompiledStatment globals env stat =
        , execFunction = luaFunction noFun (csFunc stat)
        , execClosure  = Nil -- used for debug API
        , execApiCall  = apiCallRef
+       , execInstructions = funcCode (csFunc stat)
        , execCreateTime = now
        , execChildTime  = 0
        }
