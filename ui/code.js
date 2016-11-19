@@ -127,7 +127,8 @@ function redrawFunction(dbgState, here, f) {
         .addClass('cur-line')
 
         // Highlight new current op-code
-        $('.ops_' + line.line + '.' + f.chunk + '-' + opcode.opcode)
+        let xxx = '.ops_' + line.line + '.' + f.chunk + '-' + opcode.opcode
+        $('.ops_' + line.line + '.' + opCodeKey(opcode))
         .addClass('cur-line')
 
         // Open/close opcode if we moved onto a new line
@@ -155,15 +156,17 @@ function redrawFunction(dbgState, here, f) {
 
 }
 
+// This is how we identify a location to the server
+function mkOpKey(fid,c) {
+  if (fid !== undefined && c !== undefined) return fid + '-' + c
+  return null
+}
+
+function opCodeKey(o) { return mkOpKey(o.path,o.opcode) }
+
+
 
 function drawLine(dbgState,context,chunkId,here) {
-
-  // This is how we identify a location to the server
-  function mkOpKey(fid,c) {
-     if (fid !== undefined && c !== undefined) return fid + '-' + c
-     return null
-  }
-  function opCodeKey(o) { return mkOpKey(o.path,o.opcode) }
 
 
   // Utility: set or remove a class, depending on the boolean.
