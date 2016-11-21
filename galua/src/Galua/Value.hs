@@ -264,21 +264,25 @@ packUtf8 = encodeUtf8 . Text.pack
 --------------------------------------------------------------------------------
 -- Simple casts
 
+{-# INLINE valueNumber #-}
 valueNumber :: Value -> Maybe Number
 valueNumber (Number n) = Just n
 valueNumber (String n) = forceDouble <$> parseNumber (unpackUtf8 (toByteString n))
 valueNumber _          = Nothing
 
+{-# INLINE valueBool #-}
 valueBool :: Value -> Bool
 valueBool Nil      = False
 valueBool (Bool b) = b
 valueBool _        = True
 
+{-# INLINE valueInt #-}
 valueInt :: Value -> Maybe Int
 valueInt (Number n) = numberToInt n
 valueInt (String n) = numberToInt =<< parseNumber (unpackUtf8 (toByteString n))
 valueInt _          = Nothing
 
+{-# INLINE valueString #-}
 valueString :: Value -> Maybe ByteString
 valueString v =
   case v of
@@ -289,6 +293,7 @@ valueString v =
 
 -- | Trim a list of values down to the first value.
 -- The empty list is replaced with 'Nil'
+{-# INLINE trimResult1 #-}
 trimResult1 :: [Value] -> Value
 trimResult1 [] = Nil
 trimResult1 (x:_) = x

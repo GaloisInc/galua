@@ -40,7 +40,6 @@ module Galua.Overloading
 import           Control.Monad.IO.Class(MonadIO(liftIO))
 import           Control.Monad.Trans.Reader(ReaderT(..), ask)
 import qualified Data.ByteString as B
-import           Data.String(fromString)
 import           Data.IORef (readIORef)
 import           Data.Map (Map)
 import qualified Data.Map as Map
@@ -345,43 +344,56 @@ valueInt1 event f x1 =
                      _   -> trimResult1 <$> m__call metamethod [x1]
 
 
-
+{-# INLINE valueArith2 #-}
 valueArith2 ::
   LuaString -> (Number -> Number -> Number) -> Value -> Value -> Mach Value
 valueArith2 event f x y =
-  case (valueNumber x, valueNumber y) of
-    (Just l, Just r) -> return (Number (f l r))
-    (vl,vr) ->
-        do metamethod <- valueMetamethod2 x y event
-           case (metamethod,vl,vr) of
-             (Nil,Nothing,_) -> badArithmetic x
-             (Nil,_,Nothing) -> badArithmetic y
-             _               -> trimResult1 <$> m__call metamethod [x,y]
+  case valueNumber x of
+    Nothing -> overload x
+    Just l ->
+      case valueNumber y of
+        Nothing -> overload y
+        Just r -> return $! Number (f l r)
 
+  where
+  overload bad =
+    do metamethod <- valueMetamethod2 x y event
+       case metamethod of
+         Nil -> badArithmetic bad
+         _   -> trimResult1 <$> m__call metamethod [x,y]
+
+
+{-# INLINE valueInt2 #-}
 valueInt2 ::
   LuaString -> (Int -> Int -> Int) -> Value -> Value -> Mach Value
 valueInt2 event f x1 x2 =
-  case (valueInt x1, valueInt x2) of
-    (Just l, Just r) -> return (Number (Int (f l r)))
-    _ -> do metamethod <- valueMetamethod2 x1 x2 event
-            case metamethod of
-              Nil -> badInt
-              _   -> trimResult1 <$> m__call metamethod [x1,x2]
+  case valueInt x1 of
+    Nothing -> overload
+    Just l ->
+      case valueInt x2 of
+        Just r -> return $! Number (Int (f l r))
+        Nothing -> overload
+  where
+  overload =
+    do metamethod <- valueMetamethod2 x1 x2 event
+       case metamethod of
+         Nil -> badInt
+         _   -> trimResult1 <$> m__call metamethod [x1,x2]
 
 
 
 
 m__add :: Value -> Value -> Mach Value
-m__add = valueArith2 str__add (+)
+m__add x y = valueArith2 str__add (+) x y
 
 m__sub :: Value -> Value -> Mach Value
-m__sub = valueArith2 str__sub (-)
+m__sub x y = valueArith2 str__sub (-) x y
 
 m__mul :: Value -> Value -> Mach Value
-m__mul = valueArith2 str__mul (*)
+m__mul x y = valueArith2 str__mul (*) x y
 
 m__div :: Value -> Value -> Mach Value
-m__div = valueArith2 str__div numberDiv
+m__div x y = valueArith2 str__div numberDiv x y
 
 m__idiv :: Value -> Value -> Mach Value
 m__idiv x y =
@@ -396,28 +408,28 @@ m__mod x y =
     _ -> valueArith2 str__mod numberMod x y
 
 m__pow :: Value -> Value -> Mach Value
-m__pow = valueArith2 str__pow numberPow
+m__pow x y = valueArith2 str__pow numberPow x y
 
 m__unm :: Value -> Mach Value
-m__unm = valueArith1 str__unm negate
+m__unm x = valueArith1 str__unm negate x
 
 m__band :: Value -> Value -> Mach Value
-m__band = valueInt2 str__band (.&.)
+m__band x y = valueInt2 str__band (.&.) x y
 
 m__bor :: Value -> Value -> Mach Value
-m__bor = valueInt2 str__bor (.|.)
+m__bor x y = valueInt2 str__bor (.|.) x y
 
 m__bxor :: Value -> Value -> Mach Value
-m__bxor = valueInt2 str__bxor xor
+m__bxor x y = valueInt2 str__bxor xor x y
 
 m__shl :: Value -> Value -> Mach Value
-m__shl = valueInt2 str__shl wordshiftL
+m__shl x y = valueInt2 str__shl wordshiftL x y
 
 m__shr :: Value -> Value -> Mach Value
-m__shr = valueInt2 str__shr wordshiftR
+m__shr x y = valueInt2 str__shr wordshiftR x y
 
 m__bnot :: Value -> Mach Value
-m__bnot = valueInt1 str__bnot complement
+m__bnot x = valueInt1 str__bnot complement x
 
 
 
@@ -458,9 +470,6 @@ m__len v =
 
 m__concat :: [Value] -> Mach Value
 m__concat = concat2 . reverse
-
-nullLuaString :: LuaString -> Bool
-nullLuaString = B.null . toByteString
 
 -- Take the arguments in REVERSE order
 concat2 :: [Value] -> Mach Value
