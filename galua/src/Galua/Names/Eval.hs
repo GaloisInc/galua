@@ -22,7 +22,7 @@ import           Data.Bits(complement)
 import           Control.Exception(Exception,throwIO)
 
 import Galua.Value(Value(..),valueBool)
-import Galua.Overloading(valueMetamethod,withMetatables)
+import Galua.Overloading(get_m__index)
 import Galua.Reference(Reference,readRef)
 import Galua.Util.Table(Table,getTableRaw,tableLen)
 import Galua.Util.SizedVector(SizedVector,getMaybe)
@@ -206,7 +206,7 @@ lookupInTable eenv key ref =
 
 indexFromMetaTable :: NameResolveEnv -> Bool -> Value -> Value -> IO Value
 indexFromMetaTable eenv failOnNil v key =
-  do method <- withMetatables tabs (valueMetamethod v "__index")
+  do method <- get_m__index (nrMetas eenv) v
      case method of
        Nil | failOnNil -> bad "Missing field."
            | otherwise -> return Nil
@@ -214,10 +214,6 @@ indexFromMetaTable eenv failOnNil v key =
        Closure _ ->
          bad "Accessing the value requires executing the meta-method."
        _ -> indexFromMetaTable eenv True method key
-
-  where
-  tabs = nrMetas eenv
-
 
 
 

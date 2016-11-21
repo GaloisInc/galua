@@ -40,6 +40,8 @@ fromByteString bs = U.unsafeUseAsCStringLen bs peekLuaString
 -- | This is not suitable for most things---in particular it should never
 -- be passed out to Lua.  We use it when we are querrying the current state,
 -- and we need to turn a ByteString to a LuaString temporarily.
+-- We also use it to define constants for the names of the various
+-- metamethods (see Galua.Overloading)
 unsafeFromByteString :: ByteString -> LuaString
 unsafeFromByteString = LuaString
 

@@ -426,7 +426,7 @@ lua_settable_hs l r ix =
   do t <- valueArgument (fromIntegral ix) args
      kv <- liftIO (popN args 2)
      case kv of
-       [k,v] -> Nothing <$ setTable t k v
+       [k,v] -> Nothing <$ m__newindex t k v
        _ -> luaError "lua_settable: bad arguments"
 
 --------------------------------------------------------------------------------
@@ -615,7 +615,7 @@ lua_getfield_hs l r ix k out =
   reentry "lua_getfield" [cArg ix, cstringArg0 k] l r $ \args ->
   do t <- valueArgument (fromIntegral ix) args
      key <- liftIO (peekLuaString0 k)
-     v <- indexValue t (String key)
+     v <- m__index t (String key)
      liftIO $
        do push args v
           result out (lua_type_int v)
@@ -630,7 +630,7 @@ lua_setfield_hs l r ix k =
   do t <- valueArgument (fromIntegral ix) args
      v <- pop args
      key <- liftIO (peekLuaString0 k)
-     setTable t (String key) v
+     m__newindex t (String key) v
      return Nothing
 
 foreign export ccall lua_createtable_hs :: EntryPoint (CInt -> CInt -> IO CInt)
@@ -687,7 +687,7 @@ lua_geti_hs :: EntryPoint (CInt -> Lua_Integer -> Ptr CInt -> IO CInt)
 lua_geti_hs l r ix n out =
   reentry "lua_geti" [cArg ix, cArg n] l r $ \args ->
   do t <- valueArgument (fromIntegral ix) args
-     v <- indexValue t (Number (fromIntegral n))
+     v <- m__index t (Number (fromIntegral n))
      liftIO $
        do push args v
           result out (lua_type_int v)
@@ -700,7 +700,7 @@ lua_gettable_hs l r ix out =
   reentry "lua_gettable" [cArg ix] l r $ \args ->
   do t <- valueArgument (fromIntegral ix) args
      k <- pop args
-     v <- indexValue t k
+     v <- m__index t k
      liftIO $
        do push args v
           result out (lua_type_int v)
@@ -727,7 +727,7 @@ lua_seti_hs l r ix n =
   reentry "lua_seti" [cArg ix, cArg n] l r $ \args ->
   do t <- valueArgument (fromIntegral ix) args
      v <- pop args
-     setTable t (Number (fromIntegral n)) v
+     m__newindex t (Number (fromIntegral n)) v
      return Nothing
 
 foreign export ccall lua_rawseti_hs
@@ -782,9 +782,9 @@ lua_compare_hs l r ix1 ix2 op out =
      ans <- case (mbx,mby) of
        (Just x, Just y) ->
          do f <- case op of
-                   #{const LUA_OPEQ} -> return valueEqual
-                   #{const LUA_OPLT} -> return valueLess
-                   #{const LUA_OPLE} -> return valueLessEqual
+                   #{const LUA_OPEQ} -> return m__eq
+                   #{const LUA_OPLT} -> return m__lt
+                   #{const LUA_OPLE} -> return m__le
                    _                 -> luaError "lua_compare: bad operator"
             result <- f x y
             return (if result then 1 else 0)
@@ -801,51 +801,28 @@ lua_arith_hs l r opNum =
   reentry "lua_arith" [cArg opNum] l r $
     (Nothing <$) .
     case opNum of
-      #{const LUA_OPADD}  -> arith2 "__add" (+)
-      #{const LUA_OPSUB}  -> arith2 "__sub" (-)
-      #{const LUA_OPMUL}  -> arith2 "__mul" (*)
-      #{const LUA_OPDIV}  -> arith2 "__div" numberDiv
-      #{const LUA_OPIDIV} -> idivCase
-      #{const LUA_OPMOD}  -> arith2 "__mod" numberMod
-      #{const LUA_OPPOW}  -> arith2 "__pow" numberPow
-      #{const LUA_OPUNM}  -> arith1 "__unm" negate
-      #{const LUA_OPBAND} -> int2 "__band" (.&.)
-      #{const LUA_OPBOR}  -> int2 "__bor" (.|.)
-      #{const LUA_OPBXOR} -> int2 "__bxor" xor
-      #{const LUA_OPSHL}  -> int2 "__shl" wordshiftL
-      #{const LUA_OPSHR}  -> int2 "__shr" wordshiftR
-      #{const LUA_OPBNOT} -> int1 "__bnot" complement
+      #{const LUA_OPADD}  -> op2 m__add
+      #{const LUA_OPSUB}  -> op2 m__sub
+      #{const LUA_OPMUL}  -> op2 m__mul
+      #{const LUA_OPDIV}  -> op2 m__div
+      #{const LUA_OPIDIV} -> op2 m__idiv
+      #{const LUA_OPMOD}  -> op2 m__mod
+      #{const LUA_OPPOW}  -> op2 m__pow
+      #{const LUA_OPUNM}  -> op1 m__unm
+      #{const LUA_OPBAND} -> op2 m__band
+      #{const LUA_OPBOR}  -> op2 m__bor
+      #{const LUA_OPBXOR} -> op2 m__bxor
+      #{const LUA_OPSHL}  -> op2 m__shl
+      #{const LUA_OPSHR}  -> op2 m__shr
+      #{const LUA_OPBNOT} -> op1 m__bnot
       _                   -> \_ -> luaError "lua_arith: bad operator"
   where
-  idivCase args =
-    do y <- pop args
-       x <- pop args
-       case (x,y) of
-         (Number (Int _), Number (Int 0)) -> luaError "atempt to divide by zero"
-         _ -> do z <- valueArith2 "__idiv" numberIDiv x y
-                 push args z
+  op1 f args = do x <- pop args
+                  push args =<< f x
 
-  arith2 name op args =
-    do y <- pop args
-       x <- pop args
-       z <- valueArith2 name op x y
-       push args z
-
-  arith1 name op args =
-    do x <- pop args
-       y <- valueArith1 name op x
-       push args y
-
-  int2 name op args =
-    do y <- pop args
-       x <- pop args
-       z <- valueInt2 name op x y
-       push args z
-
-  int1 name op args =
-    do x <- pop args
-       y <- valueInt1 name op x
-       push args y
+  op2 f args = do y <- pop args
+                  x <- pop args
+                  push args =<< f x y
 
 
 foreign export ccall lua_getmetatable_hs
@@ -924,7 +901,7 @@ lua_callk_hs l r narg nresult ctx k =
   do fxs <- popN args (fromIntegral narg + 1)
      case fxs of
        f:xs ->
-         do rs <- callValue f xs
+         do rs <- m__call f xs
             traverse_ (push args)
                 $ if nresult == lua_multret
                     then rs
@@ -985,7 +962,7 @@ lua_len_hs :: EntryPoint (CInt -> IO CInt)
 lua_len_hs l r idx =
   reentry "lua_len" [cArg idx] l r $ \args ->
   do v <- valueArgument (fromIntegral idx) args
-     len <- valueLength v
+     len <- m__len v
      liftIO (push args len)
      return Nothing
 
@@ -1065,7 +1042,7 @@ lua_concat_hs :: EntryPoint (CInt -> IO CInt)
 lua_concat_hs l r n =
   reentry "lua_concat" [cArg n] l r $ \args ->
   do xs <- popN args (fromIntegral n)
-     res <- opConcat xs
+     res <- m__concat xs
      push args res
      return Nothing
 

@@ -33,14 +33,8 @@ handleGC :: Mach ()
 handleGC =
   do garbageRef <- getsMachEnv machGarbage
      garbage    <- liftIO (atomicModifyIORef garbageRef (\xs -> ([], xs)))
-     traverse_ gcValue garbage
+     traverse_ m__gc garbage
 
-gcValue :: Value -> Mach ()
-gcValue val =
-  do metamethod <- valueMetamethod val "__gc"
-     case metamethod of
-        Nil -> return ()
-        _   -> () <$ callValue metamethod [val]
 
 reentryFromC ::
   String         {- ^ name of entry point      -} ->

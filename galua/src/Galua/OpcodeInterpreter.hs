@@ -95,25 +95,25 @@ execute !pc =
        OP_GETTABUP tgt src tabKey ->
          do t <- get src
             k <- get tabKey
-            tgt =: indexValue t k
+            tgt =: m__index t k
 
        OP_GETTABLE tgt src tabKey ->
          do t <- get src
             k <- get tabKey
-            tgt =: indexValue t k
+            tgt =: m__index t k
 
        OP_SETTABUP tgt key src ->
          do t <- get tgt
             k <- get key
             v <- get src
-            setTable t k v
+            m__newindex t k v
             advance
 
        OP_SETTABLE tgt key src ->
          do t <- get tgt
             k <- get key
             v <- get src
-            setTable t k v
+            m__newindex t k v
             advance
 
        OP_NEWTABLE tgt arraySize hashSize ->
@@ -122,40 +122,40 @@ execute !pc =
        OP_SELF tgt src key ->
          do t <- get src
             k <- get key
-            v <- indexValue t k
+            v <- m__index t k
             set tgt v
             set (succ tgt) t
             advance
 
-       OP_ADD  tgt op1 op2 -> tgt =: binArithOp "__add" (+)       op1 op2
-       OP_SUB  tgt op1 op2 -> tgt =: binArithOp "__sub" (-)       op1 op2
-       OP_MUL  tgt op1 op2 -> tgt =: binArithOp "__mul" (*)       op1 op2
-       OP_MOD  tgt op1 op2 -> tgt =: opMod                        op1 op2
-       OP_POW  tgt op1 op2 -> tgt =: binArithOp "__pow" numberPow op1 op2
-       OP_DIV  tgt op1 op2 -> tgt =: binArithOp "__div" numberDiv op1 op2
-       OP_IDIV tgt op1 op2 -> tgt =: opIDiv                       op1 op2
-       OP_BAND tgt op1 op2 -> tgt =: binIntOp "__band" (.&.)      op1 op2
-       OP_BOR  tgt op1 op2 -> tgt =: binIntOp "__bor" (.|.)       op1 op2
-       OP_BXOR tgt op1 op2 -> tgt =: binIntOp "__bxor" xor        op1 op2
-       OP_SHL  tgt op1 op2 -> tgt =: binIntOp "__shl" wordshiftL  op1 op2
-       OP_SHR  tgt op1 op2 -> tgt =: binIntOp "__shr" wordshiftR  op1 op2
+       OP_ADD  tgt op1 op2 -> tgt =: binOp m__add  op1 op2
+       OP_SUB  tgt op1 op2 -> tgt =: binOp m__sub  op1 op2
+       OP_MUL  tgt op1 op2 -> tgt =: binOp m__mul  op1 op2
+       OP_MOD  tgt op1 op2 -> tgt =: binOp m__mod  op1 op2
+       OP_POW  tgt op1 op2 -> tgt =: binOp m__pow  op1 op2
+       OP_DIV  tgt op1 op2 -> tgt =: binOp m__div  op1 op2
+       OP_IDIV tgt op1 op2 -> tgt =: binOp m__idiv op1 op2
+       OP_BAND tgt op1 op2 -> tgt =: binOp m__band op1 op2
+       OP_BOR  tgt op1 op2 -> tgt =: binOp m__bor  op1 op2
+       OP_BXOR tgt op1 op2 -> tgt =: binOp m__bxor op1 op2
+       OP_SHL  tgt op1 op2 -> tgt =: binOp m__shl  op1 op2
+       OP_SHR  tgt op1 op2 -> tgt =: binOp m__shr  op1 op2
 
-       OP_UNM  tgt op1  -> tgt =: (get op1 >>= valueArith1 "__unm" negate)
-       OP_BNOT tgt op1  -> tgt =: (get op1 >>= valueInt1 "__bnot" complement)
-       OP_LEN  tgt op1  -> tgt =: (get op1 >>= valueLength         )
-       OP_NOT  tgt op1  -> tgt =: (get op1 >>= opNot               )
+       OP_UNM  tgt op1  -> tgt =: (get op1 >>= m__unm)
+       OP_BNOT tgt op1  -> tgt =: (get op1 >>= m__bnot)
+       OP_LEN  tgt op1  -> tgt =: (get op1 >>= m__len)
+       OP_NOT  tgt op1  -> tgt =: (get op1 >>= opNot)
 
        OP_CONCAT tgt start end ->
          do xs  <- traverse get [start .. end]
-            tgt =: opConcat xs
+            tgt =: m__concat xs
 
        OP_JMP mbCloseReg jmp ->
          do traverse_ closeStack mbCloseReg
             jump jmp
 
-       OP_EQ invert op1 op2 -> jump =<< relOp valueEqual     invert op1 op2
-       OP_LT invert op1 op2 -> jump =<< relOp valueLess      invert op1 op2
-       OP_LE invert op1 op2 -> jump =<< relOp valueLessEqual invert op1 op2
+       OP_EQ invert op1 op2 -> jump =<< relOp m__eq invert op1 op2
+       OP_LT invert op1 op2 -> jump =<< relOp m__lt invert op1 op2
+       OP_LE invert op1 op2 -> jump =<< relOp m__le invert op1 op2
 
        OP_TEST ra c ->
           do a <- get ra
@@ -171,7 +171,7 @@ execute !pc =
        OP_CALL a b c ->
          do u      <- get a
             args   <- getCallArguments (succ a) b
-            result <- callValue u args
+            result <- m__call u args
             setCallResults a c result
             advance
 
@@ -211,7 +211,7 @@ execute !pc =
          do f  <- get a
             a1 <- get (plusReg a 1)
             a2 <- get (plusReg a 2)
-            result <- callValue f [a1,a2]
+            result <- m__call f [a1,a2]
             let resultRegs = regRange (plusReg a 3) c
             zipWithM_ set resultRegs (result ++ repeat Nil)
             advance
@@ -371,9 +371,7 @@ getProto (ProtoIx i) =
 -- Unary operations
 ------------------------------------------------------------------------
 
-type UnOp m = Value -> m Value
-
-opNot :: Monad m => UnOp m
+opNot :: Monad m => Value -> m Value
 opNot x = return (Bool (not (valueBool x)))
 
 
@@ -382,38 +380,12 @@ opNot x = return (Bool (not (valueBool x)))
 -- Binary operations
 ------------------------------------------------------------------------
 
-
-
-
-type BinOp = Value -> Value -> IO Value
-
-opIDiv :: RK -> RK -> Mach Value
-opIDiv src1 src2 =
-  do x <- get src1
-     y <- get src2
-     case (x,y) of
-       (Number (Int _), Number (Int 0)) -> luaError "atempt to divide by zero"
-       _ -> valueArith2 "__idiv" numberIDiv x y
-
-opMod :: RK -> RK -> Mach Value
-opMod src1 src2 =
-  do x <- get src1
-     y <- get src2
-     case (x,y) of
-       (Number (Int _), Number (Int 0)) -> luaError "atempt to perform n%0"
-       _ -> valueArith2 "__mod" numberMod x y
-
-binArithOp :: String -> (Number -> Number -> Number) -> RK -> RK -> Mach Value
-binArithOp event f src1 src2 =
+binOp :: (Value -> Value -> Mach Value) -> RK -> RK -> Mach Value
+binOp f src1 src2 =
   do x1 <- get src1
      x2 <- get src2
-     valueArith2 event f x1 x2
+     f x1 x2
 
-binIntOp :: String -> (Int -> Int -> Int) -> RK -> RK -> Mach Value
-binIntOp event f src1 src2 =
-  do x1 <- get src1
-     x2 <- get src2
-     valueInt2 event f x1 x2
 
 
 

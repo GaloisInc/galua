@@ -1,6 +1,41 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, OverloadedStrings #-}
 
-module Galua.Overloading where
+module Galua.Overloading
+  ( -- * Overloaded methods
+    m__call
+  , m__gc
+
+  , m__len
+  , m__index
+  , m__newindex
+
+  , m__concat
+
+  , m__eq
+  , m__lt
+  , m__le
+
+  , m__add
+  , m__sub
+  , m__mul
+  , m__div
+  , m__idiv
+  , m__mod
+  , m__pow
+  , m__unm
+  , m__band
+  , m__bor
+  , m__bxor
+  , m__shl
+  , m__shr
+  , m__bnot
+
+   -- * Misc
+  , resolveFunction
+  , get_m__index
+  , valueMetatable
+  , setMetatable
+  ) where
 
 import           Control.Monad.IO.Class(MonadIO(liftIO))
 import           Control.Monad.Trans.Reader(ReaderT(..), ask)
@@ -9,12 +44,14 @@ import           Data.String(fromString)
 import           Data.IORef (readIORef)
 import           Data.Map (Map)
 import qualified Data.Map as Map
+import           Data.Bits((.&.),(.|.),xor,complement)
 
 import           Galua.Mach
 import           Galua.Number
 import           Galua.Reference
 import           Galua.Value
 import           Galua.LuaString
+
 
 
 ------------------------------------------------------------------------
@@ -69,15 +106,13 @@ setMetatable mt v =
 valueMetamethod ::
   MetatableMonad m =>
   Value ->
-  String {- ^ metamethod name -} ->
+  LuaString {- ^ metamethod name -} ->
   m Value
 valueMetamethod v event =
   do mbMetatable <- valueMetatable v
      liftIO $ case mbMetatable of
        Nothing -> return Nil
-       Just metatable ->
-         do keyStr <- fromByteString (fromString event)
-            getTableRaw metatable (String keyStr)
+       Just metatable -> getTableRaw metatable (String event)
 
 -- | Look up a metamethod on the first value if it is set falling back to
 -- the second value.
@@ -85,13 +120,24 @@ valueMetamethod2 ::
   MetatableMonad m =>
   Value ->
   Value ->
-  String {- ^ metamethod name -} ->
+  LuaString {- ^ metamethod name -} ->
   m Value
 valueMetamethod2 x y event =
   do m1 <- valueMetamethod x event
      case m1 of
        Nil -> valueMetamethod y event
        _   -> return m1
+
+--------------------------------------------------------------------------------
+-- GC
+
+
+m__gc :: Value -> Mach ()
+m__gc val =
+  do metamethod <- valueMetamethod val str__gc
+     case metamethod of
+        Nil -> return ()
+        _   -> () <$ m__call metamethod [val]
 
 
 
@@ -108,7 +154,7 @@ resolveFunction ::
   Mach (Reference Closure, [Value]) -- ^ actual function, and arugments
 resolveFunction (Closure c) args = return (c, args)
 resolveFunction x args =
-  do metamethod <- valueMetamethod x "__call"
+  do metamethod <- valueMetamethod x str__call
      case metamethod of
        Nil -> luaError ("attempt to call a " ++
                                   prettyValueType (valueType x) ++ " value")
@@ -119,11 +165,11 @@ resolveFunction x args =
 -- | Compute the result of applying a function to its arguments.
 -- This is more general than 'runClosure' because it can use
 -- metamethods to resolve the call on non-closures.
-callValue ::
+m__call ::
   Value     {- ^ function -} ->
   [Value]   {- ^ arguments -} ->
   Mach [Value] {- ^ results -}
-callValue x args =
+m__call x args =
   do (f,newArgs) <- resolveFunction x args
      machCall f newArgs
 
@@ -143,12 +189,12 @@ badIndex x =
 -- @
 -- table[key]=value
 -- @
-setTable ::
+m__newindex ::
   Value {- ^ table -} ->
   Value {- ^ key   -} ->
   Value {- ^ value -} ->
   Mach ()
-setTable t k v =
+m__newindex t k v =
   case t of
     Table table ->
         do let next = keyCheck k >> setTableRaw table k v
@@ -160,11 +206,11 @@ setTable t k v =
     _ -> metaCase (badIndex t)
   where
   metaCase onFailure =
-    do metamethod <- valueMetamethod t "__newindex"
+    do metamethod <- valueMetamethod t str__newindex
        case metamethod of
          Closure c -> () <$ machCall c [t,k,v]
          Nil       -> onFailure
-         _         -> setTable metamethod k v
+         _         -> m__newindex metamethod k v
 
 keyCheck :: Value -> Mach ()
 keyCheck (Number (Double nan)) | isNaN nan = luaError "table index is NaN"
@@ -178,8 +224,8 @@ keyCheck _ = return ()
 -- @
 -- table[key]
 -- @
-indexValue :: Value {- ^ table -} -> Value {- ^ key -} -> Mach Value
-indexValue m key =
+m__index :: Value {- ^ table -} -> Value {- ^ key -} -> Mach Value
+m__index m key =
   case m of
     Table table ->
          do v <- getTableRaw table key
@@ -190,14 +236,19 @@ indexValue m key =
     _ -> metaCase (badIndex m)
   where
   metaCase onFailure =
-    do metamethod <- valueMetamethod m "__index"
+    do metamethod <- valueMetamethod m str__index
        case metamethod of
          Closure c -> trimResult1 <$> machCall c [m,key]
          Nil       -> onFailure
-         _         -> indexValue metamethod key
+         _         -> m__index metamethod key
 
 
 
+-- | The the indexing meta-method.  This is a separate function,
+-- because when we resolve names, we resolve the index lookup slightly
+-- differently (no function calls)
+get_m__index :: Map ValueType (Reference Table) -> Value -> IO Value
+get_m__index tabs m = withMetatables tabs (valueMetamethod m str__index)
 
 
 
@@ -212,8 +263,8 @@ badCompare x y =
 
 -- | Return 'True' when two values are "equal". This operation
 -- can be overloaded using the `__eq` metamethod.
-valueEqual :: Value -> Value -> Mach Bool
-valueEqual x y =
+m__eq :: Value -> Value -> Mach Bool
+m__eq x y =
   case (x, y) of
     _ | x == y               -> return True
     (Table   {}, Table   {}) -> metaEq
@@ -222,41 +273,41 @@ valueEqual x y =
 
   where
   metaEq =
-    do metamethod <- valueMetamethod2 x y "__eq"
+    do metamethod <- valueMetamethod2 x y str__eq
        case metamethod of
          Nil -> return False
          _   ->
-            do rs <- callValue metamethod [x,y]
+            do rs <- m__call metamethod [x,y]
                case rs of
                  [] -> return False
                  r:_ -> return (valueBool r)
 
 -- | Return 'True' the first value is "less-than" than the second.
 -- This operation can be overloaded using the `__lt` metamethod.
-valueLess :: Value -> Value -> Mach Bool
-valueLess (Number x) (Number y) = return (x < y)
-valueLess (String x) (String y) = return (x < y)
-valueLess x y =
-  do metamethod <- valueMetamethod2 x y "__lt"
+m__lt :: Value -> Value -> Mach Bool
+m__lt (Number x) (Number y) = return (x < y)
+m__lt (String x) (String y) = return (x < y)
+m__lt x y =
+  do metamethod <- valueMetamethod2 x y str__lt
      case metamethod of
        Nil -> badCompare x y
        _   ->
-         do rs <- callValue metamethod [x,y]
+         do rs <- m__call metamethod [x,y]
             case rs of
               [] -> return False
               r:_ -> return (valueBool r)
 
 -- | Return 'True' the first value is "less-then-or-equal-to" than the second.
 -- This operation can be overloaded using the `__le` metamethod.
-valueLessEqual :: Value -> Value -> Mach Bool
-valueLessEqual (Number x) (Number y) = return (x <= y)
-valueLessEqual (String x) (String y) = return (x <= y)
-valueLessEqual x y =
-  do metamethod <- valueMetamethod2 x y "__le"
+m__le :: Value -> Value -> Mach Bool
+m__le (Number x) (Number y) = return (x <= y)
+m__le (String x) (String y) = return (x <= y)
+m__le x y =
+  do metamethod <- valueMetamethod2 x y str__le
      case metamethod of
-       Nil -> not <$> valueLess y x
+       Nil -> not <$> m__lt y x
        _   ->
-         do rs <- callValue metamethod [x,y]
+         do rs <- m__call metamethod [x,y]
             case rs of
               [] -> return False
               r:_ -> return (valueBool r)
@@ -274,29 +325,29 @@ badArithmetic x = luaError ("attempt to perform arithmetic on a " ++
                                     prettyValueType (valueType x) ++ " value")
 
 
-valueArith1 :: String -> (Number -> Number) -> Value -> Mach Value
+valueArith1 :: LuaString -> (Number -> Number) -> Value -> Mach Value
 valueArith1 event f x =
   case valueNumber x of
     Just n  -> return (Number (f n))
     Nothing -> do metamethod <- valueMetamethod x event
                   case metamethod of
                     Nil -> badArithmetic x
-                    _   -> trimResult1 <$> callValue metamethod [x]
+                    _   -> trimResult1 <$> m__call metamethod [x]
 
 
-valueInt1 :: String -> (Int -> Int) -> Value -> Mach Value
+valueInt1 :: LuaString -> (Int -> Int) -> Value -> Mach Value
 valueInt1 event f x1 =
   case valueInt x1 of
     Just i  -> return (Number (Int (f i)))
     Nothing -> do metamethod <- valueMetamethod x1 event
                   case metamethod of
                      Nil -> badInt
-                     _   -> trimResult1 <$> callValue metamethod [x1]
+                     _   -> trimResult1 <$> m__call metamethod [x1]
 
 
 
 valueArith2 ::
-  String -> (Number -> Number -> Number) -> Value -> Value -> Mach Value
+  LuaString -> (Number -> Number -> Number) -> Value -> Value -> Mach Value
 valueArith2 event f x y =
   case (valueNumber x, valueNumber y) of
     (Just l, Just r) -> return (Number (f l r))
@@ -305,17 +356,80 @@ valueArith2 event f x y =
            case (metamethod,vl,vr) of
              (Nil,Nothing,_) -> badArithmetic x
              (Nil,_,Nothing) -> badArithmetic y
-             _               -> trimResult1 <$> callValue metamethod [x,y]
+             _               -> trimResult1 <$> m__call metamethod [x,y]
 
 valueInt2 ::
-  String -> (Int -> Int -> Int) -> Value -> Value -> Mach Value
+  LuaString -> (Int -> Int -> Int) -> Value -> Value -> Mach Value
 valueInt2 event f x1 x2 =
   case (valueInt x1, valueInt x2) of
     (Just l, Just r) -> return (Number (Int (f l r)))
     _ -> do metamethod <- valueMetamethod2 x1 x2 event
             case metamethod of
               Nil -> badInt
-              _   -> trimResult1 <$> callValue metamethod [x1,x2]
+              _   -> trimResult1 <$> m__call metamethod [x1,x2]
+
+
+
+
+m__add :: Value -> Value -> Mach Value
+m__add = valueArith2 str__add (+)
+
+m__sub :: Value -> Value -> Mach Value
+m__sub = valueArith2 str__sub (-)
+
+m__mul :: Value -> Value -> Mach Value
+m__mul = valueArith2 str__mul (*)
+
+m__div :: Value -> Value -> Mach Value
+m__div = valueArith2 str__div numberDiv
+
+m__idiv :: Value -> Value -> Mach Value
+m__idiv x y =
+  case (x,y) of
+    (Number (Int _), Number (Int 0)) -> luaError "atempt to divide by zero"
+    _ -> valueArith2 str__idiv numberIDiv x y
+
+m__mod :: Value -> Value -> Mach Value
+m__mod x y =
+  case (x,y) of
+    (Number (Int _), Number (Int 0)) -> luaError "atempt to perform 'n%0'"
+    _ -> valueArith2 str__mod numberMod x y
+
+m__pow :: Value -> Value -> Mach Value
+m__pow = valueArith2 str__pow numberPow
+
+m__unm :: Value -> Mach Value
+m__unm = valueArith1 str__unm negate
+
+m__band :: Value -> Value -> Mach Value
+m__band = valueInt2 str__band (.&.)
+
+m__bor :: Value -> Value -> Mach Value
+m__bor = valueInt2 str__bor (.|.)
+
+m__bxor :: Value -> Value -> Mach Value
+m__bxor = valueInt2 str__bxor xor
+
+m__shl :: Value -> Value -> Mach Value
+m__shl = valueInt2 str__shl wordshiftL
+
+m__shr :: Value -> Value -> Mach Value
+m__shr = valueInt2 str__shr wordshiftR
+
+m__bnot :: Value -> Mach Value
+m__bnot = valueInt1 str__bnot complement
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -330,20 +444,20 @@ badLength :: Value -> Mach a
 badLength x = luaError ("attempt to get length of a " ++
                                     prettyValueType (valueType x) ++ " value")
 
-valueLength :: Value -> Mach Value
-valueLength v =
+m__len :: Value -> Mach Value
+m__len v =
   case v of
     String x -> return (Number (fromIntegral (B.length (toByteString x))))
-    _ -> do metamethod <- valueMetamethod v "__len"
+    _ -> do metamethod <- valueMetamethod v str__len
             case (metamethod,v) of
               (Nil,Table t) -> Number . Int <$> liftIO (tableLen t)
               (Nil,_      ) -> badLength v
-              _             -> trimResult1 <$> callValue metamethod [v]
+              _             -> trimResult1 <$> m__call metamethod [v]
 
 
 
-opConcat :: [Value] -> Mach Value
-opConcat = concat2 . reverse
+m__concat :: [Value] -> Mach Value
+m__concat = concat2 . reverse
 
 nullLuaString :: LuaString -> Bool
 nullLuaString = B.null . toByteString
@@ -365,11 +479,11 @@ concat2 (x:y:z) =
 
     -- Otherwise we use the __concat metamethod to collapse the
     -- top two arguments of the stack and try again.
-    _ -> do metamethod <- valueMetamethod2 y x "__concat"
+    _ -> do metamethod <- valueMetamethod2 y x str__concat
             case metamethod of
               Nil -> badConcat y x
               _   ->
-                do r <- trimResult1 <$> callValue metamethod [y,x]
+                do r <- trimResult1 <$> m__call metamethod [y,x]
                    concat2 (r:z)            -- the list of arguments is reverse
                                             -- so we pass y before x here
 
@@ -387,5 +501,60 @@ takeMaybe f (x:xs) =
     Nothing -> ([],x:xs)
     Just y  -> let (ys,xs') = takeMaybe f xs
                in (y:ys,xs')
+
+
+
+
+--------------------------------------------------------------------------------
+
+str__call
+  , str__gc
+  , str__len
+  , str__index
+  , str__newindex
+  , str__concat
+  , str__eq
+  , str__lt
+  , str__le
+  , str__add
+  , str__sub
+  , str__mul
+  , str__div
+  , str__idiv
+  , str__mod
+  , str__pow
+  , str__unm
+  , str__band
+  , str__bor
+  , str__bxor
+  , str__shl
+  , str__shr
+  , str__bnot :: LuaString
+
+str__call     = unsafeFromByteString "__call"
+str__gc       = unsafeFromByteString "__gc"
+str__len      = unsafeFromByteString "__len"
+str__index    = unsafeFromByteString "__index"
+str__newindex = unsafeFromByteString "__newindex"
+str__concat   = unsafeFromByteString "__concat"
+str__eq       = unsafeFromByteString "__eq"
+str__lt       = unsafeFromByteString "__lt"
+str__le       = unsafeFromByteString "__le"
+str__add      = unsafeFromByteString "__add"
+str__sub      = unsafeFromByteString "__sub"
+str__mul      = unsafeFromByteString "__mul"
+str__div      = unsafeFromByteString "__div"
+str__idiv     = unsafeFromByteString "__idiv"
+str__mod      = unsafeFromByteString "__mod"
+str__pow      = unsafeFromByteString "__pow"
+str__unm      = unsafeFromByteString "__unm"
+str__band     = unsafeFromByteString "__band"
+str__bor      = unsafeFromByteString "__bor"
+str__bxor     = unsafeFromByteString "__bxor"
+str__shl      = unsafeFromByteString "__shl"
+str__shr      = unsafeFromByteString "__shr"
+str__bnot     = unsafeFromByteString "__bnot"
+
+
 
 
