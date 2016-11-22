@@ -3,7 +3,8 @@
 {-# LANGUAGE RecordWildCards #-}
 
 module Galua.Stepper
-  ( oneStep
+  ( Cont(..)
+  , oneStepK
   , runAllSteps
   ) where
 
@@ -39,14 +40,6 @@ data Cont r = Cont
   , finishedOk        :: [Value] -> Alloc r
   , finishedWithError :: Value -> Alloc r
   }
-
-oneStep :: VM -> NextStep -> Alloc VMState
-oneStep = oneStepK
-  Cont { running = \a b -> return $! Running a b
-       , runningInC = \a -> return $! RunningInC a
-       , finishedOk = \a -> return $! FinishedOk a
-       , finishedWithError = \a -> return $! FinishedWithError a
-       }
 
 {-# INLINE oneStepK #-}
 oneStepK :: Cont r -> VM -> NextStep -> Alloc r
@@ -253,7 +246,7 @@ addChildTime elapsed e =
   e { execChildTime = execChildTime e + elapsed }
 
 
-{-# LANGUAGE performThreadFail #-}
+{-# INLINE performThreadFail #-}
 performThreadFail :: Cont r -> VM -> Value -> Alloc r
 performThreadFail c vm e =
   do let ref = vmCurThread vm
@@ -269,6 +262,7 @@ performThreadFail c vm e =
             vmSwitchToNormal c vm{ vmCurThread = t, vmBlocked = ts }
                                (ThreadError e)
 
+{-# INLINE performThrowError #-}
 performThrowError :: Cont r -> VM -> Value -> Alloc r
 performThrowError c vm e =
   do let ref = vmCurThread vm

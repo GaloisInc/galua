@@ -980,7 +980,8 @@ runDebugger dbg =
               case state of
                 Running vm next ->
                   do setIdleReason dbg Executing
-                     writeIORef (dbgStateVM dbg) =<< doStepMode dbg vm next mode
+                     writeIORef (dbgStateVM dbg) =<<
+                       runAllocWith (dbgNames dbg) (doStepMode dbg vm next mode)
                 _ -> return ()
               clients  <- readIORef (dbgClients dbg)
               writeIORef (dbgClients dbg) []
@@ -1003,62 +1004,65 @@ getCurrentLineNumber vm =
               do (_,func) <- luaOpCodes (execFunction (stExecEnv th))
                  lookupLineNumber func (stPC th)
 
-doStepMode :: Debugger -> VM -> NextStep -> StepMode -> IO VMState
-doStepMode dbg vm next mode =
-  do vmstate <- runAllocWith (dbgNames dbg) (oneStep vm next)
-     mode' <- nextMode vm next mode
-     case vmstate of
-       RunningInC vm' ->
-          do let luaTMVar = machLuaServer (vmMachineEnv vm')
-             res <- atomically $ Left  <$> waitForCommandSTM dbg
-                             <|> Right <$> takeTMVar luaTMVar
-             case res of
-               Left m ->
-                 do command <- m
-                    mbNewMode <- handleCommand dbg False command
-                    doStepMode dbg vm' WaitForC (fromMaybe mode' mbNewMode)
+doStepMode :: Debugger -> VM -> NextStep -> StepMode -> Alloc VMState
+doStepMode dbg vm next mode = oneStepK cont vm next
+  where
+  cont = Cont { running = runInLua, runningInC = runInC
+              , finishedOk = \v -> return (FinishedOk v)
+              , finishedWithError = \v -> return (FinishedWithError v)
+              }
 
-               Right cResult ->
-                 do let next' = runMach vm' (handleCCallState cResult)
-                    doStepMode dbg vm' next' mode'
+  runInC vm' =
+    do mode'   <- liftIO (nextMode vm next mode)
+       let luaTMVar = machLuaServer (vmMachineEnv vm')
+       res <- liftIO (atomically $ Left  <$> waitForCommandSTM dbg
+                               <|> Right <$> takeTMVar luaTMVar)
+       case res of
+         Left m ->
+           do command <- liftIO m
+              mbNewMode <- liftIO (handleCommand dbg False command)
+              doStepMode dbg vm' WaitForC (fromMaybe mode' mbNewMode)
 
-       Running vm' next' ->
-        checkStopError dbg vm' next' $
-          if not (mayPauseAfter next)
-            then doStepMode dbg vm' next' mode'
-            else checkStop dbg mode' vm' next' $
-                 checkBreakPoint dbg mode' vm' next' $
-                 do mb <- peekCmd dbg
-                    case mb of
-                      Nothing      -> doStepMode dbg vm' next' mode'
-                      Just command ->
-                        do mbNewMode <- handleCommand dbg False command
-                           let mode'' = fromMaybe mode' mbNewMode
-                           -- external stop directive and we're already
-                           -- at a safe point
-                           if mode'' == Stop then
-                              do setIdleReason dbg Ready
-                                 return vmstate
-                           else
-                              doStepMode dbg vm' next' mode''
+         Right cResult ->
+           do let next' = runMach vm' (handleCCallState cResult)
+              doStepMode dbg vm' next' mode'
 
-       _ -> return vmstate
+  runInLua vm' next' =
+    liftIO (nextMode vm next mode) >>= \mode' ->
+    checkStopError dbg vm' next' $
+      if not (mayPauseAfter next)
+        then doStepMode dbg vm' next' mode'
+        else checkStop dbg mode' vm' next' $
+             checkBreakPoint dbg mode' vm' next' $
+             do mb <- liftIO (peekCmd dbg)
+                case mb of
+                  Nothing      -> doStepMode dbg vm' next' mode'
+                  Just command ->
+                    do mbNewMode <- liftIO (handleCommand dbg False command)
+                       let mode'' = fromMaybe mode' mbNewMode
+                       -- external stop directive and we're already
+                       -- at a safe point
+                       if mode'' == Stop then
+                          do liftIO (setIdleReason dbg Ready)
+                             return (Running vm' next')
+                       else
+                          doStepMode dbg vm' next' mode''
 
 
-checkStop :: Debugger -> StepMode -> VM -> NextStep -> IO VMState -> IO VMState
+checkStop :: Debugger -> StepMode -> VM -> NextStep -> Alloc VMState -> Alloc VMState
 checkStop dbg mode vm next k =
   case mode of
-    Stop -> do setIdleReason dbg Ready
+    Stop -> do liftIO (setIdleReason dbg Ready)
                return (Running vm next)
     _    -> k
 
-checkStopError :: Debugger -> VM -> NextStep -> IO VMState -> IO VMState
+checkStopError :: Debugger -> VM -> NextStep -> Alloc VMState -> Alloc VMState
 checkStopError dbg vm next k =
   case next of
     ThrowError e ->
-      do stopOnErr <- readIORef (dbgBreakOnError dbg)
+      do stopOnErr <- liftIO (readIORef (dbgBreakOnError dbg))
          if stopOnErr
-            then do setIdleReason dbg (ThrowingError e)
+            then do liftIO (setIdleReason dbg (ThrowingError e))
                     return (Running vm next)
             else k
     _ -> k
@@ -1066,22 +1070,22 @@ checkStopError dbg vm next k =
 
 
 checkBreakPoint :: Debugger -> StepMode -> VM -> NextStep ->
-                                                    IO VMState -> IO VMState
+                                                    Alloc VMState -> Alloc VMState
 checkBreakPoint dbg mode vm nextStep k =
-  do th <- readRef (vmCurThread vm)
+  do th <- liftIO (readRef (vmCurThread vm))
      let curFun = funValueName (execFunction (stExecEnv th))
          pc     = stPC th
      case curFun of
        LuaFID fid ->
          do let loc = (pc,fid)
-            breaks <- readIORef (dbgBreaks dbg)
+            breaks <- liftIO (readIORef (dbgBreaks dbg))
             case Map.lookup loc breaks of
               Just mbCond ->
                 case mbCond of
-                  Nothing -> do setIdleReason dbg ReachedBreakPoint
+                  Nothing -> do liftIO (setIdleReason dbg ReachedBreakPoint)
                                 return (Running vm nextStep)
                   Just c ->
-                    do nextStep' <- executeCompiledStatment vm (stExecEnv th)
+                    do nextStep' <- liftIO $ executeCompiledStatment vm (stExecEnv th)
                                                                (brkCond c)
                                   $ \vs ->
                                     let stop = valueBool (trimResult1 vs)
