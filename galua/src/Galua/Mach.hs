@@ -505,7 +505,6 @@ newMachineEnv machConfig =
 newProfilingInfo :: IO ProfilingInfo
 newProfilingInfo =
   do profCallCounters  <- newIORef Map.empty
-     profAllocCounters <- newIORef Map.empty
      profFunctionTimers <- newIORef Map.empty
      return ProfilingInfo { .. }
 

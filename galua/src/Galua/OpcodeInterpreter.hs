@@ -8,7 +8,6 @@ module Galua.OpcodeInterpreter where
 import           Control.Exception hiding (Handler)
 import           Control.Monad
 import           Control.Monad.IO.Class
-import           Data.Bits
 import           Data.Foldable
 import           Data.IORef
 import qualified Data.Vector as Vector
