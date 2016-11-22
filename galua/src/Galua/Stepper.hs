@@ -41,16 +41,16 @@ data Cont r = Cont
   }
 
 oneStep :: VM -> NextStep -> Alloc VMState
-oneStep = oneStep'
+oneStep = oneStepK
   Cont { running = \a b -> return $! Running a b
        , runningInC = \a -> return $! RunningInC a
        , finishedOk = \a -> return $! FinishedOk a
        , finishedWithError = \a -> return $! FinishedWithError a
        }
 
-{-# INLINE oneStep' #-}
-oneStep' :: Cont r -> VM -> NextStep -> Alloc r
-oneStep' c vm instr = do
+{-# INLINE oneStepK #-}
+oneStepK :: Cont r -> VM -> NextStep -> Alloc r
+oneStepK c vm instr = do
   case instr of
     PrimStep m          -> running c vm =<< m
     Goto pc             -> performGoto          c vm pc
@@ -379,7 +379,7 @@ performErrorReturn c vm e =
 
 
 runAllSteps :: VM -> NextStep -> Alloc (Either Value [Value])
-runAllSteps vm i = oneStep' cont vm i
+runAllSteps vm i = oneStepK cont vm i
   where
   cont = Cont { running    = runAllSteps
               , runningInC = \v1 ->
