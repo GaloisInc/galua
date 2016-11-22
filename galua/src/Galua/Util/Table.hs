@@ -11,6 +11,7 @@ module Galua.Util.Table
   , tableNext
   , TableValue(..)
   , tableToList
+  , tableGetMeta
   ) where
 
 import           Data.HashTable.IO(CuckooHashTable,lookupIndex,nextByIndex)
@@ -18,6 +19,8 @@ import qualified Data.HashTable.IO as Hash
 import           Data.Hashable(Hashable)
 import           Data.IORef(IORef,newIORef,writeIORef,readIORef)
 import qualified Galua.Util.SizedVector as SV
+import qualified Data.Vector as Vector
+import           Data.Vector (Vector)
 
 -- Desired goals (not necessarily implemented)
 -- 1. Indexable by all values
@@ -30,6 +33,7 @@ data Table v = Table
   { tableArray :: {-# UNPACK #-} !(SV.SizedVector v)
   , tableHash  :: {-# UNPACK #-} !(Hash v)
   , tableMeta  :: {-# UNPACK #-} !(IORef v) -- ^ Either "Table" or "Nil"
+  , tableMCache:: {-# UNPACK #-} !(IORef (Vector v))
   }
 
 class (Eq v, Hashable v) => TableValue v where
@@ -44,6 +48,7 @@ newTable arraySize hashSize =
   do tableArray <- SV.newN arraySize
      tableHash  <- Hash.newSized hashSize
      tableMeta  <- newIORef nilTableValue
+     tableMCache <- newIORef Vector.empty
      return Table { .. }
 
 setTableMeta :: Table v -> v -> IO ()
@@ -71,17 +76,18 @@ getTableRaw Table { .. } key =
 setTableRaw ::
   TableValue v => Table v -> v {- ^ key -} -> v {- ^ value -} -> IO ()
 setTableRaw Table { .. } key !val =
-  case tableValueToInt key of
-    Just i
-      | 1 <= i ->
-          do n <- SV.size tableArray
-             if i <= n then SV.set tableArray (i-1) val
-               else if i == n+1 && not (isNilTableValue val)
-                  then do SV.push tableArray val
-                          Hash.delete tableHash (tableValueFromInt i)
-               else setHash (tableValueFromInt i)
-      | otherwise -> setHash (tableValueFromInt i)
-    _ -> setHash key
+  do writeIORef tableMCache Vector.empty
+     case tableValueToInt key of
+       Just i
+         | 1 <= i ->
+             do n <- SV.size tableArray
+                if i <= n then SV.set tableArray (i-1) val
+                  else if i == n+1 && not (isNilTableValue val)
+                     then do SV.push tableArray val
+                             Hash.delete tableHash (tableValueFromInt i)
+                  else setHash (tableValueFromInt i)
+         | otherwise -> setHash (tableValueFromInt i)
+       _ -> setHash key
 
   where
   setHash k
@@ -163,3 +169,14 @@ tableToList Table { .. } =
             $ zip (map tableValueFromInt [ 1 .. ]) elts
      ys <- Hash.toList tableHash
      return (xs ++ ys)
+
+tableGetMeta :: TableValue v => Table v -> Int -> [v] -> IO v
+tableGetMeta t@Table { .. } i ks =
+  do old <- readIORef tableMCache
+     if Vector.null old then
+       do vs <- traverse (getTableRaw t) ks
+          let new = Vector.fromList vs
+          writeIORef tableMCache $! new
+          Vector.indexM new i
+     else
+          Vector.indexM old i

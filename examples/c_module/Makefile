@@ -1,5 +1,5 @@
 TOP=../..
-LUAINC=$(TOP)/galua-c/inplace/include
+LUAINC=$(TOP)/galua-c/inplace/include/galua
 LUA=$(TOP)/galua-c/inplace/bin/galua
 CC=gcc
 
