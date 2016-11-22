@@ -3,8 +3,7 @@
 {-# LANGUAGE RecordWildCards #-}
 
 module Galua.Stepper
-  ( Interpreter
-  , oneStep
+  ( oneStep
   , runAllSteps
   ) where
 
@@ -34,59 +33,77 @@ import qualified System.Clock as Clock
 
 import           GHC.Exts (inline)
 
-type Interpreter = VM -> NextStep -> Alloc (Either Value [Value])
+data Cont r = Cont
+  { running           :: VM -> NextStep -> Alloc r
+  , runningInC        :: VM -> Alloc r
+  , finishedOk        :: [Value] -> Alloc r
+  , finishedWithError :: Value -> Alloc r
+  }
 
 oneStep :: VM -> NextStep -> Alloc VMState
-oneStep vm instr = do
+oneStep = oneStep'
+  Cont { running = \a b -> return $! Running a b
+       , runningInC = \a -> return $! RunningInC a
+       , finishedOk = \a -> return $! FinishedOk a
+       , finishedWithError = \a -> return $! FinishedWithError a
+       }
+
+{-# INLINE oneStep' #-}
+oneStep' :: Cont r -> VM -> NextStep -> Alloc r
+oneStep' c vm instr = do
   case instr of
-    PrimStep m        -> Running vm <$> m
-    Goto pc           -> performGoto       vm pc
-    FunCall f vs mb k -> performFunCall    vm f vs mb k
-    FunTailcall f vs  -> performTailCall   vm f vs
-    FunReturn vs      -> performFunReturn  vm vs
-    ThreadExit vs     -> performThreadExit vm vs
-    ThreadFail e      -> performThreadFail vm e
-    ErrorReturn e     -> performErrorReturn vm e
-    ThrowError e      -> performThrowError vm e
-    Resume tRef k     -> performResume     vm tRef k
-    Yield k           -> performYield      vm k
-    ApiStart apiCall op -> performApiStart vm apiCall op
-    ApiEnd _ res next -> performApiEnd vm res next
-    WaitForC          -> return (RunningInC vm)
-    Interrupt n       -> return (Running vm n)
+    PrimStep m          -> running c vm =<< m
+    Goto pc             -> performGoto          c vm pc
+    FunCall f vs mb k   -> performFunCall       c vm f vs mb k
+    FunTailcall f vs    -> performTailCall      c vm f vs
+    FunReturn vs        -> performFunReturn     c vm vs
+    ThreadExit vs       -> performThreadExit    c vm vs
+    ThreadFail e        -> performThreadFail    c vm e
+    ErrorReturn e       -> performErrorReturn   c vm e
+    ThrowError e        -> performThrowError    c vm e
+    Resume tRef k       -> performResume        c vm tRef k
+    Yield k             -> performYield         c vm k
+    ApiStart apiCall op -> performApiStart      c vm apiCall op
+    ApiEnd _ res next   -> performApiEnd        c vm res next
+    WaitForC            -> runningInC           c vm
+    Interrupt n         -> running              c vm n
+
+
 
 
 performApiEnd ::
+  Cont r ->
   VM                 {- ^ virtual machine state -} ->
   Maybe PrimArgument {- ^ C return value        -} ->
   NextStep           {- ^ next step             -} ->
-  Alloc VMState
-performApiEnd vm res next = liftIO $
-  do eenv <- stExecEnv <$> readRef (vmCurThread vm)
-     writeIORef (execApiCall eenv) NoApiCall
-     writeIORef (execLastResult eenv) res
-     putMVar (machCServer (vmMachineEnv vm)) CResume
-     return $ Running vm next
+  Alloc r
+performApiEnd c vm res next =
+  do liftIO $ do eenv <- stExecEnv <$> readRef (vmCurThread vm)
+                 writeIORef (execApiCall eenv) NoApiCall
+                 writeIORef (execLastResult eenv) res
+                 putMVar (machCServer (vmMachineEnv vm)) CResume
+     running c vm next
 
-performApiStart :: VM -> ApiCall -> NextStep -> Alloc VMState
-performApiStart vm apiCall next = liftIO $
-  do eenv <- stExecEnv <$> readRef (vmCurThread vm)
-     writeIORef (execApiCall eenv) (ApiCallActive apiCall)
-     return $ Running vm next
+performApiStart :: Cont r -> VM -> ApiCall -> NextStep -> Alloc r
+performApiStart c vm apiCall next =
+  do liftIO $ do eenv <- stExecEnv <$> readRef (vmCurThread vm)
+                 writeIORef (execApiCall eenv) (ApiCallActive apiCall)
+     running c vm next
 
-
-performGoto :: VM -> Int -> Alloc VMState
-performGoto vm pc =
+performGoto :: Cont r -> VM -> Int -> Alloc r
+performGoto c vm pc =
   do vmUpdateThread vm $ \th -> th { stPC = pc }
-     return (Running vm (runMach vm (execute pc)))
+     running c vm (runMach vm (execute pc))
 
 
+{-# INLINE performTailCall #-}
 performTailCall ::
+  Cont r ->
   VM                {- ^ current vm state -} ->
   Reference Closure {- ^ closure to enter -} ->
   [Value]           {- ^ arguments        -} ->
-  Alloc VMState
-performTailCall vm f vs =
+  Alloc r
+performTailCall c vm f vs =
   do liftIO (bumpCallCounter f vm)
 
      (newEnv, next) <- enterClosure f vs
@@ -101,7 +118,7 @@ performTailCall vm f vs =
        in th { stStack = addElapsedToTop elapsed (stStack th)
              , stExecEnv = newEnv
              }
-     return (Running vm (next vm))
+     running c vm (next vm)
 
 addElapsedToTop :: Clock.TimeSpec -> Stack StackFrame -> Stack StackFrame
 addElapsedToTop elapsed stack =
@@ -112,14 +129,16 @@ addElapsedToTop elapsed stack =
     Nothing     -> stack
 
 
+{-# INLINE performFunCall #-}
 performFunCall ::
+  Cont r ->
   VM                    {- ^ current vm state       -} ->
   Reference Closure     {- ^ closure to enter       -} ->
   [Value]               {- ^ arguments              -} ->
   Maybe Handler         {- ^ optional error handler -} ->
   ([Value] -> NextStep) {- ^ return continuation    -} ->
-  Alloc VMState
-performFunCall vm f vs mb k =
+  Alloc r
+performFunCall c vm f vs mb k =
   do liftIO (bumpCallCounter f vm)
      (newEnv, next) <- enterClosure f vs
      liftIO (recordProfEntry (vmMachineEnv vm)
@@ -132,7 +151,7 @@ performFunCall vm f vs mb k =
              , stStack    = Stack.push frame (stStack th)
              }
 
-     return $ Running vm (next vm)
+     running c vm (next vm)
 
 bumpCallCounter :: Reference Closure -> VM -> IO ()
 bumpCallCounter clo vm =
@@ -146,21 +165,23 @@ bumpCallCounter clo vm =
   where prof = profCallCounters $ machProfiling $ vmMachineEnv vm
 
 
-performThreadExit :: VM -> [Value] -> Alloc VMState
-performThreadExit vm vs =
+{-# INLINE performThreadExit #-}
+performThreadExit :: Cont r -> VM -> [Value] -> Alloc r
+performThreadExit c vm vs =
   case Stack.pop (vmBlocked vm) of
-    Nothing      -> return (FinishedOk vs)
+    Nothing      -> finishedOk c vs
     Just (t, ts) ->
       do setThreadStatus (vmCurThread vm) ThreadNew
-         vmSwitchToNormal vm{ vmCurThread = t, vmBlocked = ts }
-                          (ThreadReturn vs)
+         vmSwitchToNormal c vm{ vmCurThread = t, vmBlocked = ts }
+                              (ThreadReturn vs)
 
 -- | This function implements the logic for FunReturn. It ends execution
 -- for the current execution environment and resumes the next environment
 -- on the stack. In the case that the next frame is an error marker, it
 -- begins unwinding the stack until a suitable handler is found.
-performFunReturn :: VM -> [Value] -> Alloc VMState
-performFunReturn vm vs =
+{-# INLINE performFunReturn #-}
+performFunReturn :: Cont r -> VM -> [Value] -> Alloc r
+performFunReturn c vm vs =
   do th <- readRef (vmCurThread vm)
 
      now <- liftIO (Clock.getTime Clock.ProcessCPUTime)
@@ -171,12 +192,12 @@ performFunReturn vm vs =
      case Stack.pop stack' of
 
        Nothing ->
-          return (Running vm (ThreadExit vs))
+          running c vm (ThreadExit vs)
 
        Just (f, fs) ->
          case f of
            ErrorFrame ->
-                performErrorReturn vm (trimResult1 vs)
+                performErrorReturn c vm (trimResult1 vs)
 
            CallFrame pc fenv errK k ->
              do vmUpdateThread vm $ \MkThread { .. } ->
@@ -189,7 +210,7 @@ performFunReturn vm vs =
                            , ..
                            }
 
-                return (Running vm (k vs))
+                running c vm (k vs)
 
 recordProfEntry :: MachineEnv -> FunName -> IO ()
 recordProfEntry menv funName =
@@ -232,34 +253,35 @@ addChildTime elapsed e =
   e { execChildTime = execChildTime e + elapsed }
 
 
-performThreadFail :: VM -> Value -> Alloc VMState
-performThreadFail vm e =
+{-# LANGUAGE performThreadFail #-}
+performThreadFail :: Cont r -> VM -> Value -> Alloc r
+performThreadFail c vm e =
   do let ref = vmCurThread vm
      th <- readRef ref
      liftIO (abortApiCall (machCServer (vmMachineEnv vm)) (stExecEnv th))
      liftIO (abortReentryFrames (machCServer (vmMachineEnv vm)) (stStack th))
      case Stack.pop (vmBlocked vm) of
 
-       Nothing -> return (FinishedWithError e)
+       Nothing -> finishedWithError c e
 
        Just (t, ts) ->
          do setThreadStatus (vmCurThread vm) ThreadCrashed
-            vmSwitchToNormal vm{ vmCurThread = t, vmBlocked = ts }
-                             (ThreadError e)
+            vmSwitchToNormal c vm{ vmCurThread = t, vmBlocked = ts }
+                               (ThreadError e)
 
-performThrowError :: VM -> Value -> Alloc VMState
-performThrowError vm e =
+performThrowError :: Cont r -> VM -> Value -> Alloc r
+performThrowError c vm e =
   do let ref = vmCurThread vm
      th <- readRef ref
      case stHandlers th of
-       [] -> return (Running vm (ThreadFail e))
+       [] -> running c vm (ThreadFail e)
 
        FunHandler x : _ ->
          do vmUpdateThread vm $ \MkThread { .. } ->
               MkThread { stStack = Stack.push ErrorFrame stStack, .. }
-            return (Running vm (FunTailcall x [e]))
+            running c vm (FunTailcall x [e])
 
-       DefaultHandler : _ -> return (Running vm (ErrorReturn e))
+       DefaultHandler : _ -> running c vm (ErrorReturn e)
 
 
 abortReentryFrames :: MVar CNextStep -> Stack StackFrame -> IO ()
@@ -280,11 +302,12 @@ abortApiCall mvar eenv =
             writeIORef ref (ApiCallAborted api)
 
 performResume ::
+  Cont r ->
   VM ->
   Reference Thread ->
   (ThreadResult -> NextStep) ->
-  Alloc VMState
-performResume vm tRef finishK =
+  Alloc r
+performResume c vm tRef finishK =
   do thread <- readRef tRef
      case threadStatus thread of
        ThreadSuspended resumeK ->
@@ -294,13 +317,13 @@ performResume vm tRef finishK =
             let vm' = vm { vmCurThread = tRef
                          , vmBlocked   = Stack.push oldThread (vmBlocked vm)
                          }
-            return (Running vm' resumeK)
+            running c vm' resumeK
 
        _ -> error "performResume: Thread not suspended"
 
 
-performYield :: VM -> NextStep -> Alloc VMState
-performYield vm k =
+performYield :: Cont r -> VM -> NextStep -> Alloc r
+performYield c vm k =
   do let ref = vmCurThread vm
      th <- readRef ref
 
@@ -311,17 +334,18 @@ performYield vm k =
 
      case Stack.pop (vmBlocked vm) of
        Nothing -> do str <- liftIO (fromByteString "yield to no one")
-                     return $ Running vm $ ThrowError $ String str
+                     running c vm (ThrowError (String str))
        Just (t, ts) ->
          do setThreadStatus (vmCurThread vm) $ ThreadSuspended k
-            vmSwitchToNormal vm { vmCurThread = t, vmBlocked = ts } ThreadYield
+            vmSwitchToNormal c vm{ vmCurThread = t, vmBlocked = ts } ThreadYield
 
 
 -- | Unwind the call stack until a handler is found or the stack becomes
 -- empty. Resume execution in the error handler if one is found or finish
 -- execution with the final error otherwise.
-performErrorReturn :: VM -> Value -> Alloc VMState
-performErrorReturn vm e =
+{-# INLINE performErrorReturn #-}
+performErrorReturn :: Cont r -> VM -> Value -> Alloc r
+performErrorReturn c vm e =
   do let ref = vmCurThread vm
      th <- readRef ref
      liftIO (abortApiCall (machCServer (vmMachineEnv vm)) (stExecEnv th))
@@ -329,7 +353,7 @@ performErrorReturn vm e =
   where
   unwind s =
     case Stack.pop s of
-      Nothing -> return (FinishedWithError e)
+      Nothing -> finishedWithError c e
       Just (frame, s') ->
         case frame of
           CallFrame pc fenv (Just k) _ ->
@@ -341,7 +365,7 @@ performErrorReturn vm e =
                           , ..
                           }
 
-               return (Running vm (k e))
+               running c vm (k e)
 
           CallFrame pc eenv Nothing _ ->
             do vmUpdateThread vm $ \t -> t
@@ -349,34 +373,33 @@ performErrorReturn vm e =
                           , stStack = s'
                           , stPC    = pc
                           }
-               return (Running vm (ErrorReturn e))
+               running c vm (ErrorReturn e)
 
           ErrorFrame -> unwind s'
 
 
+runAllSteps :: VM -> NextStep -> Alloc (Either Value [Value])
+runAllSteps vm i = oneStep' cont vm i
+  where
+  cont = Cont { running    = runAllSteps
+              , runningInC = \v1 ->
+                 do let luaMVar = machLuaServer (vmMachineEnv vm)
+                    cResult <- liftIO (atomically (takeTMVar luaMVar))
+                    runAllSteps v1 (runMach v1 (handleCCallState cResult))
+              , finishedOk = \vs -> return (Right vs)
+              , finishedWithError = \v -> return (Left v)
+              }
 
 
-runAllSteps :: Interpreter
-runAllSteps vm i =
-  do s <- oneStep vm i
-     case s of
-       FinishedOk vs       -> return (Right vs)
-       FinishedWithError v -> return (Left v)
-       Running v1 i1       -> runAllSteps v1 i1
-       RunningInC v1 ->
-         do let luaMVar = machLuaServer (vmMachineEnv vm)
-            cResult <- liftIO (atomically (takeTMVar luaMVar))
-            runAllSteps v1 (runMach v1 (handleCCallState cResult))
 
-
-vmSwitchToNormal :: VM -> ThreadResult -> Alloc VMState
-vmSwitchToNormal vm res =
+vmSwitchToNormal :: Cont r -> VM -> ThreadResult -> Alloc r
+vmSwitchToNormal c vm res =
   do let ref = vmCurThread vm
      th <- readRef ref
      case threadStatus th of
        ThreadNormal k ->
          do setThreadStatus ref ThreadRunning
-            return (Running vm (k res))
+            running c vm (k res)
 
        _ -> error "[BUG] vmSwitchToNormal: not a normal thread."
 

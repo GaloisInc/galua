@@ -73,10 +73,10 @@ vmUpdateThread :: MonadIO m => VM -> (Thread -> Thread) -> m ()
 vmUpdateThread VM { vmCurThread } f = modifyRef vmCurThread f
 
 
-data VMState  = FinishedOk [Value]
-              | FinishedWithError Value
-              | Running VM NextStep
-              | RunningInC VM
+data VMState  = FinishedOk ![Value]
+              | FinishedWithError !Value
+              | Running !VM !NextStep
+              | RunningInC !VM
 
 
 data CCallState
