@@ -1007,24 +1007,29 @@ getCurrentLineNumber vm =
 doStepMode :: Debugger -> VM -> NextStep -> StepMode -> Alloc VMState
 doStepMode dbg vm next mode = oneStepK cont vm next
   where
-  cont = Cont { running = runInLua, runningInC = runInC
-              , finishedOk = \v -> return (FinishedOk v)
+  cont = Cont { running           = runInLua
+              , runningInC        = runInC
+              , finishedOk        = \v -> return (FinishedOk v)
               , finishedWithError = \v -> return (FinishedWithError v)
               }
 
   runInC vm' =
-    do mode'   <- liftIO (nextMode vm next mode)
-       let luaTMVar = machLuaServer (vmMachineEnv vm')
+    do let luaTMVar = machLuaServer (vmMachineEnv vm')
        res <- liftIO (atomically $ Left  <$> waitForCommandSTM dbg
                                <|> Right <$> takeTMVar luaTMVar)
        case res of
          Left m ->
-           do command <- liftIO m
-              mbNewMode <- liftIO (handleCommand dbg False command)
-              doStepMode dbg vm' WaitForC (fromMaybe mode' mbNewMode)
+           do newMode <- liftIO $
+                            do command <- m
+                               mb      <- handleCommand dbg False command
+                               case mb of
+                                 Nothing -> nextMode vm next mode
+                                 Just mo -> return mo
+              doStepMode dbg vm' WaitForC newMode
 
          Right cResult ->
            do let next' = runMach vm' (handleCCallState cResult)
+              mode'   <- liftIO (nextMode vm next mode)
               doStepMode dbg vm' next' mode'
 
   runInLua vm' next' =
@@ -1049,11 +1054,12 @@ doStepMode dbg vm next mode = oneStepK cont vm next
                           doStepMode dbg vm' next' mode''
 
 
-checkStop :: Debugger -> StepMode -> VM -> NextStep -> Alloc VMState -> Alloc VMState
+checkStop :: Debugger -> StepMode -> VM -> NextStep ->
+                                              Alloc VMState -> Alloc VMState
 checkStop dbg mode vm next k =
   case mode of
-    Stop -> do liftIO (setIdleReason dbg Ready)
-               return (Running vm next)
+    Stop -> liftIO (do setIdleReason dbg Ready
+                       return (Running vm next))
     _    -> k
 
 checkStopError :: Debugger -> VM -> NextStep -> Alloc VMState -> Alloc VMState
@@ -1062,15 +1068,15 @@ checkStopError dbg vm next k =
     ThrowError e ->
       do stopOnErr <- liftIO (readIORef (dbgBreakOnError dbg))
          if stopOnErr
-            then do liftIO (setIdleReason dbg (ThrowingError e))
-                    return (Running vm next)
+            then liftIO $ do setIdleReason dbg (ThrowingError e)
+                             return (Running vm next)
             else k
     _ -> k
 
 
 
 checkBreakPoint :: Debugger -> StepMode -> VM -> NextStep ->
-                                                    Alloc VMState -> Alloc VMState
+                                                 Alloc VMState -> Alloc VMState
 checkBreakPoint dbg mode vm nextStep k =
   do th <- liftIO (readRef (vmCurThread vm))
      let curFun = funValueName (execFunction (stExecEnv th))
@@ -1082,12 +1088,13 @@ checkBreakPoint dbg mode vm nextStep k =
             case Map.lookup loc breaks of
               Just mbCond ->
                 case mbCond of
-                  Nothing -> do liftIO (setIdleReason dbg ReachedBreakPoint)
-                                return (Running vm nextStep)
+                  Nothing -> liftIO $ do setIdleReason dbg ReachedBreakPoint
+                                         return (Running vm nextStep)
                   Just c ->
-                    do nextStep' <- liftIO $ executeCompiledStatment vm (stExecEnv th)
-                                                               (brkCond c)
-                                  $ \vs ->
+                    do nextStep' <-
+                          liftIO $ executeCompiledStatment vm (stExecEnv th)
+                                                              (brkCond c)
+                                 $ \vs ->
                                     let stop = valueBool (trimResult1 vs)
                                     in if stop
                                          then Interrupt nextStep
