@@ -1,32 +1,52 @@
-example_c_module = require 'example_c_module'
+local function demo_stepping()
 
-local s = example_c_module.store(10);
-print(s())
+  local i = 100
 
-local a,b=0.0,1.0
+  local function update()
+    i = i - 1
+    i = i - 1
+    i = i - 1
+  end
 
-for i=1,10 do
-        print(a)
-        a,b=example_c_module.fibstep(a,b)
+  while i > 0 do
+    update()
+    update()
+    update()
+  end
 end
 
-print('stringtest' , example_c_module.stringtest("demo"))
+demo_stepping()
 
-do return end
-local function f(x)
-        print('f',x)
-        local y = coroutine.yield(20,30)
-        print('y',y)
-        return 50
+local function demo_c()
+  local example_c_module = require 'example_c_module'
+
+  local answer = { example_c_module.bytes('hello') }
+
+  answer = example_c_module.bytes( {} )
 end
 
-function mythread()
-print('prelua')
-local r = example_c_module.call42(f)
-print('postlua', r)
+pcall(demo_c)
+
+
+local function demo_coroutines()
+     local function foo (a)
+       print("foo", a)
+       return coroutine.yield(2*a)
+     end
+
+     local co = coroutine.create(function (a,b)
+           print("co-body", a, b)
+           local r = foo(a+1)
+           print("co-body", r)
+           local r, s = coroutine.yield(a+b, a-b)
+           print("co-body", r, s)
+           return b, "end"
+     end)
+
+     print("main", coroutine.resume(co, 1, 10))
+     print("main", coroutine.resume(co, "r"))
+     print("main", coroutine.resume(co, "x", "y"))
+     print("main", coroutine.resume(co, "x", "y"))
 end
 
-local t = coroutine.create(mythread)
-print('finish1', coroutine.resume(t))
-print('finish2', coroutine.resume(t))
-
+demo_coroutines()

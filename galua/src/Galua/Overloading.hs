@@ -50,6 +50,7 @@ import           Galua.Number
 import           Galua.Reference
 import           Galua.Value
 import           Galua.LuaString
+import           Galua.Util.Table (tableGetMeta)
 
 
 
@@ -105,13 +106,15 @@ setMetatable mt v =
 valueMetamethod ::
   MetatableMonad m =>
   Value ->
-  LuaString {- ^ metamethod name -} ->
+  MetaMethodName {- ^ metamethod name -} ->
   m Value
-valueMetamethod v event =
+valueMetamethod v (MMN event) =
   do mbMetatable <- valueMetatable v
      liftIO $ case mbMetatable of
-       Nothing -> return Nil
-       Just metatable -> getTableRaw metatable (String event)
+       Nothing        -> return Nil
+       Just metatable ->
+         do t <- readRef metatable
+            tableGetMeta t event allMetaMethods
 
 -- | Look up a metamethod on the first value if it is set falling back to
 -- the second value.
@@ -119,7 +122,7 @@ valueMetamethod2 ::
   MetatableMonad m =>
   Value ->
   Value ->
-  LuaString {- ^ metamethod name -} ->
+  MetaMethodName {- ^ metamethod name -} ->
   m Value
 valueMetamethod2 x y event =
   do m1 <- valueMetamethod x event
@@ -324,7 +327,7 @@ badArithmetic x = luaError ("attempt to perform arithmetic on a " ++
                                     prettyValueType (valueType x) ++ " value")
 
 
-valueArith1 :: LuaString -> (Number -> Number) -> Value -> Mach Value
+valueArith1 :: MetaMethodName -> (Number -> Number) -> Value -> Mach Value
 valueArith1 event f x =
   case valueNumber x of
     Just n  -> return (Number (f n))
@@ -334,7 +337,7 @@ valueArith1 event f x =
                     _   -> trimResult1 <$> m__call metamethod [x]
 
 
-valueInt1 :: LuaString -> (Int -> Int) -> Value -> Mach Value
+valueInt1 :: MetaMethodName -> (Int -> Int) -> Value -> Mach Value
 valueInt1 event f x1 =
   case valueInt x1 of
     Just i  -> return (Number (Int (f i)))
@@ -346,7 +349,7 @@ valueInt1 event f x1 =
 
 {-# INLINE valueArith2 #-}
 valueArith2 ::
-  LuaString -> (Number -> Number -> Number) -> Value -> Value -> Mach Value
+  MetaMethodName -> (Number -> Number -> Number) -> Value -> Value -> Mach Value
 valueArith2 event f x y =
   case valueNumber x of
     Nothing -> overload x
@@ -365,7 +368,7 @@ valueArith2 event f x y =
 
 {-# INLINE valueInt2 #-}
 valueInt2 ::
-  LuaString -> (Int -> Int -> Int) -> Value -> Value -> Mach Value
+  MetaMethodName -> (Int -> Int -> Int) -> Value -> Value -> Mach Value
 valueInt2 event f x1 x2 =
   case valueInt x1 of
     Nothing -> overload
@@ -516,6 +519,8 @@ takeMaybe f (x:xs) =
 
 --------------------------------------------------------------------------------
 
+newtype MetaMethodName = MMN Int
+
 str__call
   , str__gc
   , str__len
@@ -538,32 +543,40 @@ str__call
   , str__bxor
   , str__shl
   , str__shr
-  , str__bnot :: LuaString
+  , str__bnot :: MetaMethodName
 
-str__call     = unsafeFromByteString "__call"
-str__gc       = unsafeFromByteString "__gc"
-str__len      = unsafeFromByteString "__len"
-str__index    = unsafeFromByteString "__index"
-str__newindex = unsafeFromByteString "__newindex"
-str__concat   = unsafeFromByteString "__concat"
-str__eq       = unsafeFromByteString "__eq"
-str__lt       = unsafeFromByteString "__lt"
-str__le       = unsafeFromByteString "__le"
-str__add      = unsafeFromByteString "__add"
-str__sub      = unsafeFromByteString "__sub"
-str__mul      = unsafeFromByteString "__mul"
-str__div      = unsafeFromByteString "__div"
-str__idiv     = unsafeFromByteString "__idiv"
-str__mod      = unsafeFromByteString "__mod"
-str__pow      = unsafeFromByteString "__pow"
-str__unm      = unsafeFromByteString "__unm"
-str__band     = unsafeFromByteString "__band"
-str__bor      = unsafeFromByteString "__bor"
-str__bxor     = unsafeFromByteString "__bxor"
-str__shl      = unsafeFromByteString "__shl"
-str__shr      = unsafeFromByteString "__shr"
-str__bnot     = unsafeFromByteString "__bnot"
+str__add      = MMN 0
+str__band     = MMN 1
+str__bnot     = MMN 2
+str__bor      = MMN 3
+str__bxor     = MMN 4
 
+str__call     = MMN 5
+str__concat   = MMN 6
+str__div      = MMN 7
+str__eq       = MMN 8
+str__gc       = MMN 9
 
+str__idiv     = MMN 10
+str__index    = MMN 11
+str__le       = MMN 12
+str__len      = MMN 13
+str__lt       = MMN 14
 
+str__mod      = MMN 15
+str__mul      = MMN 16
+str__newindex = MMN 17
+str__pow      = MMN 18
+str__shl      = MMN 19
 
+str__shr      = MMN 20
+str__sub      = MMN 21
+str__unm      = MMN 22
+
+allMetaMethods :: [Value]
+allMetaMethods = map (String . unsafeFromByteString)
+  ["__add" , "__band"  , "__bnot"    , "__bor", "__bxor",
+   "__call", "__concat", "__div"     , "__eq" , "__gc"  ,
+   "__idiv", "__index" , "__le"      , "__len", "__lt"  ,
+   "__mod" , "__mul"   , "__newindex", "__pow", "__shl" ,
+   "__shr" , "__sub"   , "__unm"]

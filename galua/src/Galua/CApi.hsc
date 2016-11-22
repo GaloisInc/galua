@@ -10,7 +10,6 @@ import Control.Exception
 import Control.Monad (replicateM_,when,unless)
 import Control.Monad.IO.Class
 import Data.Int
-import Data.Bits
 import Data.IORef
 import Data.Foldable (toList, for_, traverse_)
 import Data.Functor (void)
@@ -779,17 +778,16 @@ lua_compare_hs l r ix1 ix2 op out =
   -- Note: Also returns 0 if any of the indices is not valid.
   do mbx <- valueArgumentOpt (fromIntegral ix1) args
      mby <- valueArgumentOpt (fromIntegral ix2) args
-     ans <- case (mbx,mby) of
+     case (mbx,mby) of
        (Just x, Just y) ->
          do f <- case op of
                    #{const LUA_OPEQ} -> return m__eq
                    #{const LUA_OPLT} -> return m__lt
                    #{const LUA_OPLE} -> return m__le
                    _                 -> luaError "lua_compare: bad operator"
-            result <- f x y
-            return (if result then 1 else 0)
-       _ -> return 0
-     result out ans
+            res <- f x y
+            result out (if res then 1 else 0)
+       _ -> result out 0
 
 ------------------------------------------------------------------------
 

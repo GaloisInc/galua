@@ -38,8 +38,6 @@ install: prepare ${LUALIBS}
 	./build galua-dbg
 	cp libgalua-dbg.a $(DIST)/lib
 	cp galua-dbg $(DIST)/bin
-	gzip -f libgalua.a
-	gzip -f libgalua-dbg.a
 
 prepare:
 	mkdir -p $(DIST)
@@ -55,7 +53,7 @@ all:
 
 
 clean:
-	rm -f galua libgalua.a.gz galua-dbg libgalua-dbg.a.gz newstate.o ${LUALIBS}
+	rm -f galua galua-dbg newstate.o ${LUALIBS}
 	rm -fr inplace lualibs/objs
 
 distclean: clean
