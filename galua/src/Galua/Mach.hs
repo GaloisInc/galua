@@ -12,11 +12,14 @@ import           Control.Exception (try)
 import           Control.Monad (when)
 import           Control.Monad.IO.Class
 import           Data.IORef
+import           Data.Foldable (for_)
 import           Data.Map (Map)
 import qualified Data.Map as Map
 import           Data.Maybe (fromMaybe)
 import           Data.Vector (Vector)
 import qualified Data.Vector as Vector
+import           Data.Vector.Mutable (IOVector)
+import qualified Data.Vector.Mutable as IOVector
 import           Data.ByteString (ByteString)
 import           Data.Void
 import           Foreign (ForeignPtr, Ptr, nullPtr, newForeignPtr, FunPtr
@@ -168,17 +171,17 @@ data StackFrame
 
 
 data Thread = MkThread
-  { threadStatus :: !ThreadStatus
+  { threadStatus :: {-# UNPACK #-} !(IORef ThreadStatus)
 
   , threadCPtr   :: !(ForeignPtr ())
     {- ^ The representation of thread used in C.
          This contains space for the setjmp/longjmp buffer, and a reference
          back to this object. -}
 
-  , stExecEnv   :: !ExecEnv
-  , stHandlers  :: ![HandlerType]
-  , stStack     :: !(Stack StackFrame)
-  , stPC        :: !Int
+  , stExecEnv   :: {-# UNPACK #-} !(IORef ExecEnv)
+  , stHandlers  :: {-# UNPACK #-} !(IORef [HandlerType])
+  , stStack     :: {-# UNPACK #-} !(IORef (Stack StackFrame))
+  , stPC        :: {-# UNPACK #-} !(IORef Int)
 
   }
 
@@ -212,15 +215,19 @@ data ThreadResult
   | ThreadError Value           -- ^ The resumed thread crashed.
 
 
+setThreadField :: MonadIO m => (Thread -> IORef a) -> Reference Thread -> a -> m ()
+setThreadField sel = \ref !val ->
+  liftIO $
+  do th <- derefThread ref
+     writeIORef (sel th) val
+{-# INLINE getThreadField #-}
 
-
-
-setThreadStatus :: MonadIO m => Reference Thread -> ThreadStatus -> m ()
-setThreadStatus ref st = modifyRef ref $ \t -> t { threadStatus = st }
-
-getThreadStatus :: MonadIO m => Reference Thread -> m ThreadStatus
-getThreadStatus ref = fmap threadStatus (readRef ref)
-
+getThreadField :: MonadIO m => (Thread -> IORef a) -> Reference Thread -> m a
+getThreadField sel = \ref ->
+  liftIO $
+  do th <- derefThread ref
+     readIORef (sel th)
+{-# INLINE setThreadField #-}
 
 newtype Mach a = Mach { unMach :: VM -> (a -> NextStep) -> NextStep }
 
@@ -293,7 +300,7 @@ data ExecEnv = ExecEnv
   { execStack    :: {-# UNPACK #-} !(SV.SizedVector (IORef Value))
 
     -- The currently executing function
-  , execUpvals   :: {-# UNPACK #-} !(Vector (IORef Value))
+  , execUpvals   :: {-# UNPACK #-} !(IOVector (IORef Value))
   , execFunction :: !FunctionValue
   , execVarargs  :: {-# UNPACK #-} !(IORef [Value])
   , execClosure  :: !Value
@@ -340,8 +347,9 @@ newThreadExecEnv =
      var   <- newIORef []
      resultRef <- newIORef Nothing
      time  <- Clock.getTime Clock.ProcessCPUTime
+     upvals <- IOVector.new 0
      return ExecEnv { execStack    = stack
-                    , execUpvals   = Vector.empty
+                    , execUpvals   = upvals
                     , execFunction = cFunction blankCFunName
                     , execVarargs  = var
                     , execApiCall  = api
@@ -383,9 +391,11 @@ instance MonadIO Mach where
   liftIO m = liftAlloc (liftIO m)
 
 instance NameM Mach where
-  newRef refLoc = liftAlloc . newRef refLoc
+  newRefWithId i refLoc = liftAlloc . newRefWithId i refLoc
+  newRefId = liftAlloc newRefId
   lookupRef = liftAlloc . lookupRef
-  {-# INLINE newRef #-}
+  {-# INLINE newRefWithId #-}
+  {-# INLINE newRefId #-}
   {-# INLINE lookupRef #-}
 
 liftAlloc :: Alloc a -> Mach a
@@ -436,10 +446,15 @@ machGoto !n = abort (Goto n)
 
 machRefLoc :: Mach RefLoc
 machRefLoc =
-  do th <- readRef =<< machCurrentThread
-     return RefLoc { refLocCaller = getCaller (stStack th)
-                   , refLocSite   = mkLoc (stExecEnv th) (stPC th)
-                   }
+  do tref <- machCurrentThread
+     liftIO $
+       do th <- derefThread tref
+          pc    <- readIORef (stPC th)
+          eenv  <- readIORef (stExecEnv th)
+          stack <- readIORef (stStack th)
+          return RefLoc { refLocCaller = getCaller stack
+                        , refLocSite   = mkLoc eenv pc
+                        }
   where
   getCaller st = case Stack.pop st of
                    Just (ErrorFrame, more)       -> getCaller more
@@ -472,9 +487,10 @@ getsMachEnv f = fmap f machCurrentEnv
 -- a function.
 getsExecEnv :: (ExecEnv -> a) -> Mach a
 getsExecEnv f =
-  do ref <- machCurrentThread
-     th  <- readRef ref
-     return (f (stExecEnv th))
+  do ref  <- machCurrentThread
+     th   <- derefThread ref
+     eenv <- liftIO (readIORef (stExecEnv th))
+     return (f eenv)
 {-# INLINE getsExecEnv #-}
 
 getsVM :: (VM -> a) -> Mach a
@@ -539,7 +555,7 @@ luaError str =
      machThrow (String s)
 
 machNewClosure ::
-  FunctionValue -> Vector (IORef Value) -> Mach (Reference Closure)
+  FunctionValue -> IOVector (IORef Value) -> Mach (Reference Closure)
 machNewClosure fun upvals =
   do loc <- machRefLoc
      newClosure loc fun upvals
@@ -585,27 +601,27 @@ allocNewThread ::
   RefLoc ->
   TMVar CCallState -> MVar CNextStep -> ThreadStatus -> m (Reference Thread)
 allocNewThread refLoc luaTMVar cMVar st =
-  do ref <- newRef refLoc (error "thread uninitialized")
-     liftIO $ do sptr <- newStablePtr ExternalLuaState
+  do refId <- newRefId
+     (sptr,th) <- liftIO $
+              do sptr <- newStablePtr ExternalLuaState
                            { extLuaStateLuaServer = luaTMVar
                            , extLuaStateCServer   = cMVar
-                           , extLuaStateThreadId  = referenceId ref
+                           , extLuaStateThreadId  = refId
                            }
 
-                 cptr <- newCPtr (castStablePtrToPtr sptr)
-                 addRefFinalizer ref (freeStablePtr sptr)
+                 threadCPtr <- newCPtr (castStablePtrToPtr sptr)
 
-                 eenv <- newThreadExecEnv
-                 writeRef ref MkThread
-                                { threadStatus = st
-                                , threadCPtr   = cptr
 
-                                , stExecEnv  = eenv
-                                , stHandlers = []
-                                , stStack    = Stack.empty
-                                , stPC       = 0
+                 threadStatus <- newIORef st
+                 stExecEnv    <- newIORef =<< newThreadExecEnv
+                 stHandlers   <- newIORef []
+                 stStack      <- newIORef Stack.empty
+                 stPC         <- newIORef 0
 
-                                }
+                 return (sptr, MkThread{..})
+     ref <- newRefWithId refId refLoc th
+
+     liftIO (addRefFinalizer ref (freeStablePtr sptr))
      return ref
 
 machCurrentEnv :: Mach MachineEnv
@@ -658,9 +674,16 @@ chunkToClosure menv name bytes env =
          do let initial 0 = env
                 initial _ = Nil
                 func' = propagateSources func
-            upvalues <- liftIO (Vector.generateM numUpval (newIORef . initial))
-            modNum   <- liftIO $ atomicModifyIORef' (machNextChunkId menv)
+
+            (upvalues,modNum) <- liftIO $
+              do upvalues <- IOVector.new numUpval
+                 for_ [0 .. numUpval-1 ] $ \i ->
+                   IOVector.write upvalues i =<< newIORef (initial i)
+
+                 modNum   <- atomicModifyIORef' (machNextChunkId menv)
                                $ \r -> (r + 1, r)
+                 return (upvalues, modNum)
+
             let fid = rootFun modNum
             clo <- machNewClosure (luaFunction fid func') upvalues
             liftIO (machOnChunkLoad (machConfig menv) name bytes modNum func)
@@ -674,7 +697,7 @@ chunkToClosure menv name bytes env =
 
 activateThread :: Reference Closure -> [Value] -> Reference Thread -> Mach ()
 activateThread cRef vs tRef =
-  setThreadStatus tRef (ThreadSuspended (FunCall cRef vs Nothing FunReturn))
+  setThreadField threadStatus tRef (ThreadSuspended (FunCall cRef vs Nothing FunReturn))
 
 parseLua :: Maybe String -> L.ByteString -> IO (Either String Chunk)
 parseLua mbName src =

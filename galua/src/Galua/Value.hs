@@ -60,7 +60,7 @@ import           Data.IORef
 import qualified Data.Text as Text
 import           Data.Text.Encoding (decodeUtf8With,encodeUtf8)
 import           Data.Text.Encoding.Error (lenientDecode)
-import           Data.Vector (Vector)
+import           Data.Vector.Mutable (IOVector)
 import           GHC.Generics (Generic)
 import           Foreign.Ptr (FunPtr, Ptr,ptrToIntPtr)
 import           Foreign.ForeignPtr (ForeignPtr)
@@ -127,17 +127,18 @@ instance Hashable Value where
 ------------------------------------------------------------------------
 
 data UserData = MkUserData
-  { userDataPtr   :: ForeignPtr ()
-  , userDataSize  :: Int
-  , userDataValue :: IORef Value
-  , userDataMeta  :: Maybe (Reference Table)
+  { userDataPtr   :: {-# UNPACK #-} !(ForeignPtr ())
+  , userDataSize  :: {-# UNPACK #-} !Int
+  , userDataValue :: {-# UNPACK #-} !(IORef Value)
+  , userDataMeta  :: {-# UNPACK #-} !(IORef (Maybe (Reference Table)))
   }
 
 newUserData ::
   NameM m => RefLoc -> ForeignPtr () -> Int -> m (Reference UserData)
 newUserData refLoc x n =
   do uval <- liftIO (newIORef Nil)
-     newRef refLoc (MkUserData x n uval Nothing)
+     mtref <- liftIO (newIORef Nothing)
+     newRef refLoc (MkUserData x n uval mtref)
 
 ------------------------------------------------------------------------
 -- Tables
@@ -155,33 +156,33 @@ newTable refLoc arraySize hashSize =
   newRef refLoc =<< liftIO (Tab.newTable arraySize hashSize)
 
 setTableMeta :: MonadIO m => Reference Table -> Maybe (Reference Table) -> m ()
-setTableMeta tr mt = liftIO $ do t <- readRef tr
+setTableMeta tr mt = liftIO $ do t <- derefTable tr
                                  Tab.setTableMeta t $ maybe Nil Table mt
 
 getTableMeta :: MonadIO m => Reference Table -> m (Maybe (Reference Table))
-getTableMeta ref = liftIO $ do t <- readRef ref
+getTableMeta ref = liftIO $ do t <- derefTable ref
                                v <- Tab.getTableMeta t
                                case v of
                                  Table t' -> return (Just t')
                                  _        -> return Nothing
 
 getTableRaw :: MonadIO io => Reference Table -> Value {- ^ key -} -> io Value
-getTableRaw ref key = liftIO $ do t <- readRef ref
+getTableRaw ref key = liftIO $ do t <- derefTable ref
                                   Tab.getTableRaw t key
 
 setTableRaw :: MonadIO m => Reference Table -> Value -> Value -> m ()
-setTableRaw ref key !val = liftIO $ do t <- readRef ref
+setTableRaw ref key !val = liftIO $ do t <- derefTable ref
                                        Tab.setTableRaw t key val
 
 tableLen :: MonadIO io => Reference Table -> io Int
-tableLen ref = liftIO (Tab.tableLen =<< readRef ref)
+tableLen ref = liftIO (Tab.tableLen =<< derefTable ref)
 
 tableFirst :: NameM m => Reference Table -> m (Maybe (Value,Value))
-tableFirst ref = liftIO (Tab.tableFirst =<< readRef ref)
+tableFirst ref = liftIO (Tab.tableFirst =<< derefTable ref)
 
 
 tableNext :: MonadIO m => Reference Table -> Value -> m (Maybe (Value,Value))
-tableNext ref key = liftIO $ do t <- readRef ref
+tableNext ref key = liftIO $ do t <- derefTable ref
                                 Tab.tableNext t key
 
 ------------------------------------------------------------------------
@@ -209,7 +210,7 @@ valueType v =
 
 data Closure = MkClosure
   { cloFun      :: FunctionValue
-  , cloUpvalues :: Vector (IORef Value)
+  , cloUpvalues :: IOVector (IORef Value)
   }
 
 type Prim = [Value] -> Mach [Value]
@@ -226,7 +227,7 @@ data PrimArgument
 
 newClosure ::
   NameM m =>
-  RefLoc -> FunctionValue -> Vector (IORef Value) -> m (Reference Closure)
+  RefLoc -> FunctionValue -> IOVector (IORef Value) -> m (Reference Closure)
 newClosure refLoc f us = newRef refLoc MkClosure { cloFun = f, cloUpvalues = us }
 
 

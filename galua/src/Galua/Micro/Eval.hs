@@ -17,7 +17,7 @@ import           Control.Monad(zipWithM_,(<=<))
 import qualified Language.Lua.Bytecode as OP
 import           Language.Lua.Bytecode.FunId
 
-import           Galua.Reference(Reference,NameM,readRef,RefLoc(..),CodeLoc(..))
+import           Galua.Reference(Reference,NameM,derefUserData,RefLoc(..),CodeLoc(..))
 import           Galua.Value
 import           Galua.FunValue
 import           Galua.Number(Number(..),wordshiftL,wordshiftR,nummod,
@@ -285,7 +285,7 @@ runStmt f@Frame { .. } pc stmt =
          case v of
 
            Table tr         -> setMb =<< getTableMeta tr
-           UserData ur      -> setMb . userDataMeta =<< readRef ur
+           UserData ur      -> setMb =<< liftIO . readIORef . userDataMeta =<< derefUserData ur
            _                -> tyMeta (valueType v)
 
     Raise e ->
@@ -331,7 +331,7 @@ runStmt f@Frame { .. } pc stmt =
          let refLoc = RefLoc { refLocSite   = InLua ourFID pc
                              , refLocCaller = ourCaller
                              }
-         clo <- newClosure refLoc fun (Vector.fromList rs)
+         clo <- newClosure refLoc fun =<< liftIO (Vector.thaw (Vector.fromList rs))
          setReg f res clo
          return Continue
 

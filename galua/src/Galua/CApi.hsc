@@ -17,6 +17,7 @@ import Data.Traversable (for)
 import Data.Maybe (fromMaybe)
 import qualified Data.Vector as Vector
 import           Data.Vector (Vector)
+import qualified Data.Vector.Mutable as IOVector
 import Foreign.C.String
 import Foreign.C.Types
 import Foreign.ForeignPtr
@@ -106,8 +107,8 @@ reentry label args l r k =
 wrapWithStack :: Int -> (SV.SizedVector (IORef Value) -> Mach a) -> Mach a
 wrapWithStack threadId k =
   do Just threadRef <- lookupRef threadId
-     thread <- readRef threadRef
-     k $ execStack $ stExecEnv thread
+     eenv <- getThreadField stExecEnv threadRef
+     k (execStack eenv)
 
 result :: (MonadIO m, CArg a) => Ptr a -> a -> m (Maybe PrimArgument)
 result ptr res =
@@ -289,9 +290,9 @@ foreign export ccall lua_pushcclosure_hs :: EntryPoint (CFun -> CInt -> IO CInt)
 lua_pushcclosure_hs :: EntryPoint (CFun -> CInt -> IO CInt)
 lua_pushcclosure_hs l r func nup =
   reentry "lua_pushcclosure" [cArg func, cArg nup] l r $ \args ->
-  do upvals <- popN args $ fromIntegral nup
+  do upvals <- popN args (fromIntegral nup)
      info   <- machLookupCFun func
-     vs     <- liftIO $ mapM newIORef $ Vector.fromList upvals
+     vs     <- liftIO (Vector.thaw =<< traverse newIORef (Vector.fromList upvals))
      c      <- machNewClosure (cFunction CFunName { cfunName = info
                                                   , cfunAddr = func}) vs
      push args (Closure c)
@@ -307,7 +308,7 @@ lua_tocfunction_hs l r ix out =
   do x <- valueArgument (fromIntegral ix) args
      res <- case x of
               Closure cref ->
-                do c <- readRef cref
+                do c <- derefClosure cref
                    case funValueName (cloFun c) of
                      CFID cfun -> return (cfunAddr cfun)
                      _         -> return nullFunPtr
@@ -323,7 +324,7 @@ lua_iscfunction_hs l r ix out =
   do x <- valueArgument (fromIntegral ix) args
      res <- case x of
               Closure cref ->
-                do c <- readRef cref
+                do c <- derefClosure cref
                    case funValueName (cloFun c) of
                      CFID {} -> return 1
                      _       -> return 0
@@ -596,7 +597,7 @@ lua_touserdata_hs l r arg out =
   do v <- valueArgument (fromIntegral arg) args
      ptr <- case v of
               UserData uref ->
-                do u <- readRef uref
+                do u <- derefUserData uref
                    let fptr = userDataPtr u
                    return (unsafeForeignPtrToPtr fptr)
               LightUserData ptr -> return ptr
@@ -864,7 +865,7 @@ lua_getuservalue_hs l r ix out =
   do v <- valueArgument (fromIntegral ix) args
      case v of
        UserData uref ->
-          do u <- readRef uref
+          do u <- derefUserData uref
              uservalue <- liftIO (readIORef (userDataValue u))
              push args uservalue
              result out (lua_type_int uservalue)
@@ -880,7 +881,7 @@ lua_setuservalue_hs l r ix =
      uservalue <- pop args
      case v of
        UserData uref ->
-         do u <- readRef uref
+         do u <- derefUserData uref
             liftIO (Nothing <$ writeIORef (userDataValue u) uservalue)
        _ -> luaError "lua_setuservalue: argument is not full userdata"
 
@@ -975,7 +976,7 @@ lua_rawlen_hs l r idx out =
        do len <- case v of
                    String xs  -> return (luaStringLen xs)
                    Table t    -> tableLen t
-                   UserData u -> userDataSize <$> readRef u
+                   UserData u -> userDataSize <$> derefUserData u
                    _          -> return 0
           result out (fromIntegral len)
 
@@ -1073,7 +1074,7 @@ lua_tothread_hs l r n out =
     do v <- valueArgument (fromIntegral n) args
        p <- case v of
           Thread t ->
-            do thr <- readRef t
+            do thr <- derefThread t
                return (unsafeForeignPtrToPtr (threadCPtr thr))
           _ -> return nullPtr
        result out p
@@ -1096,15 +1097,16 @@ foreign export ccall
 lua_status_hs :: EntryPoint (Ptr CInt -> IO CInt)
 lua_status_hs l r out =
   reentry "lua_status" [] l r $ \_ ->
-     do thread <- readRef =<< extToThreadRef =<< liftIO (deRefLuaState l)
-        let statusNum =
-              case threadStatus thread of
-                ThreadSuspended{} -> luaYIELD
-                ThreadNormal   {} -> luaOK
-                ThreadRunning  {} -> luaOK
-                ThreadNew      {} -> luaOK
-                ThreadCrashed  {} -> luaERRRUN
-        result out statusNum
+     do thread <- extToThreadRef =<< liftIO (deRefLuaState l)
+        st <- getThreadField threadStatus thread
+
+        result out $
+          case st of
+            ThreadSuspended{} -> luaYIELD
+            ThreadNormal   {} -> luaOK
+            ThreadRunning  {} -> luaOK
+            ThreadNew      {} -> luaOK
+            ThreadCrashed  {} -> luaERRRUN
 
 foreign export ccall
   lua_resume_hs :: EntryPoint (Ptr () -> CInt -> Ptr CInt -> IO CInt)
@@ -1114,7 +1116,7 @@ lua_resume_hs l r from nargs out =
   reentry "lua_resume" [cArg from, cArg nargs] l r $ \args ->
     do tRef <- extToThreadRef =<< liftIO (deRefLuaState l)
 
-       st <- getThreadStatus tRef
+       st <- getThreadField threadStatus tRef
        case st of
          ThreadSuspended _ ->
             do doResume tRef args
@@ -1140,8 +1142,7 @@ lua_resume_hs l r from nargs out =
     do res <- machResume tRef
        case res of
          ThreadReturn rs ->
-           do thread <- readRef tRef
-              let eenv = stExecEnv thread
+           do eenv <- getThreadField stExecEnv tRef
               liftIO (stackFromList (execStack eenv) rs)
               result out luaOK
 
@@ -1159,8 +1160,7 @@ lua_yieldk_hs l r nResults ctx func =
     do outputs <- popN args (fromIntegral nResults)
 
        tRef <- extToThreadRef =<< liftIO (deRefLuaState l)
-       thread <- readRef tRef
-       let stack = execStack (stExecEnv thread)
+       stack <- execStack <$> getThreadField stExecEnv tRef
        liftIO $ do n <- SV.size stack
                    SV.shrink stack n
                    traverse_ (push stack) outputs
@@ -1180,7 +1180,7 @@ lua_newthread_hs :: EntryPoint (Ptr (Ptr ()) -> IO CInt)
 lua_newthread_hs l r out =
   reentry "lua_newthread" [] l r $ \args ->
     do threadRef <- machNewThread
-       thread    <- readRef threadRef
+       thread    <- derefThread threadRef
        push args (Thread threadRef)
        result out (unsafeForeignPtrToPtr (threadCPtr thread))
 
@@ -1195,7 +1195,7 @@ lua_isyieldable_hs l r out =
        isMain <- machIsMainThread tRef
        isYieldable <- if isMain
                            then return False
-                           else isThreadRunning . threadStatus <$> readRef tRef
+                           else isThreadRunning <$> getThreadField threadStatus tRef
        result out (if isYieldable then 1 else 0)
 
 
@@ -1249,12 +1249,15 @@ pokeLuaDebugNParams = #poke struct lua_Debug, nparams
 pokeLuaDebugIsVarArg :: Ptr LuaDebug -> CChar -> IO ()
 pokeLuaDebugIsVarArg = #poke struct lua_Debug, isvararg
 
-findExecEnv :: Int -> Thread -> Maybe (Int,ExecEnv)
+findExecEnv :: Int -> Reference Thread -> IO (Maybe (Int,ExecEnv))
 findExecEnv level thread =
   case compare level 0 of
-    LT -> Nothing
-    EQ -> Just (stPC thread, stExecEnv thread)
-    GT -> go (level-1) (toList (stStack thread))
+    LT -> return Nothing
+    EQ -> do pc <- getThreadField stPC thread
+             eenv <- getThreadField stExecEnv thread
+             return (Just (pc, eenv))
+    GT -> do stack <- getThreadField stStack thread
+             return $! go (level-1) (toList stack)
 
   where
   go 0 (CallFrame pc execEnv _ _ : _) = Just (pc, execEnv)
@@ -1279,18 +1282,17 @@ lua_getstack_hs l r level ar out =
   reentry "lua_getstack" [cArg level, cArg (castPtr ar :: Ptr ())] l r $ \_ ->
 
   do tRef <- extToThreadRef =<< liftIO (deRefLuaState l)
-     thread <- readRef tRef
-     let mbExecEnv = findExecEnv (fromIntegral level) thread
+     liftIO $
+       do mbExecEnv <- findExecEnv (fromIntegral level) tRef
 
-     res <- case mbExecEnv of
-       -- get stack doesn't access a thread's initial stack for whatever reason
-       Just execEnv | not (isNullCFunction (execFunction (snd execEnv))) ->
-         do liftIO (pokeLuaDebugCallInfo ar =<< exportExecEnv execEnv)
-            return 1
+          case mbExecEnv of
+            -- get stack doesn't access a thread's initial stack for whatever reason
+            Just execEnv | not (isNullCFunction (execFunction (snd execEnv))) ->
+              do pokeLuaDebugCallInfo ar =<< exportExecEnv execEnv
+                 result out 1
 
-       _ -> return 0
+            _ -> result out 0
 
-     result out res
 
 isNullCFunction :: FunctionValue -> Bool
 isNullCFunction x = case funValueName x of
@@ -1308,8 +1310,10 @@ lua_getinfo_hs l r whatPtr ar out =
   do what         <- liftIO (peekCString whatPtr)
 
      (pc,execEnv) <- if '>'`elem` what
-                       then do t <- readRef =<< extToThreadRef =<< liftIO (deRefLuaState l)
-                               return (stPC t, stExecEnv t)
+                       then do th <- extToThreadRef =<< liftIO (deRefLuaState l)
+                               pc <- getThreadField stPC th
+                               eenv <- getThreadField stExecEnv th
+                               return (pc,eenv)
                        else liftIO (importExecEnv =<< peekLuaDebugCallInfo ar)
 
      let luaWhat fid = if isRootFun fid then "main" else "Lua"
@@ -1338,7 +1342,7 @@ lua_getinfo_hs l r whatPtr ar out =
                 do pokeLuaDebugIsTailCall      ar 0 -- XXX: Track tail calls
 
               when ('u' `elem` what) $
-                do pokeLuaDebugNUps            ar (fromIntegral (Vector.length (execUpvals execEnv)))
+                do pokeLuaDebugNUps            ar (fromIntegral (IOVector.length (execUpvals execEnv)))
                    pokeLuaDebugNParams         ar (fromIntegral (funcNumParams fun))
                    pokeLuaDebugIsVarArg        ar (if funcIsVararg fun then 1 else 0)
 
@@ -1366,7 +1370,7 @@ lua_getinfo_hs l r whatPtr ar out =
                 do pokeLuaDebugIsTailCall      ar 0 -- XXX: Track tail calls
 
               when ('u' `elem` what) $
-                do pokeLuaDebugNUps            ar (fromIntegral (Vector.length (execUpvals execEnv)))
+                do pokeLuaDebugNUps            ar (fromIntegral (IOVector.length (execUpvals execEnv)))
                    pokeLuaDebugNParams         ar 0 -- always 0 for C functions
                    pokeLuaDebugIsVarArg        ar 1 -- always true for C functions
 
@@ -1390,7 +1394,7 @@ lua_getlocal_hs l r ar n out =
 
 getLocalFunArgs :: Int -> Ptr CString -> SV.SizedVector (IORef Value) -> Mach ()
 getLocalFunArgs n out args =
-  do clo <- readRef =<< functionArgument (-1) args
+  do clo <- derefClosure =<< functionArgument (-1) args
      void (pop args)
      liftIO $ case luaOpCodes (cloFun clo) of
        Just (_,fun) ->
@@ -1436,12 +1440,16 @@ lua_getupvalue_hs l r funcindex n out =
        result out =<<
          case v of
            Closure ref -> liftIO $
-              do clo <- readRef ref
-                 case cloUpvalues clo Vector.!? n' of
-                   Nothing -> return nullPtr
-                   Just uv ->
-                        do push args =<< readIORef uv
-                           newCAString (upvalueName (cloFun clo) n') -- XXX: Leak
+              do clo <- derefClosure ref
+                 let ups = cloUpvalues clo
+
+                 if 0 <= n' && n' < IOVector.length ups then
+                   do uv <- IOVector.read ups n'
+                      push args =<< readIORef uv
+                      newCAString (upvalueName (cloFun clo) n') -- XXX: Leak
+                 else
+                   return nullPtr
+
            _ -> return nullPtr
 
 upvalueName :: FunctionValue -> Int -> String
@@ -1497,13 +1505,18 @@ lua_setupvalue_hs l r funcindex n out =
        result out =<<
         case v of
          Closure ref ->
-            do clo <- readRef ref
-               case cloUpvalues clo Vector.!? n' of
-                 Nothing -> return nullPtr
-                 Just uv -> do x <- pop args
-                               liftIO $
-                                 do writeIORef uv x
-                                    newCAString (upvalueName (cloFun clo) n') -- XXX: Leak
+            do clo <- derefClosure ref
+               let ups = cloUpvalues clo
+
+               if 0 <= n' && n' < IOVector.length ups then
+                 do uv <- liftIO (IOVector.read ups n')
+                    x <- pop args
+                    liftIO $
+                      do writeIORef uv x
+                         newCAString (upvalueName (cloFun clo) n') -- XXX: Leak
+
+               else return nullPtr
+
          _ -> return nullPtr
 
 ------------------------------------------------------------------------
@@ -1522,8 +1535,7 @@ lua_xmove_hs l r to n =
         unless (fromRef == toRef) $
           do transfer <- popN fromArgs (fromIntegral n)
 
-             toThread <- readRef toRef
-             let toStack = execStack (stExecEnv toThread)
+             toStack <- execStack <$> getThreadField stExecEnv toRef
              traverse_ (push toStack) transfer
        return Nothing
 
@@ -1542,14 +1554,18 @@ lua_upvaluejoin_hs l r f1 n1 f2 n2 =
        f2' <- valueArgument (fromIntegral f2) args
        let n1' = fromIntegral n1 - 1
            n2' = fromIntegral n2 - 1
-       case (f1',f2') of
+       liftIO $ case (f1',f2') of
          (Closure ref1, Closure ref2) ->
-           do clo2 <- readRef ref2
-              for_ (cloUpvalues clo2 Vector.!? n2') $ \upRef ->
-                do clo1 <- readRef ref1
-                   for_ (replaceAt n1' upRef (cloUpvalues clo1)) $ \newUps ->
-                     do let clo1' = clo1 { cloUpvalues = newUps }
-                        writeRef ref1 clo1'
+           do clo1 <- derefClosure ref1
+              clo2 <- derefClosure ref2
+
+              let v1 = cloUpvalues clo1
+                  v2 = cloUpvalues clo2
+
+              when (0 <= n2' && n2' < IOVector.length v2 &&
+                    0 <= n1' && n1' < IOVector.length v1)
+                   (IOVector.write v1 n1' =<< IOVector.read v2 n2')
+
          _ -> return ()
        return Nothing
 

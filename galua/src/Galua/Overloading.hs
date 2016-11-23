@@ -40,7 +40,7 @@ module Galua.Overloading
 import           Control.Monad.IO.Class(MonadIO(liftIO))
 import           Control.Monad.Trans.Reader(ReaderT(..), ask)
 import qualified Data.ByteString as B
-import           Data.IORef (readIORef)
+import           Data.IORef (readIORef, writeIORef)
 import           Data.Map (Map)
 import qualified Data.Map as Map
 import           Data.Bits((.&.),(.|.),xor,complement)
@@ -90,7 +90,7 @@ valueMetatable :: MetatableMonad m => Value -> m (Maybe (Reference Table))
 valueMetatable v =
   case v of
     Table    t -> liftIO (getTableMeta t)
-    UserData u -> liftIO (userDataMeta <$> readRef u)
+    UserData u -> liftIO (readIORef . userDataMeta =<< derefUserData u)
     _          -> getTypeMetatable (valueType v)
 
 -- | Set the metatable for a value. If the value is not a userdata
@@ -99,7 +99,8 @@ setMetatable :: Maybe (Reference Table) -> Value -> Mach ()
 setMetatable mt v =
   case v of
     Table    tref -> setTableMeta tref mt
-    UserData uref -> modifyRef uref $ \u -> u{userDataMeta = mt}
+    UserData uref -> liftIO $ do u <- derefUserData uref
+                                 writeIORef (userDataMeta u) mt
     _             -> setTypeMetatable (valueType v) mt
 
 -- | Look up the metamethod for a value
@@ -113,7 +114,7 @@ valueMetamethod v (MMN event) =
      liftIO $ case mbMetatable of
        Nothing        -> return Nil
        Just metatable ->
-         do t <- readRef metatable
+         do t <- derefTable metatable
             tableGetMeta t event allMetaMethods
 
 -- | Look up a metamethod on the first value if it is set falling back to

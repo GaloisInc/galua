@@ -11,6 +11,7 @@ import           Control.Monad.IO.Class
 import           Data.Foldable
 import           Data.IORef
 import qualified Data.Vector as Vector
+import qualified Data.Vector.Mutable as IOVector
 
 import qualified Galua.Util.SizedVector as SV
 
@@ -250,7 +251,8 @@ execute !pc =
 
        OP_CLOSURE tgt i ->
          do (fid,closureFunc) <- getProto i
-            closureUpvals <- traverse getLValue (funcUpvalues closureFunc)
+            closureUpvals <- liftIO . Vector.thaw
+                         =<< traverse getLValue (funcUpvalues closureFunc)
             tgt =: (Closure <$> machNewClosure (luaFunction fid closureFunc)
                                                                 closureUpvals)
 
@@ -321,9 +323,10 @@ class LValue a where
 instance LValue UpIx where
   getLValue (UpIx i) =
     do upvals <- getsExecEnv execUpvals
-       case upvals Vector.!? i of
-         Nothing -> interpThrow (BadUpval i)
-         Just x -> return x
+       if 0 <= i && i < IOVector.length upvals then
+         liftIO (IOVector.read upvals i)
+       else
+         interpThrow (BadUpval i)
 
 instance LValue Reg where
   getLValue (Reg i) =

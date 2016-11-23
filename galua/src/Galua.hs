@@ -7,7 +7,7 @@ import           Galua.Mach( VM, MachConfig(..)
                            , MachineEnv(..), newMachineEnv, NextStep
                            , runMach, emptyVM, threadCPtr, machWaitForC)
 import           Galua.Reference(AllocRef, runAllocWith, exposeAllocRef,
-                                  runAlloc, readRef)
+                                  runAlloc, derefThread)
 import           Galua.Stepper (runAllSteps)
 import           Galua.Value (Value(Nil))
 
@@ -30,7 +30,7 @@ setupLuaState cfg =
      let vm   = emptyVM menv
          next = runMach vm machWaitForC
 
-     mainThread <- readRef (machMainThreadRef menv)
+     mainThread <- derefThread (machMainThreadRef menv)
      let cptr = unsafeForeignPtrToPtr (threadCPtr mainThread)
      return (cptr, allocref, vm, next)
 

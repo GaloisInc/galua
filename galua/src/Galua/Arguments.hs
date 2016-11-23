@@ -1,9 +1,10 @@
 module Galua.Arguments where
 
 import           Control.Monad.IO.Class
+import           Control.Monad (when)
 import           Data.IORef
 import           Data.Foldable (for_)
-import qualified Data.Vector as Vector
+import qualified Data.Vector.Mutable as IOVector
 
 import           Galua.Mach
 import           Galua.Number
@@ -27,8 +28,10 @@ assign i x stack
 
   | i <  registryIndex = do v <- getsExecEnv execUpvals
                             let i' = registryIndex - i - 1
-                            for_ (v Vector.!? i') $ \ref ->
-                              liftIO (writeIORef ref x)
+                            liftIO $
+                              when (0 <= i' && i' < IOVector.length v) $
+                                do ref <- IOVector.read v i'
+                                   writeIORef ref x
 
   | otherwise = liftIO $
       case compare i 0 of
@@ -46,7 +49,11 @@ select i stack
 
   | i <  registryIndex = do v <- getsExecEnv execUpvals
                             let i' = registryIndex - i - 1
-                            traverse (liftIO . readIORef) (v Vector.!? i')
+                            liftIO $
+                              if 0 <= i' && i' < IOVector.length v
+                                then do ref <- IOVector.read v i'
+                                        Just <$> readIORef ref
+                                else return Nothing
 
   | otherwise = liftIO $
       case compare i 0 of
