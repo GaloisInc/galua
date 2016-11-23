@@ -86,6 +86,7 @@ getTypeMetatable typ =
 
 
 -- | Look up the metatable for a value
+{-# SPECIALIZE valueMetatable :: Value -> Mach (Maybe (Reference Table)) #-}
 valueMetatable :: MetatableMonad m => Value -> m (Maybe (Reference Table))
 valueMetatable v =
   case v of
