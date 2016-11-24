@@ -164,9 +164,8 @@ performFunCall c vm f vs mb k =
 
 bumpCallCounter :: Reference Closure -> VM -> IO ()
 bumpCallCounter clo vm =
-  do fun <- derefClosure clo
      atomicModifyIORef' prof $ \counts ->
-       let key     = funValueName (cloFun fun)
+       let key     = funValueName (cloFun (referenceVal clo))
            counts' = inline Map.alter inc key counts
            inc old = Just $! maybe 1 succ old
        in (counts', ())
@@ -407,12 +406,11 @@ runAllSteps vm i = oneStep' cont vm i
 
 vmSwitchToNormal :: Cont r -> VM -> ThreadResult -> Alloc r
 vmSwitchToNormal c vm res =
-  do let ref = vmCurThread vm
-     th <- derefThread ref
-     st <- liftIO (readIORef (threadStatus th))
+  do let th = vmCurThread vm
+     st <- getThreadField threadStatus th
      case st of
        ThreadNormal k ->
-         do liftIO (writeIORef (threadStatus th) ThreadRunning)
+         do setThreadField threadStatus th ThreadRunning
             running c vm (k res)
 
        _ -> error "[BUG] vmSwitchToNormal: not a normal thread."
@@ -428,9 +426,8 @@ consMb (Just x) xs = x : xs
 enterClosure ::
   MonadIO m => Reference Closure -> [Value] -> m (ExecEnv, VM -> NextStep)
 enterClosure c vs = liftIO $
-  do MkClosure { cloFun, cloUpvalues } <- derefClosure c
-
-     let (stackElts, vas, start, code) =
+  do let MkClosure { cloFun, cloUpvalues } = referenceVal c
+         (stackElts, vas, start, code) =
            case funValueCode cloFun of
              LuaOpCodes f ->
                   let n = funcMaxStackSize f

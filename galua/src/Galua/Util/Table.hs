@@ -21,6 +21,7 @@ import           Data.IORef(IORef,newIORef,writeIORef,readIORef)
 import qualified Galua.Util.SizedVector as SV
 import qualified Data.Vector as Vector
 import           Data.Vector (Vector)
+import           Galua.Util.Weak
 
 -- Desired goals (not necessarily implemented)
 -- 1. Indexable by all values
@@ -35,6 +36,9 @@ data Table v = Table
   , tableMeta  :: {-# UNPACK #-} !(IORef v) -- ^ Either "Table" or "Nil"
   , tableMCache:: {-# UNPACK #-} !(IORef (Vector v))
   }
+
+instance MakeWeak (Table v) where
+  makeWeak t = mkWeakIORef' (tableMeta t) t
 
 class (Eq v, Hashable v) => TableValue v where
   nilTableValue     :: v

@@ -3,6 +3,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE TypeFamilies #-}
 module Galua.Mach where
 
 
@@ -47,6 +48,7 @@ import           Galua.Util.Stack(Stack)
 import qualified Galua.Util.Stack as Stack
 import qualified Galua.Util.SizedVector as SV
 import           Galua.Util.Cache
+import           Galua.Util.Weak (MakeWeak(..), mkWeakIORef')
 
 
 import           GHC.Exts (inline)
@@ -71,9 +73,6 @@ emptyVM menv =
       , vmBlocked    = Stack.empty
       , vmCurThread  = machMainThreadRef menv
       }
-
-vmUpdateThread :: MonadIO m => VM -> (Thread -> Thread) -> m ()
-vmUpdateThread VM { vmCurThread } f = modifyRef vmCurThread f
 
 
 data VMState  = FinishedOk ![Value]
@@ -185,6 +184,9 @@ data Thread = MkThread
 
   }
 
+instance MakeWeak Thread where
+  makeWeak th = mkWeakIORef' (stPC th) th
+
 
 data ThreadStatus
 
@@ -217,16 +219,12 @@ data ThreadResult
 
 setThreadField :: MonadIO m => (Thread -> IORef a) -> Reference Thread -> a -> m ()
 setThreadField sel = \ref !val ->
-  liftIO $
-  do th <- derefThread ref
-     writeIORef (sel th) val
+  liftIO (writeIORef (sel (referenceVal ref)) val)
 {-# INLINE getThreadField #-}
 
 getThreadField :: MonadIO m => (Thread -> IORef a) -> Reference Thread -> m a
 getThreadField sel = \ref ->
-  liftIO $
-  do th <- derefThread ref
-     readIORef (sel th)
+  liftIO (readIORef (sel (referenceVal ref)))
 {-# INLINE setThreadField #-}
 
 newtype Mach a = Mach { unMach :: VM -> (a -> NextStep) -> NextStep }
@@ -448,10 +446,9 @@ machRefLoc :: Mach RefLoc
 machRefLoc =
   do tref <- machCurrentThread
      liftIO $
-       do th <- derefThread tref
-          pc    <- readIORef (stPC th)
-          eenv  <- readIORef (stExecEnv th)
-          stack <- readIORef (stStack th)
+       do pc    <- getThreadField stPC tref
+          eenv  <- getThreadField stExecEnv tref
+          stack <- getThreadField stStack tref
           return RefLoc { refLocCaller = getCaller stack
                         , refLocSite   = mkLoc eenv pc
                         }
@@ -487,9 +484,8 @@ getsMachEnv f = fmap f machCurrentEnv
 -- a function.
 getsExecEnv :: (ExecEnv -> a) -> Mach a
 getsExecEnv f =
-  do ref  <- machCurrentThread
-     th   <- derefThread ref
-     eenv <- liftIO (readIORef (stExecEnv th))
+  do th   <- machCurrentThread
+     eenv <- getThreadField stExecEnv th
      return (f eenv)
 {-# INLINE getsExecEnv #-}
 
@@ -711,9 +707,24 @@ parseLua mbName src =
        Right (ExitFailure{},_,err) -> return $! Left $! unpackUtf8 $! L.toStrict err
        Right (ExitSuccess,chunk,_) -> return $! parseLuaBytecode mbName chunk
 
-incrementCounter :: Reference a -> IORef (Map CodeLoc Int) -> IO ()
+incrementCounter :: ReferenceType a => Reference a -> IORef (Map CodeLoc Int) -> IO ()
 incrementCounter i countRef =
   atomicModifyIORef' countRef $ \counts ->
     let counts' = inline Map.alter inc (refLocSite (referenceLoc i)) counts
         inc old = Just $! maybe 1 succ old
     in (counts', counts' `seq` ())
+
+
+
+
+data instance Reference Thread = ThreadRef
+  { threadReferenceId  :: {-# UNPACK #-} !Int
+  , threadReferenceLoc :: {-# UNPACK #-} !RefLoc
+  , threadReferenceVal :: {-# UNPACK #-} !Thread
+  }
+
+instance ReferenceType Thread where
+  constructReference = ThreadRef
+  referenceId = threadReferenceId
+  referenceVal = threadReferenceVal
+  referenceLoc = threadReferenceLoc

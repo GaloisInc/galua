@@ -3,42 +3,32 @@ module Galua.Reference
   ( Alloc, runAlloc
   , AllocRef, exposeAllocRef, runAllocWith
   , NameM(..)
-  , Reference, RefLoc(..), CodeLoc(..), ReferenceType
   , referenceId
-  , referenceLoc
-  , swapRef
-  , modifyRef
   , prettyRef
   , addRefFinalizer
-  , getRefLoc
+  , referenceLoc
   , newReferenceId
 
   , newRef
-
-  , derefTable
-  , derefThread
-  , derefUserData
-  , derefClosure
   ) where
 
-import Control.Monad.IO.Class
-import Data.Function(on)
-import Data.IORef
-import Data.Functor (void)
-import Numeric(showHex)
-import System.Mem.Weak
+import           Control.Monad.IO.Class
+import           Data.Functor (void)
+import           Data.IORef
 import qualified Data.IntMap as IntMap
-import Data.IntMap (IntMap)
+import           Data.IntMap (IntMap)
+import           Numeric(showHex)
+import           System.Mem.Weak
 
-import Language.Lua.Bytecode.FunId(FunId)
-import Galua.Util.Loc
 import {-# SOURCE #-} Galua.Mach (Thread)
-import {-# SOURCE #-} Galua.Value (Closure, Value, UserData)
+import {-# SOURCE #-} Galua.Value
 import qualified Galua.Util.Table as Table
-import Galua.FunValue(CFunName)
+import           Galua.Util.Weak (MakeWeak(makeWeak))
+import           Galua.Util.Loc
 
-type WeakMap a = IntMap (Weak (IORef a))
 type Table = Table.Table Value
+
+type WeakMap a = IntMap (Weak a)
 
 data AllocState = AllocState
   { nextReferenceId :: !Int
@@ -49,6 +39,29 @@ data AllocState = AllocState
 
   , refLocs         :: !(IntMap RefLoc)
   }
+
+class (MakeWeak a, ReferenceType a) => AllocType a where
+  referenceTypeLoc :: Functor f => MonoLoc f (WeakMap a) AllocState
+
+instance AllocType UserData where
+  referenceTypeLoc f st =
+    st `seq` (\x -> st { userDataRefs = x }) <$> f (userDataRefs st)
+  {-# INLINE referenceTypeLoc #-}
+
+instance AllocType Closure where
+  referenceTypeLoc f st =
+    st `seq` (\x -> st { closureRefs = x }) <$> f (closureRefs st)
+  {-# INLINE referenceTypeLoc #-}
+
+instance AllocType Table where
+  referenceTypeLoc f st =
+    st `seq` (\x -> st { tableRefs = x }) <$> f (tableRefs st)
+  {-# INLINE referenceTypeLoc #-}
+
+instance AllocType Thread where
+  referenceTypeLoc f st =
+    st `seq` (\x -> st { threadRefs = x }) <$> f (threadRefs st)
+  {-# INLINE referenceTypeLoc #-}
 
 emptyAllocState :: AllocState
 emptyAllocState = AllocState
@@ -80,38 +93,16 @@ instance Monad Alloc where
   Alloc m >>= f = Alloc (\e -> m e >>= \x -> unAlloc (f x) e)
   {-# INLINE (>>=) #-}
 
-class ReferenceType a where
-  referenceTypeLoc :: Functor f => MonoLoc f (WeakMap a) AllocState
-
-instance ReferenceType Thread where
-  referenceTypeLoc f st =
-    st `seq` (\x -> st { threadRefs = x }) <$> f (threadRefs st)
-  {-# INLINE referenceTypeLoc #-}
-
-instance ReferenceType UserData where
-  referenceTypeLoc f st =
-    st `seq` (\x -> st { userDataRefs = x }) <$> f (userDataRefs st)
-  {-# INLINE referenceTypeLoc #-}
-
-instance ReferenceType Closure where
-  referenceTypeLoc f st =
-    st `seq` (\x -> st { closureRefs = x }) <$> f (closureRefs st)
-  {-# INLINE referenceTypeLoc #-}
-
-instance ReferenceType Table where
-  referenceTypeLoc f st =
-    st `seq` (\x -> st { tableRefs = x }) <$> f (tableRefs st)
-  {-# INLINE referenceTypeLoc #-}
 
 referenceTypeLocOf ::
-  (Functor f, ReferenceType a) => proxy a -> MonoLoc f (WeakMap a) AllocState
+  (Functor f, AllocType a) => proxy a -> MonoLoc f (WeakMap a) AllocState
 referenceTypeLocOf _ = referenceTypeLoc
 {-# INLINE referenceTypeLocOf #-}
 
 class MonadIO m => NameM m where
-  newRefWithId :: ReferenceType a => Int -> RefLoc -> a -> m (Reference a)
+  newRefWithId :: AllocType a => Int -> RefLoc -> a -> m (Reference a)
   newRefId  :: m Int
-  lookupRef :: ReferenceType a => Int -> m (Maybe (Reference a))
+  lookupRef :: AllocType a => Int -> m (Maybe (Reference a))
 
 instance MonadIO Alloc where
   liftIO m = Alloc (\_ -> m)
@@ -123,7 +114,7 @@ instance NameM Alloc where
   {-# INLINE newRefWithId #-}
   {-# INLINE lookupRef #-}
 
-newRef :: (NameM m, ReferenceType a) => RefLoc -> a -> m (Reference a)
+newRef :: (NameM m, AllocType a) => RefLoc -> a -> m (Reference a)
 newRef loc x =
   do i <- newRefId
      newRefWithId i loc x
@@ -145,35 +136,31 @@ newReferenceId = Alloc $ \ref ->
     (st { nextReferenceId = i+1 }, i)
 
 newReferenceIOWithId ::
-  ReferenceType a => Int -> RefLoc -> a -> IORef AllocState -> IO (Reference a)
+  AllocType a => Int -> RefLoc -> a -> IORef AllocState -> IO (Reference a)
 newReferenceIOWithId refId refLoc x stRef =
-  do ref   <- newIORef x
+  do let r = constructReference refId refLoc x
 
-     let r = Reference
-               { referenceId  = refId
-               , referenceRef = ref
-               , referenceLoc = refLoc
-               }
-
-     wref <- mkWeakIORef ref (referenceFinalizer stRef r)
+     wx <- makeWeak x (referenceFinalizer stRef r)
 
      atomicModifyIORef' stRef $ \st ->
-        ( setLoc (referenceTypeLoc . intMapAt refId) (Just wref)
+        ( setLoc (referenceTypeLoc . intMapAt refId) (Just wx)
         $ setLoc (refLocsLoc       . intMapAt refId) (Just refLoc)
           st, ())
 
      return $! r
 {-# INLINE newReferenceIOWithId #-}
 
+{-
 newReferenceIO ::
   ReferenceType a => RefLoc -> a -> IORef AllocState -> IO (Reference a)
 newReferenceIO refLoc x stRef =
   do refId <- runAllocWith stRef newReferenceId
      newReferenceIOWithId refId refLoc x stRef
 {-# INLINE newReferenceIO #-}
+-}
 
 referenceFinalizer ::
-  ReferenceType a => IORef AllocState -> Reference a -> IO ()
+  AllocType a => IORef AllocState -> Reference a -> IO ()
 referenceFinalizer stRef r =
   atomicModifyIORef' stRef $ \st ->
     ( setLoc (referenceTypeLocOf r . intMapAt (referenceId r)) Nothing
@@ -181,102 +168,20 @@ referenceFinalizer stRef r =
       st, ())
 
 lookupReferenceIO ::
-  ReferenceType a => Int -> AllocRef -> IO (Maybe (Reference a))
+  AllocType a => Int -> AllocRef -> IO (Maybe (Reference a))
 lookupReferenceIO refId stRef =
   do st <- readIORef stRef
      case getLoc (referenceTypeLoc . intMapAt refId) st of
        Nothing -> return Nothing
        Just wref -> do mbRef <- deRefWeak wref
                        let mbLoc = getLoc (refLocsLoc . intMapAt refId) st
-                       return $! Reference refId <$> mbRef <*> mbLoc
+                       return $! constructReference refId <$> mbLoc <*> mbRef
 
 --------------------------------------------------------------------------------
 
-data Reference a = Reference
-  { referenceId  :: {-# UNPACK #-}!Int
-  , referenceRef :: {-# UNPACK #-}!(IORef a)
-  , referenceLoc :: !(RefLoc)
-  }
 
+prettyRef :: ReferenceType a => Reference a -> String
+prettyRef r = "0x" ++ showHex (referenceId r) ""
 
-{-
-data family Reference a
-
-data instance Reference Table =
-  TableRef
-    {-# UNPACK #-} !Int
-    {-# UNPACK #-} !RefLoc
-    {-# UNPACK #-} !Table
-
-data instance Reference UserData =
-  UserDataRef
-    {-# UNPACK #-} !Int
-    {-# UNPACK #-} !RefLoc
-    {-# UNPACK #-} !(IORef UserData)
-
-data instance Reference Thread =
-  ThreadRef
-    {-# UNPACK #-} !Int
-    {-# UNPACK #-} !RefLoc
-    {-# UNPACK #-} !(IORef Thread)
-
-data instance Reference Closure =
-  ClosureRef
-    {-# UNPACK #-} !Int
-    {-# UNPACK #-} !RefLoc
-    {-# UNPACK #-} !(IORef Closure)
--}
-
--- | The location in the source code that allocated this reference.
-data RefLoc  = RefLoc { refLocCaller :: !CodeLoc, refLocSite :: !CodeLoc }
-               deriving (Eq,Ord)
-
-data CodeLoc = MachSetup
-             | InC !CFunName
-             | InLua !FunId !Int  -- ^ Function, program counter
-               deriving (Eq,Ord)
-
-instance Show (Reference a) where
-  show = prettyRef
-
-instance Eq (Reference a) where
-  (==) = (==) `on` referenceId
-  (/=) = (/=) `on` referenceId
-
-instance Ord (Reference a) where
-  compare = compare `on` referenceId
-  (<=) = (<=) `on` referenceId
-  (<)  = (<)  `on` referenceId
-  (>)  = (>)  `on` referenceId
-  (>=) = (>=) `on` referenceId
-
-prettyRef :: Reference a -> String
-prettyRef (Reference x _ _) = "0x" ++ showHex x ""
-
-swapRef :: MonadIO m => Reference a -> a -> m a
-swapRef ref new =
-  liftIO (atomicModifyIORef (referenceRef ref) (\old -> (new,old)))
-
-modifyRef :: MonadIO m => Reference a -> (a -> a) -> m ()
-modifyRef ref f = liftIO (modifyIORef' (referenceRef ref) f)
-
-addRefFinalizer :: Reference a -> IO () -> IO ()
-addRefFinalizer ref finalizer = void (mkWeakIORef (referenceRef ref) finalizer)
-
-getRefLoc :: Reference a -> RefLoc
-getRefLoc = referenceLoc
-
-readRef :: MonadIO m => Reference a -> m a
-readRef = liftIO . readIORef . referenceRef
-
-derefTable :: MonadIO m => Reference Table -> m Table
-derefTable = readRef
-
-derefThread :: MonadIO m => Reference Thread -> m Thread
-derefThread = readRef
-
-derefUserData :: MonadIO m => Reference UserData -> m UserData
-derefUserData = readRef
-
-derefClosure :: MonadIO m => Reference Closure -> m Closure
-derefClosure = readRef
+addRefFinalizer :: AllocType a => Reference a -> IO () -> IO ()
+addRefFinalizer ref finalizer = void (makeWeak (referenceVal ref) finalizer)

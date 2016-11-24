@@ -8,7 +8,6 @@ import qualified Data.Vector.Mutable as IOVector
 
 import           Galua.Mach
 import           Galua.Number
-import           Galua.Reference (Reference)
 import           Galua.Value
 import           Galua.LuaString
 import qualified Galua.Util.SizedVector as SV

@@ -4,6 +4,8 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module Galua.Value
   ( -- * Values
@@ -52,10 +54,17 @@ module Galua.Value
   -- * Lua Function Environment
   , prettyValue
   , prettyValueType
+
+  -- * References
+  , Reference
+  , RefLoc(..)
+  , CodeLoc(..)
+  , ReferenceType(..)
   ) where
 
 import           Control.Monad.IO.Class
 import           Data.ByteString (ByteString)
+import           Data.Function(on)
 import           Data.IORef
 import qualified Data.Text as Text
 import           Data.Text.Encoding (decodeUtf8With,encodeUtf8)
@@ -77,6 +86,7 @@ import Galua.FunValue
 import Galua.ValueType
 import Galua.Reference
 import Galua.LuaString
+import Galua.Util.Weak (MakeWeak(..), mkWeakIORef', mkWeakMVector')
 
 data Value
   = Bool     !Bool
@@ -114,7 +124,8 @@ instance Hashable Value where
       LightUserData p -> con 8 (toInteger (ptrToIntPtr p))
       Thread r        -> con 9 (referenceId r)
     where
-    con n x = hashWithSalt (hashWithSalt s (n::Int)) x
+    con :: Hashable a => Int -> a -> Int
+    con n x = hashWithSalt (hashWithSalt s n) x
 
 
 ------------------------------------------------------------------------
@@ -156,34 +167,29 @@ newTable refLoc arraySize hashSize =
   newRef refLoc =<< liftIO (Tab.newTable arraySize hashSize)
 
 setTableMeta :: MonadIO m => Reference Table -> Maybe (Reference Table) -> m ()
-setTableMeta tr mt = liftIO $ do t <- derefTable tr
-                                 Tab.setTableMeta t $ maybe Nil Table mt
+setTableMeta tr mt = liftIO $ Tab.setTableMeta (referenceVal tr) $ maybe Nil Table mt
 
 getTableMeta :: MonadIO m => Reference Table -> m (Maybe (Reference Table))
-getTableMeta ref = liftIO $ do t <- derefTable ref
-                               v <- Tab.getTableMeta t
+getTableMeta ref = liftIO $ do v <- Tab.getTableMeta (referenceVal ref)
                                case v of
                                  Table t' -> return (Just t')
                                  _        -> return Nothing
 
 getTableRaw :: MonadIO io => Reference Table -> Value {- ^ key -} -> io Value
-getTableRaw ref key = liftIO $ do t <- derefTable ref
-                                  Tab.getTableRaw t key
+getTableRaw ref key = liftIO $ Tab.getTableRaw (referenceVal ref) key
 
 setTableRaw :: MonadIO m => Reference Table -> Value -> Value -> m ()
-setTableRaw ref key !val = liftIO $ do t <- derefTable ref
-                                       Tab.setTableRaw t key val
+setTableRaw ref key !val = liftIO $ Tab.setTableRaw (referenceVal ref) key val
 
 tableLen :: MonadIO io => Reference Table -> io Int
-tableLen ref = liftIO (Tab.tableLen =<< derefTable ref)
+tableLen ref = liftIO (Tab.tableLen (referenceVal ref))
 
 tableFirst :: NameM m => Reference Table -> m (Maybe (Value,Value))
-tableFirst ref = liftIO (Tab.tableFirst =<< derefTable ref)
+tableFirst ref = liftIO (Tab.tableFirst (referenceVal ref))
 
 
 tableNext :: MonadIO m => Reference Table -> Value -> m (Maybe (Value,Value))
-tableNext ref key = liftIO $ do t <- derefTable ref
-                                Tab.tableNext t key
+tableNext ref key = liftIO $ Tab.tableNext (referenceVal ref) key
 
 ------------------------------------------------------------------------
 -- Value types
@@ -301,5 +307,77 @@ trimResult1 (x:_) = x
 
 --------------------------------------------------------------------------------
 
+instance MakeWeak UserData where
+  makeWeak ud = mkWeakIORef' (userDataMeta ud) ud
 
+instance MakeWeak Closure where
+  makeWeak cl = mkWeakMVector' (cloUpvalues cl) cl
+
+data family Reference a
+
+data instance Reference Table = TableRef
+  { tableReferenceId  :: {-# UNPACK #-} !Int
+  , tableReferenceLoc :: {-# UNPACK #-} !RefLoc
+  , tableReferenceVal :: {-# UNPACK #-} !Table
+  }
+
+data instance Reference UserData = UserDataRef
+  { userDataReferenceId  :: {-# UNPACK #-} !Int
+  , userDataReferenceLoc :: {-# UNPACK #-} !RefLoc
+  , userDataReferenceVal :: {-# UNPACK #-} !UserData
+  }
+
+data instance Reference Closure = ClosureRef
+  { closureReferenceId  :: {-# UNPACK #-} !Int
+  , closureReferenceLoc :: {-# UNPACK #-} !RefLoc
+  , closureReferenceVal :: {-# UNPACK #-} !Closure
+  }
+
+class ReferenceType a where
+  constructReference :: Int -> RefLoc -> a -> Reference a
+  referenceLoc     :: Reference a -> RefLoc
+  referenceId      :: Reference a -> Int
+  referenceVal     :: Reference a -> a
+
+
+instance ReferenceType UserData where
+  constructReference = UserDataRef
+  referenceId = userDataReferenceId
+  referenceLoc = userDataReferenceLoc
+  referenceVal = userDataReferenceVal
+
+instance ReferenceType Closure where
+  constructReference = ClosureRef
+  referenceId = closureReferenceId
+  referenceLoc = closureReferenceLoc
+  referenceVal = closureReferenceVal
+
+instance ReferenceType Table where
+  constructReference = TableRef
+  referenceId = tableReferenceId
+  referenceVal = tableReferenceVal
+  referenceLoc = tableReferenceLoc
+
+-- | The location in the source code that allocated this reference.
+data RefLoc  = RefLoc { refLocCaller :: !CodeLoc, refLocSite :: !CodeLoc }
+               deriving (Eq,Ord)
+
+data CodeLoc = MachSetup
+             | InC !CFunName
+             | InLua !FunId !Int  -- ^ Function, program counter
+               deriving (Eq,Ord)
+
+instance ReferenceType a => Show (Reference a) where
+  show = prettyRef
+
+instance ReferenceType a => Eq (Reference a) where
+  (==) = (==) `on` referenceId
+  (/=) = (/=) `on` referenceId
+
+instance ReferenceType a => Ord (Reference a) where
+  compare = compare `on` referenceId
+  (<=) = (<=) `on` referenceId
+  (<)  = (<)  `on` referenceId
+  (>)  = (>)  `on` referenceId
+  (>=) = (>=) `on` referenceId
 

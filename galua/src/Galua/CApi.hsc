@@ -308,10 +308,9 @@ lua_tocfunction_hs l r ix out =
   do x <- valueArgument (fromIntegral ix) args
      res <- case x of
               Closure cref ->
-                do c <- derefClosure cref
-                   case funValueName (cloFun c) of
-                     CFID cfun -> return (cfunAddr cfun)
-                     _         -> return nullFunPtr
+                case funValueName (cloFun (referenceVal cref)) of
+                  CFID cfun -> return (cfunAddr cfun)
+                  _         -> return nullFunPtr
               _ -> return nullFunPtr
      result out res
 
@@ -324,10 +323,9 @@ lua_iscfunction_hs l r ix out =
   do x <- valueArgument (fromIntegral ix) args
      res <- case x of
               Closure cref ->
-                do c <- derefClosure cref
-                   case funValueName (cloFun c) of
-                     CFID {} -> return 1
-                     _       -> return 0
+                case funValueName (cloFun (referenceVal cref)) of
+                  CFID {} -> return 1
+                  _       -> return 0
               _ -> return 0
      result out res
 
@@ -597,8 +595,7 @@ lua_touserdata_hs l r arg out =
   do v <- valueArgument (fromIntegral arg) args
      ptr <- case v of
               UserData uref ->
-                do u <- derefUserData uref
-                   let fptr = userDataPtr u
+                do let fptr = userDataPtr (referenceVal uref)
                    return (unsafeForeignPtrToPtr fptr)
               LightUserData ptr -> return ptr
               _ -> return nullPtr
@@ -865,8 +862,7 @@ lua_getuservalue_hs l r ix out =
   do v <- valueArgument (fromIntegral ix) args
      case v of
        UserData uref ->
-          do u <- derefUserData uref
-             uservalue <- liftIO (readIORef (userDataValue u))
+          do uservalue <- liftIO (readIORef (userDataValue (referenceVal uref)))
              push args uservalue
              result out (lua_type_int uservalue)
        _ -> luaError "lua_getuservalue: argument is not full userdata"
@@ -881,8 +877,7 @@ lua_setuservalue_hs l r ix =
      uservalue <- pop args
      case v of
        UserData uref ->
-         do u <- derefUserData uref
-            liftIO (Nothing <$ writeIORef (userDataValue u) uservalue)
+         liftIO (Nothing <$ writeIORef (userDataValue (referenceVal uref)) uservalue)
        _ -> luaError "lua_setuservalue: argument is not full userdata"
 
 ------------------------------------------------------------------------
@@ -976,7 +971,7 @@ lua_rawlen_hs l r idx out =
        do len <- case v of
                    String xs  -> return (luaStringLen xs)
                    Table t    -> tableLen t
-                   UserData u -> userDataSize <$> derefUserData u
+                   UserData u -> return (userDataSize (referenceVal u))
                    _          -> return 0
           result out (fromIntegral len)
 
@@ -1072,12 +1067,10 @@ lua_tothread_hs :: EntryPoint (CInt -> Ptr (Ptr ()) -> IO CInt)
 lua_tothread_hs l r n out =
   reentry "lua_tothread" [cArg n] l r $ \args ->
     do v <- valueArgument (fromIntegral n) args
-       p <- case v of
-          Thread t ->
-            do thr <- derefThread t
-               return (unsafeForeignPtrToPtr (threadCPtr thr))
-          _ -> return nullPtr
-       result out p
+       result out $!
+         case v of
+           Thread t -> unsafeForeignPtrToPtr (threadCPtr (referenceVal t))
+           _        -> nullPtr
 
 foreign export ccall
   lua_pushthread_hs :: EntryPoint (Ptr CInt -> IO CInt)
@@ -1180,9 +1173,8 @@ lua_newthread_hs :: EntryPoint (Ptr (Ptr ()) -> IO CInt)
 lua_newthread_hs l r out =
   reentry "lua_newthread" [] l r $ \args ->
     do threadRef <- machNewThread
-       thread    <- derefThread threadRef
        push args (Thread threadRef)
-       result out (unsafeForeignPtrToPtr (threadCPtr thread))
+       result out (unsafeForeignPtrToPtr (threadCPtr (referenceVal threadRef)))
 
 foreign export ccall
   lua_isyieldable_hs :: EntryPoint (Ptr CInt -> IO CInt)
@@ -1394,9 +1386,9 @@ lua_getlocal_hs l r ar n out =
 
 getLocalFunArgs :: Int -> Ptr CString -> SV.SizedVector (IORef Value) -> Mach ()
 getLocalFunArgs n out args =
-  do clo <- derefClosure =<< functionArgument (-1) args
+  do clo <- functionArgument (-1) args
      void (pop args)
-     liftIO $ case luaOpCodes (cloFun clo) of
+     liftIO $ case luaOpCodes (cloFun (referenceVal clo)) of
        Just (_,fun) ->
          case lookupLocalName fun 0 (Reg (n-1)) of
            Nothing -> poke out nullPtr
@@ -1440,8 +1432,8 @@ lua_getupvalue_hs l r funcindex n out =
        result out =<<
          case v of
            Closure ref -> liftIO $
-              do clo <- derefClosure ref
-                 let ups = cloUpvalues clo
+              do let clo = referenceVal ref
+                     ups = cloUpvalues clo
 
                  if 0 <= n' && n' < IOVector.length ups then
                    do uv <- IOVector.read ups n'
@@ -1505,8 +1497,8 @@ lua_setupvalue_hs l r funcindex n out =
        result out =<<
         case v of
          Closure ref ->
-            do clo <- derefClosure ref
-               let ups = cloUpvalues clo
+            do let clo = referenceVal ref
+                   ups = cloUpvalues clo
 
                if 0 <= n' && n' < IOVector.length ups then
                  do uv <- liftIO (IOVector.read ups n')
@@ -1556,11 +1548,8 @@ lua_upvaluejoin_hs l r f1 n1 f2 n2 =
            n2' = fromIntegral n2 - 1
        liftIO $ case (f1',f2') of
          (Closure ref1, Closure ref2) ->
-           do clo1 <- derefClosure ref1
-              clo2 <- derefClosure ref2
-
-              let v1 = cloUpvalues clo1
-                  v2 = cloUpvalues clo2
+           do let v1 = cloUpvalues (referenceVal ref1)
+                  v2 = cloUpvalues (referenceVal ref2)
 
               when (0 <= n2' && n2' < IOVector.length v2 &&
                     0 <= n1' && n1' < IOVector.length v1)

@@ -17,7 +17,7 @@ import           Control.Monad(zipWithM_,(<=<))
 import qualified Language.Lua.Bytecode as OP
 import           Language.Lua.Bytecode.FunId
 
-import           Galua.Reference(Reference,NameM,derefUserData,RefLoc(..),CodeLoc(..))
+import           Galua.Reference(NameM)
 import           Galua.Value
 import           Galua.FunValue
 import           Galua.Number(Number(..),wordshiftL,wordshiftR,nummod,
@@ -285,7 +285,7 @@ runStmt f@Frame { .. } pc stmt =
          case v of
 
            Table tr         -> setMb =<< getTableMeta tr
-           UserData ur      -> setMb =<< liftIO . readIORef . userDataMeta =<< derefUserData ur
+           UserData ur      -> setMb =<< liftIO (readIORef (userDataMeta (referenceVal ur)))
            _                -> tyMeta (valueType v)
 
     Raise e ->
