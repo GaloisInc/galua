@@ -463,22 +463,20 @@ findNameResolveEnv dbg vm eid =
               _ -> nameResolveException ("Invalid stack frame: " ++ show sid)
 
        ThreadExecEnv tid ->
-         runAllocWith (dbgNames dbg) $
-           do mb <- lookupRef tid
-              case mb of
-                Nothing  -> liftIO $ nameResolveException "Invalid thread."
-                Just ref ->
-                  do eenv <- getThreadField stExecEnv ref
-                     liftIO $ execEnvToNameResolveEnv metaTabs eenv
+         do mb <- runAllocWith (dbgNames dbg) (lookupRef tid)
+            case mb of
+              Nothing  -> nameResolveException "Invalid thread."
+              Just ref ->
+                do eenv <- getThreadField stExecEnv ref
+                   execEnvToNameResolveEnv metaTabs eenv
 
        ClosureEnvId cid ->
-         runAllocWith (dbgNames dbg) $
-           do mb <- lookupRef cid
-              case mb of
-                Nothing  -> liftIO $ nameResolveException "Invalid closure."
-                Just ref ->
-                  do let closure = referenceVal ref
-                     liftIO $ closureToResolveEnv metaTabs closure
+         do mb <- runAllocWith (dbgNames dbg) (lookupRef cid)
+            case mb of
+              Nothing  -> nameResolveException "Invalid closure."
+              Just ref ->
+                do let closure = referenceVal ref
+                   closureToResolveEnv metaTabs closure
 
 closureToResolveEnv ::
   TypeMetatables -> Closure -> IO (FunId, NameResolveEnv)
