@@ -1011,7 +1011,7 @@ getCurrentLineNumber vm =
 
 doStepMode :: Debugger -> VM -> NextStep -> StepMode -> IO VMState
 doStepMode dbg vm next mode =
-  do vmstate <- runAllocWith (dbgNames dbg) (oneStep vm next)
+  do vmstate <- oneStep (dbgNames dbg) vm next
      mode' <- nextMode vm next mode
      case vmstate of
        RunningInC vm' ->
