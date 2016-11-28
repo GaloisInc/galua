@@ -94,6 +94,7 @@ import           Data.Ord(comparing)
 import           Data.List(unfoldr,minimumBy)
 import           Data.Vector (Vector)
 import qualified Data.Vector as Vector
+import qualified Data.Vector.Mutable as IOVector
 import           Data.IORef(IORef,readIORef,writeIORef,
                             modifyIORef,modifyIORef',newIORef,
                             atomicModifyIORef')
@@ -293,10 +294,10 @@ getValue vp0 = do res <- runExceptionT (getVal vp0)
         do val <- getVal vp'
            case val of
              Closure ref ->
-                do clo <- lift (readRef ref)
-                   case cloUpvalues clo Vector.!? n of
-                     Just r  -> lift (readIORef r)
-                     Nothing -> raise ()
+                do let ups = cloUpvalues (referenceVal ref)
+                   if 0 <= n && n < IOVector.length ups
+                     then lift (readIORef =<< IOVector.read ups n)
+                     else raise ()
              _ -> raise ()
 
       VP_MetaTable vp' ->
@@ -306,10 +307,11 @@ getValue vp0 = do res <- runExceptionT (getVal vp0)
                            case mb of
                              Just tr -> return (Table tr)
                              Nothing -> raise ()
-             UserData r -> do u <- lift (readRef r)
-                              case userDataMeta u of
-                                Just tr -> return (Table tr)
-                                Nothing -> raise ()
+             UserData r ->
+               do mb <- lift (readIORef (userDataMeta (referenceVal r)))
+                  case mb of
+                    Just tr -> return (Table tr)
+                    Nothing -> raise ()
              _ -> raise () -- XXX: Does anything else have a metatable?
 
       VP_Register ExecEnv { execStack } n ->
@@ -319,9 +321,9 @@ getValue vp0 = do res <- runExceptionT (getVal vp0)
              Nothing -> raise ()
 
       VP_Upvalue ExecEnv { execUpvals } n ->
-        case execUpvals Vector.!? n of
-          Just r  -> lift (readIORef r)
-          Nothing -> raise ()
+        if 0 <= n && n < IOVector.length execUpvals
+          then lift (readIORef =<< IOVector.read execUpvals n)
+          else raise ()
 
       VP_Varargs ExecEnv { execVarargs } n ->
         do varargs <- lift (readIORef execVarargs)
@@ -376,10 +378,10 @@ setValue vp v =
   setCUpval n val =
     case val of
       Closure ref ->
-        do clo <- readRef ref
-           case cloUpvalues clo Vector.!? n of
-             Nothing -> return ()
-             Just r  -> writeIORef r v
+        do let ups = cloUpvalues (referenceVal ref)
+           when (0 <= n && n < IOVector.length ups) $
+              do r <- IOVector.read ups n
+                 writeIORef r v
 
       _ -> return ()
 
@@ -392,7 +394,7 @@ setValue vp v =
   doSetMeta val mb1 =
     case val of
       Table ref    -> setTableMeta ref mb1
-      UserData ref -> modifyRef ref (\u -> u { userDataMeta = mb1 })
+      UserData ref -> writeIORef (userDataMeta (referenceVal ref)) mb1
       _            -> return ()
 
   setReg n ExecEnv { execStack } =
@@ -402,9 +404,9 @@ setValue vp v =
          Nothing -> return ()
 
   setUVal n ExecEnv { execUpvals } =
-    case execUpvals Vector.!? n of
-      Just r  -> writeIORef r v
-      Nothing -> return ()
+    when (0 <= n && n < IOVector.length execUpvals) $
+      do r <- IOVector.read execUpvals n
+         writeIORef r v
 
   setVArg n ExecEnv { execVarargs } =
     do modifyIORef' execVarargs $ \varargs ->
@@ -466,7 +468,7 @@ findNameResolveEnv dbg vm eid =
               case mb of
                 Nothing  -> liftIO $ nameResolveException "Invalid thread."
                 Just ref ->
-                  do eenv <- stExecEnv <$> readRef ref
+                  do eenv <- getThreadField stExecEnv ref
                      liftIO $ execEnvToNameResolveEnv metaTabs eenv
 
        ClosureEnvId cid ->
@@ -475,7 +477,7 @@ findNameResolveEnv dbg vm eid =
               case mb of
                 Nothing  -> liftIO $ nameResolveException "Invalid closure."
                 Just ref ->
-                  do closure <- readRef ref
+                  do let closure = referenceVal ref
                      liftIO $ closureToResolveEnv metaTabs closure
 
 closureToResolveEnv ::
@@ -485,8 +487,9 @@ closureToResolveEnv metaTabs c =
                      Just (fid,func) -> return (fid,func)
                      _ -> nameResolveException "Not in a Lua function."
      stack <- SV.new
+     ups <- Vector.freeze (cloUpvalues c)
      let nre = NameResolveEnv
-                 { nrUpvals   = cloUpvalues c
+                 { nrUpvals   = ups
                  , nrStack    = stack
                  , nrFunction = func
                  , nrMetas    = metaTabs
@@ -500,8 +503,9 @@ execEnvToNameResolveEnv metaTabs eenv =
                      Just (fid,func) -> return (fid,func)
                      _ -> nameResolveException "Not in a Lua function."
 
+     ups <- Vector.freeze (execUpvals eenv)
      let nre = NameResolveEnv
-                 { nrUpvals   = execUpvals eenv
+                 { nrUpvals   = ups
                  , nrStack    = execStack eenv
                  , nrFunction = func
                  , nrMetas    = metaTabs
@@ -998,10 +1002,12 @@ handleCommand dbg isIdle cmd =
 
 getCurrentLineNumber :: VM -> IO Int
 getCurrentLineNumber vm =
-    do th <- readRef (vmCurThread vm)
+    do let th = vmCurThread vm
+       eenv <- getThreadField stExecEnv th
+       pc   <- getThreadField stPC th
        return $! fromMaybe 0 $
-              do (_,func) <- luaOpCodes (execFunction (stExecEnv th))
-                 lookupLineNumber func (stPC th)
+              do (_,func) <- luaOpCodes (execFunction eenv)
+                 lookupLineNumber func pc
 
 doStepMode :: Debugger -> VM -> NextStep -> StepMode -> IO VMState
 doStepMode dbg vm next mode =
@@ -1068,9 +1074,10 @@ checkStopError dbg vm next k =
 checkBreakPoint :: Debugger -> StepMode -> VM -> NextStep ->
                                                     IO VMState -> IO VMState
 checkBreakPoint dbg mode vm nextStep k =
-  do th <- readRef (vmCurThread vm)
-     let curFun = funValueName (execFunction (stExecEnv th))
-         pc     = stPC th
+  do let th = vmCurThread vm
+     eenv <- getThreadField stExecEnv th
+     let curFun = funValueName (execFunction eenv)
+     pc <- getThreadField stPC th
      case curFun of
        LuaFID fid ->
          do let loc = (pc,fid)
@@ -1081,8 +1088,7 @@ checkBreakPoint dbg mode vm nextStep k =
                   Nothing -> do setIdleReason dbg ReachedBreakPoint
                                 return (Running vm nextStep)
                   Just c ->
-                    do nextStep' <- executeCompiledStatment vm (stExecEnv th)
-                                                               (brkCond c)
+                    do nextStep' <- executeCompiledStatment vm eenv (brkCond c)
                                   $ \vs ->
                                     let stop = valueBool (trimResult1 vs)
                                     in if stop

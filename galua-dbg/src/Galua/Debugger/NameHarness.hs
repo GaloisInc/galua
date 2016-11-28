@@ -20,8 +20,8 @@ import qualified Data.Set as Set
 import qualified Data.Vector as Vector
 import           Galua.FunValue (funValueCode, luaFunction, FunCode(..))
 import           Galua.LuaString (fromByteString)
-import           Galua.Reference (readRef, writeRef)
-import           Galua.Mach (HandlerType(DefaultHandler), MachineEnv(..), NextStep(Goto), StackFrame(CallFrame), Thread(..), VM(..), ApiCallStatus(NoApiCall), ExecEnv(..), parseLua)
+import           Galua.Reference
+import           Galua.Mach (HandlerType(DefaultHandler), MachineEnv(..), NextStep(Goto), StackFrame(CallFrame), Thread(..), VM(..), ApiCallStatus(NoApiCall), ExecEnv(..), parseLua, getThreadField, setThreadField)
 import qualified Galua.Util.SizedVector as SV
 import           Galua.Util.SizedVector (SizedVector)
 import qualified Galua.Util.Stack as Stack
@@ -138,9 +138,11 @@ execEnvForCompiledStatment globals env stat =
   do apiCallRef <- newIORef NoApiCall
      now        <- Clock.getTime Clock.ProcessCPUTime
      stack      <- prepareStack stat (execStack env)
+     ups <- do oldUps <- Vector.freeze (execUpvals env)
+               Vector.thaw (Vector.snoc oldUps globals)
      return env
        { execStack    = stack
-       , execUpvals   = Vector.snoc (execUpvals env) globals
+       , execUpvals   = ups
        , execFunction = luaFunction noFun (csFunc stat)
        , execClosure  = Nil -- used for debug API
        , execApiCall  = apiCallRef
@@ -189,14 +191,20 @@ executeCompiledStatment ::
 executeCompiledStatment vm cenv cs resume =
   do globRef <- newIORef (Table (machGlobals (vmMachineEnv vm)))
      env     <- execEnvForCompiledStatment globRef cenv cs
-     th      <- readRef (vmCurThread vm)
+     let th = vmCurThread vm
+
+     thEnv   <- getThreadField stExecEnv th
+     thPc    <- getThreadField stPC th
+     thStack <- getThreadField stStack th
+     thHandlers <- getThreadField stHandlers th
+
      let recover e  = resume [e]
-         frame = CallFrame (stPC th) (stExecEnv th) (Just recover) resume
-     writeRef (vmCurThread vm)
-         th { stExecEnv  = env
-            , stHandlers = DefaultHandler : stHandlers th
-            , stStack    = Stack.push frame (stStack th)
-            }
+         frame = CallFrame thPc thEnv (Just recover) resume
+
+     setThreadField stExecEnv th env
+     setThreadField stHandlers th (DefaultHandler : thHandlers)
+     setThreadField stStack th (Stack.push frame thStack)
+
      return (Goto 0)
 
 
