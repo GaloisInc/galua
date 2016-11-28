@@ -82,9 +82,6 @@ type Reentry m =
 reentryIO :: Reentry IO
 reentryIO label args l r k = reentry label args l r (liftIO . k)
 
-reentryAlloc :: Reentry Alloc
-reentryAlloc label args l r k = reentry label args l r (liftAlloc . k)
-
 -- | Resume execution of the machine upon entry from the C API
 reentry :: Reentry Mach
 reentry label args l r k =
