@@ -41,7 +41,7 @@ foreign export ccall "galua_newstate"
 newLuaState :: IO (Ptr ())
 newLuaState =
   do (cptr, allocref, vm, next) <- setupLuaState cfg
-     _  <- forkIO $ void $ runAllocWith allocref $ runAllSteps vm next
+     _  <- forkIO $ void $ runAllSteps allocref vm next
      return cptr
 
   where cfg = MachConfig

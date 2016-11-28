@@ -34,25 +34,27 @@ import qualified System.Clock as Clock
 import           GHC.Exts (inline)
 
 data Cont r = Cont
-  { running           :: VM -> NextStep -> Alloc r
-  , runningInC        :: VM -> Alloc r
-  , finishedOk        :: [Value] -> Alloc r
-  , finishedWithError :: Value -> Alloc r
+  { running           :: VM -> NextStep -> IO r
+  , runningInC        :: VM -> IO r
+  , finishedOk        :: [Value] -> IO r
+  , finishedWithError :: Value -> IO r
+  , theRef            :: AllocRef
   }
 
-oneStep :: VM -> NextStep -> Alloc VMState
-oneStep = oneStep'
+oneStep :: AllocRef -> VM -> NextStep -> IO VMState
+oneStep ref = oneStep'
   Cont { running = \a b -> return $! Running a b
        , runningInC = \a -> return $! RunningInC a
        , finishedOk = \a -> return $! FinishedOk a
        , finishedWithError = \a -> return $! FinishedWithError a
+       , theRef = ref
        }
 
 {-# INLINE oneStep' #-}
-oneStep' :: Cont r -> VM -> NextStep -> Alloc r
+oneStep' :: Cont r -> VM -> NextStep -> IO r
 oneStep' c vm instr = do
   case instr of
-    PrimStep m          -> running c vm =<< m
+    PrimStep m          -> running c vm =<< runAllocWith (theRef c) m
     Goto pc             -> performGoto          c vm pc
     FunCall f vs mb k   -> performFunCall       c vm f vs mb k
     FunTailcall f vs    -> performTailCall      c vm f vs
@@ -76,21 +78,21 @@ performApiEnd ::
   VM                 {- ^ virtual machine state -} ->
   Maybe PrimArgument {- ^ C return value        -} ->
   NextStep           {- ^ next step             -} ->
-  Alloc r
+  IO r
 performApiEnd c vm res next =
-  do liftIO $ do eenv <- getThreadField stExecEnv (vmCurThread vm)
-                 writeIORef (execApiCall eenv) NoApiCall
-                 writeIORef (execLastResult eenv) res
-                 putMVar (machCServer (vmMachineEnv vm)) CResume
+  do eenv <- getThreadField stExecEnv (vmCurThread vm)
+     writeIORef (execApiCall eenv) NoApiCall
+     writeIORef (execLastResult eenv) res
+     putMVar (machCServer (vmMachineEnv vm)) CResume
      running c vm next
 
-performApiStart :: Cont r -> VM -> ApiCall -> NextStep -> Alloc r
+performApiStart :: Cont r -> VM -> ApiCall -> NextStep -> IO r
 performApiStart c vm apiCall next =
-  do liftIO $ do eenv <- getThreadField stExecEnv (vmCurThread vm)
-                 writeIORef (execApiCall eenv) (ApiCallActive apiCall)
+  do eenv <- getThreadField stExecEnv (vmCurThread vm)
+     writeIORef (execApiCall eenv) (ApiCallActive apiCall)
      running c vm next
 
-performGoto :: Cont r -> VM -> Int -> Alloc r
+performGoto :: Cont r -> VM -> Int -> IO r
 performGoto c vm pc =
   do setThreadField stPC (vmCurThread vm) pc
      running c vm (runMach vm (execute pc))
@@ -102,24 +104,24 @@ performTailCall ::
   VM                {- ^ current vm state -} ->
   Reference Closure {- ^ closure to enter -} ->
   [Value]           {- ^ arguments        -} ->
-  Alloc r
+  IO r
 performTailCall c vm f vs =
-  do liftIO (bumpCallCounter f vm)
+  do bumpCallCounter f vm
 
      (newEnv, next) <- enterClosure f vs
 
      let th = vmCurThread vm
 
-     liftIO $ do execEnv <- getThreadField stExecEnv th
-                 recordProfTime (execCreateTime newEnv) (vmMachineEnv vm) execEnv
-                 recordProfEntry (vmMachineEnv vm) (funValueName (execFunction newEnv))
+     execEnv <- getThreadField stExecEnv th
+     recordProfTime (execCreateTime newEnv) (vmMachineEnv vm) execEnv
+     recordProfEntry (vmMachineEnv vm) (funValueName (execFunction newEnv))
 
-                 stack <- getThreadField stStack th
-                 eenv  <- getThreadField stExecEnv th
-                 let elapsed = execCreateTime newEnv - execCreateTime eenv
+     stack <- getThreadField stStack th
+     eenv  <- getThreadField stExecEnv th
+     let elapsed = execCreateTime newEnv - execCreateTime eenv
 
-                 setThreadField stStack th (addElapsedToTop elapsed stack)
-                 setThreadField stExecEnv th newEnv
+     setThreadField stStack th (addElapsedToTop elapsed stack)
+     setThreadField stExecEnv th newEnv
 
      running c vm (next vm)
 
@@ -140,12 +142,11 @@ performFunCall ::
   [Value]               {- ^ arguments              -} ->
   Maybe Handler         {- ^ optional error handler -} ->
   ([Value] -> NextStep) {- ^ return continuation    -} ->
-  Alloc r
+  IO r
 performFunCall c vm f vs mb k =
-  do liftIO (bumpCallCounter f vm)
+  do bumpCallCounter f vm
      (newEnv, next) <- enterClosure f vs
-     liftIO (recordProfEntry (vmMachineEnv vm)
-                             (funValueName (execFunction newEnv)))
+     recordProfEntry (vmMachineEnv vm) (funValueName (execFunction newEnv))
 
      let th = vmCurThread vm
 
@@ -174,7 +175,7 @@ bumpCallCounter clo vm =
 
 
 {-# INLINE performThreadExit #-}
-performThreadExit :: Cont r -> VM -> [Value] -> Alloc r
+performThreadExit :: Cont r -> VM -> [Value] -> IO r
 performThreadExit c vm vs =
   case Stack.pop (vmBlocked vm) of
     Nothing      -> finishedOk c vs
@@ -188,16 +189,16 @@ performThreadExit c vm vs =
 -- on the stack. In the case that the next frame is an error marker, it
 -- begins unwinding the stack until a suitable handler is found.
 {-# INLINE performFunReturn #-}
-performFunReturn :: Cont r -> VM -> [Value] -> Alloc r
+performFunReturn :: Cont r -> VM -> [Value] -> IO r
 performFunReturn c vm vs =
   do let th = vmCurThread vm
 
-     now <- liftIO (Clock.getTime Clock.ProcessCPUTime)
+     now <- Clock.getTime Clock.ProcessCPUTime
      eenv <- getThreadField stExecEnv th
      stack <- getThreadField stStack th
 
      let elapsed = now - execCreateTime eenv
-     liftIO (recordProfTime now (vmMachineEnv vm) eenv)
+     recordProfTime now (vmMachineEnv vm) eenv
      let stack' = addElapsedToTop elapsed stack
 
      case Stack.pop stack' of
@@ -264,14 +265,14 @@ addChildTime elapsed e =
 
 
 {-# LANGUAGE performThreadFail #-}
-performThreadFail :: Cont r -> VM -> Value -> Alloc r
+performThreadFail :: Cont r -> VM -> Value -> IO r
 performThreadFail c vm e =
   do let th = vmCurThread vm
      eenv <- getThreadField stExecEnv th
      stack <- getThreadField stStack th
 
-     liftIO (abortApiCall (machCServer (vmMachineEnv vm)) eenv)
-     liftIO (abortReentryFrames (machCServer (vmMachineEnv vm)) stack)
+     abortApiCall (machCServer (vmMachineEnv vm)) eenv
+     abortReentryFrames (machCServer (vmMachineEnv vm)) stack
      case Stack.pop (vmBlocked vm) of
 
        Nothing -> finishedWithError c e
@@ -281,7 +282,7 @@ performThreadFail c vm e =
             vmSwitchToNormal c vm{ vmCurThread = t, vmBlocked = ts }
                                (ThreadError e)
 
-performThrowError :: Cont r -> VM -> Value -> Alloc r
+performThrowError :: Cont r -> VM -> Value -> IO r
 performThrowError c vm e =
   do let th = vmCurThread vm
      handlers <- getThreadField stHandlers th
@@ -318,7 +319,7 @@ performResume ::
   VM ->
   Reference Thread ->
   (ThreadResult -> NextStep) ->
-  Alloc r
+  IO r
 performResume c vm tRef finishK =
   do st <- getThreadField threadStatus tRef
      case st of
@@ -334,21 +335,20 @@ performResume c vm tRef finishK =
        _ -> error "performResume: Thread not suspended"
 
 
-performYield :: Cont r -> VM -> NextStep -> Alloc r
+performYield :: Cont r -> VM -> NextStep -> IO r
 performYield c vm k =
   do let ref = vmCurThread vm
 
-     liftIO $
-       do eenv <- getThreadField stExecEnv ref
-          let apiRef = execApiCall eenv
-          writeIORef apiRef NoApiCall
-          putMVar (machCServer (vmMachineEnv vm)) CAbort
+     eenv <- getThreadField stExecEnv ref
+     let apiRef = execApiCall eenv
+     writeIORef apiRef NoApiCall
+     putMVar (machCServer (vmMachineEnv vm)) CAbort
 
      case Stack.pop (vmBlocked vm) of
-       Nothing -> do str <- liftIO (fromByteString "yield to no one")
+       Nothing -> do str <- fromByteString "yield to no one"
                      running c vm (ThrowError (String str))
        Just (t, ts) ->
-         do setThreadField threadStatus (vmCurThread vm) $ ThreadSuspended k
+         do setThreadField threadStatus (vmCurThread vm) (ThreadSuspended k)
             vmSwitchToNormal c vm{ vmCurThread = t, vmBlocked = ts } ThreadYield
 
 
@@ -356,11 +356,11 @@ performYield c vm k =
 -- empty. Resume execution in the error handler if one is found or finish
 -- execution with the final error otherwise.
 {-# INLINE performErrorReturn #-}
-performErrorReturn :: Cont r -> VM -> Value -> Alloc r
+performErrorReturn :: Cont r -> VM -> Value -> IO r
 performErrorReturn c vm e =
   do let ref = vmCurThread vm
      eenv <- getThreadField stExecEnv ref
-     liftIO (abortApiCall (machCServer (vmMachineEnv vm)) eenv)
+     abortApiCall (machCServer (vmMachineEnv vm)) eenv
 
      stack <- getThreadField stStack ref
      unwind stack
@@ -390,21 +390,21 @@ performErrorReturn c vm e =
           ErrorFrame -> unwind s'
 
 
-runAllSteps :: VM -> NextStep -> Alloc (Either Value [Value])
-runAllSteps vm i = oneStep' cont vm i
+runAllSteps :: AllocRef -> VM -> NextStep -> IO (Either Value [Value])
+runAllSteps ref vm i = oneStep' cont vm i
   where
-  cont = Cont { running    = runAllSteps
+  cont = Cont { running    = runAllSteps ref
               , runningInC = \v1 ->
                  do let luaMVar = machLuaServer (vmMachineEnv vm)
                     cResult <- liftIO (atomically (takeTMVar luaMVar))
-                    runAllSteps v1 (runMach v1 (handleCCallState cResult))
+                    runAllSteps ref v1 (runMach v1 (handleCCallState cResult))
               , finishedOk = \vs -> return (Right vs)
               , finishedWithError = \v -> return (Left v)
+              , theRef = ref
               }
 
 
-
-vmSwitchToNormal :: Cont r -> VM -> ThreadResult -> Alloc r
+vmSwitchToNormal :: Cont r -> VM -> ThreadResult -> IO r
 vmSwitchToNormal c vm res =
   do let th = vmCurThread vm
      st <- getThreadField threadStatus th
@@ -423,9 +423,8 @@ consMb Nothing xs = xs
 consMb (Just x) xs = x : xs
 
 
-enterClosure ::
-  MonadIO m => Reference Closure -> [Value] -> m (ExecEnv, VM -> NextStep)
-enterClosure c vs = liftIO $
+enterClosure :: Reference Closure -> [Value] -> IO (ExecEnv, VM -> NextStep)
+enterClosure c vs =
   do let MkClosure { cloFun, cloUpvalues } = referenceVal c
          (stackElts, vas, start, code) =
            case funValueCode cloFun of
