@@ -11,7 +11,6 @@ import           Control.Monad.IO.Class
 import           Data.Foldable
 import           Data.IORef
 import qualified Data.Vector as Vector
-import qualified Data.Vector.Mutable as IOVector
 
 import qualified Galua.Util.SizedVector as SV
 
@@ -23,6 +22,7 @@ import           Galua.Overloading
 import           Galua.Mach
 import           Galua.Number
 import           Galua.LuaString
+import qualified Galua.Util.IOVector as IOVector
 
 -- | Compute the 'Value' corresponding to a bytecode file 'Constant'.
 constantValue :: Constant -> IO Value
@@ -323,10 +323,10 @@ class LValue a where
 instance LValue UpIx where
   getLValue (UpIx i) =
     do upvals <- getsExecEnv execUpvals
-       if 0 <= i && i < IOVector.length upvals then
-         liftIO (IOVector.read upvals i)
-       else
-         interpThrow (BadUpval i)
+       mb <- liftIO (IOVector.readMaybe upvals i)
+       case mb of
+         Just ref -> return ref
+         Nothing  -> interpThrow (BadUpval i)
 
 instance LValue Reg where
   getLValue (Reg i) =

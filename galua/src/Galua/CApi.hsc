@@ -47,6 +47,7 @@ import Galua.Reference
 import Galua.Value
 import Galua.LuaString
 import Galua.FunValue
+import qualified Galua.Util.IOVector as IOVector
 
 #include "lua.h"
 
@@ -1432,12 +1433,12 @@ lua_getupvalue_hs l r funcindex n out =
               do let clo = referenceVal ref
                      ups = cloUpvalues clo
 
-                 if 0 <= n' && n' < IOVector.length ups then
-                   do uv <- IOVector.read ups n'
-                      push args =<< readIORef uv
-                      newCAString (upvalueName (cloFun clo) n') -- XXX: Leak
-                 else
-                   return nullPtr
+                 mb <- IOVector.readMaybe ups n'
+                 case mb of
+                   Just uv ->
+                     do push args =<< readIORef uv
+                        newCAString (upvalueName (cloFun clo) n') -- XXX: Leak
+                   Nothing -> return nullPtr
 
            _ -> return nullPtr
 
@@ -1497,14 +1498,15 @@ lua_setupvalue_hs l r funcindex n out =
             do let clo = referenceVal ref
                    ups = cloUpvalues clo
 
-               if 0 <= n' && n' < IOVector.length ups then
-                 do uv <- liftIO (IOVector.read ups n')
-                    x <- pop args
-                    liftIO $
-                      do writeIORef uv x
-                         newCAString (upvalueName (cloFun clo) n') -- XXX: Leak
+               mb <- liftIO (IOVector.readMaybe ups n')
+               case mb of
+                 Just uv ->
+                   do x <- pop args
+                      liftIO $
+                        do writeIORef uv x
+                           newCAString (upvalueName (cloFun clo) n') -- XXX: Leak
 
-               else return nullPtr
+                 Nothing -> return nullPtr
 
          _ -> return nullPtr
 
@@ -1548,9 +1550,10 @@ lua_upvaluejoin_hs l r f1 n1 f2 n2 =
            do let v1 = cloUpvalues (referenceVal ref1)
                   v2 = cloUpvalues (referenceVal ref2)
 
-              when (0 <= n2' && n2' < IOVector.length v2 &&
-                    0 <= n1' && n1' < IOVector.length v1)
-                   (IOVector.write v1 n1' =<< IOVector.read v2 n2')
+              mbRef <- IOVector.readMaybe v2 n2'
+              for_ mbRef $ \ ref ->
+                when (0 <= n1' && n1' < IOVector.length v1)
+                     (IOVector.write v1 n1' ref)
 
          _ -> return ()
        return Nothing

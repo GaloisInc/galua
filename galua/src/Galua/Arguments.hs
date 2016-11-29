@@ -11,6 +11,7 @@ import           Galua.Number
 import           Galua.Value
 import           Galua.LuaString
 import qualified Galua.Util.SizedVector as SV
+import qualified Galua.Util.IOVector as IOVector
 
 maxstack :: Int
 maxstack = 1000000
@@ -28,8 +29,8 @@ assign i x stack
   | i <  registryIndex = do v <- getsExecEnv execUpvals
                             let i' = registryIndex - i - 1
                             liftIO $
-                              when (0 <= i' && i' < IOVector.length v) $
-                                do ref <- IOVector.read v i'
+                              do mb <- IOVector.readMaybe v i'
+                                 for_ mb $ \ref ->
                                    writeIORef ref x
 
   | otherwise = liftIO $
@@ -48,11 +49,8 @@ select i stack
 
   | i <  registryIndex = do v <- getsExecEnv execUpvals
                             let i' = registryIndex - i - 1
-                            liftIO $
-                              if 0 <= i' && i' < IOVector.length v
-                                then do ref <- IOVector.read v i'
-                                        Just <$> readIORef ref
-                                else return Nothing
+                            liftIO $ do mbRef <- IOVector.readMaybe v i'
+                                        traverse readIORef mbRef
 
   | otherwise = liftIO $
       case compare i 0 of
