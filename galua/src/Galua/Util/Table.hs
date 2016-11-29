@@ -136,7 +136,7 @@ tableFirstArray Table { .. } start =
      go n start
   where
   go n i
-    | i >= n    = tableFirstHash tableHash
+    | i >= n    = tableNextHash tableHash (tableValueFromInt i)
     | otherwise = do x <- SV.get tableArray i
                      if isNilTableValue x
                        then go n (i+1)
@@ -155,20 +155,22 @@ tableNext t key
   | isNilTableValue key = tableFirst t
 
   | Just i <- tableValueToInt key =
-      if 0 <= i then tableFirstArray t i
+      if 0 <= i
+        then tableFirstArray t i
                   -- start at 'i-1' + 1, next element counteracts
                   -- the vector indexes being one less
-      else goHash (tableValueFromInt i)
+        else tableNextHash (tableHash t) (tableValueFromInt i)
 
-  | otherwise = goHash key
-  where
-    goHash key' =
-      do res <- lookupIndex (tableHash t) key'
-         case res of
-           Nothing -> return Nothing -- XXX: raise error
-           Just ix -> do mb <- nextByIndex (tableHash t) (ix+1)
-                         return $! do (_,k,v) <- mb
-                                      return (k,v)
+  | otherwise = tableNextHash (tableHash t) key
+
+tableNextHash :: TableValue v => Hash v -> v -> IO (Maybe (v,v))
+tableNextHash h key =
+  do res <- lookupIndex h key
+     case res of
+       Nothing -> tableFirstHash h
+       Just ix -> do mb <- nextByIndex h (ix+1)
+                     return $! do (_,k,v) <- mb
+                                  return (k,v)
 
 tableToList :: TableValue v => Table v -> IO [(v,v)]
 tableToList Table { .. } =
