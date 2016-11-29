@@ -11,7 +11,6 @@ module Galua.Stepper
 import           Galua.Mach
 import           Galua.Value
 import           Galua.FunValue(funValueCode,FunCode(..))
-import           Galua.Reference
 import           Galua.CallIntoC
 import           Galua.OpcodeInterpreter (execute)
 import           Galua.LuaString

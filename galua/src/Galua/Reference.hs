@@ -13,7 +13,6 @@ module Galua.Reference
   , newAllocRef
   ) where
 
-import           Control.Monad.IO.Class
 import           Data.Functor (void)
 import           Data.IORef
 import qualified Data.IntMap as IntMap
