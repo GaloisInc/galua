@@ -29,7 +29,8 @@ LUALIBS_OBJS=\
      lualibs/objs/ltablib.o \
      lualibs/objs/lutf8lib.o \
      lualibs/objs/linit.o \
-     lualibs/objs/lcompat.o
+     lualibs/objs/lcompat.o\
+     lualibs/objs/tinymt64.o
 
 install: prepare ${LUALIBS}
 	./build galua
