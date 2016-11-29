@@ -154,21 +154,17 @@ tableNext :: TableValue v => Table v -> v -> IO (Maybe (v,v))
 tableNext t key
   | isNilTableValue key = tableFirst t
 
-  | Just i <- tableValueToInt key =
-      if 0 <= i then tableFirstArray t i
-                  -- start at 'i-1' + 1, next element counteracts
-                  -- the vector indexes being one less
-      else goHash (tableValueFromInt i)
+  | Just i <- tableValueToInt key
+  , 0 <= i = tableFirstArray t i
+      -- start at 'i-1' + 1, next element counteracts
+      -- the vector indexes being one less
 
-  | otherwise = goHash key
-  where
-    goHash key' =
-      do res <- lookupIndex (tableHash t) key'
-         case res of
-           Nothing -> return Nothing -- XXX: raise error
-           Just ix -> do mb <- nextByIndex (tableHash t) (ix+1)
-                         return $! do (_,k,v) <- mb
-                                      return (k,v)
+  | otherwise = do res <- lookupIndex (tableHash t) key
+                   case res of
+                     Nothing -> return Nothing -- XXX: raise error
+                     Just ix -> do mb <- nextByIndex (tableHash t) (ix+1)
+                                   return $! do (_,k,v) <- mb
+                                                return (k,v)
 
 tableToList :: TableValue v => Table v -> IO [(v,v)]
 tableToList Table { .. } =

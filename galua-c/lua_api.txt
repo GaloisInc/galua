@@ -1,4 +1,3 @@
-_tinymt64_init
 _galua_control
 _galua_argc_p
 _galua_argv_p
