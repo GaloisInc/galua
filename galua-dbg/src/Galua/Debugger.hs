@@ -99,10 +99,10 @@ import           Data.IORef(IORef,readIORef,writeIORef,
                             modifyIORef,modifyIORef',newIORef,
                             atomicModifyIORef')
 
-import           Control.Concurrent.Async (cancel, Async)
 import            Control.Concurrent
                     ( MVar, newEmptyMVar, putMVar, takeMVar, forkIO )
 import           Control.Applicative ((<|>))
+import           Control.Concurrent (killThread, ThreadId)
 import           Control.Concurrent.STM (STM, atomically, takeTMVar)
 import           Control.Concurrent.STM.TQueue (TQueue, newTQueue, writeTQueue, readTQueue, isEmptyTQueue)
 import           Control.Monad.IO.Class(liftIO)
@@ -727,7 +727,7 @@ addSourceFile brks breakRef sources mbName bytes cid fun =
       many -> choosePC (minimumBy (comparing (funNestDepth . fst)) many)
 
 
-newEmptyDebugger :: MVar (Async a) -> Options -> IO (Ptr (), Debugger)
+newEmptyDebugger :: MVar ThreadId -> Options -> IO (Ptr (), Debugger)
 newEmptyDebugger threadVar opts =
   do let chunks = Chunks { topLevelChunks = Map.empty
                          , allFunNames    = Map.empty
@@ -751,7 +751,7 @@ newEmptyDebugger threadVar opts =
                                                    dbgSources
                  , machOnShutdown =
                      do a <- takeMVar threadVar
-                        cancel a
+                        killThread a
                  , machOnQuery    = query
                  }
 

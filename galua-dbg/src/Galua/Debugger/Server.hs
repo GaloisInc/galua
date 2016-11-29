@@ -33,8 +33,7 @@ import           Control.Monad.IO.Class(liftIO)
 
 import           Control.Applicative((<|>))
 import           Control.Exception
-import           Control.Concurrent(newEmptyMVar, putMVar)
-import           Control.Concurrent.Async (async)
+import           Control.Concurrent(forkIO, newEmptyMVar, putMVar)
 import           Data.ByteString(ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as B8
@@ -85,7 +84,7 @@ startServer portOffset =
          snapConfig = incrementPort portOffset
                     $ dbgSnapConfig config
 
-     httpThread <- async $ httpServe' snapConfig
+     httpThread <- forkIO $ httpServe' snapConfig
             $ Snap.route routes
           <|> serveDirectory "ui"
           <|> Snap.route [(path, sendFileBytes (B8.unpack path) content)
