@@ -4,10 +4,9 @@
 module Galua where
 
 import           Galua.Mach( VM, MachConfig(..)
-                           , MachineEnv(..), newMachineEnv, NextStep
-                           , runMach, emptyVM, threadCPtr, machWaitForC)
-import           Galua.Reference(AllocRef, runAllocWith, exposeAllocRef,
-                                  runAlloc)
+                           , MachineEnv(..), newMachineEnv, NextStep(WaitForC)
+                           , emptyVM, threadCPtr)
+import           Galua.Reference(AllocRef, newAllocRef)
 import           Galua.Stepper (runAllSteps)
 import           Galua.Value (Value(Nil), referenceVal)
 
@@ -20,19 +19,15 @@ import           Control.Concurrent (forkIO)
 
 
 
-setupLuaState :: MachConfig -> IO (Ptr (), AllocRef, VM, NextStep)
+setupLuaState :: MachConfig -> IO (Ptr (), VM, NextStep)
 setupLuaState cfg =
-  do (menv,allocref) <- runAlloc $
-        do menv <- newMachineEnv cfg
-           allocref <- exposeAllocRef
-           return (menv,allocref)
+  do allocref <- newAllocRef
+     menv <- newMachineEnv allocref cfg
 
-     let vm   = emptyVM menv
-         next = runMach vm machWaitForC
-
-     let cptr = unsafeForeignPtrToPtr
+     let vm   = emptyVM allocref menv
+         cptr = unsafeForeignPtrToPtr
               $ threadCPtr $ referenceVal $ machMainThreadRef menv
-     return (cptr, allocref, vm, next)
+     return (cptr, vm, WaitForC)
 
 
 foreign export ccall "galua_newstate"
@@ -40,8 +35,8 @@ foreign export ccall "galua_newstate"
 
 newLuaState :: IO (Ptr ())
 newLuaState =
-  do (cptr, allocref, vm, next) <- setupLuaState cfg
-     _  <- forkIO $ void $ runAllSteps allocref vm next
+  do (cptr, vm, next) <- setupLuaState cfg
+     _  <- forkIO $ void $ runAllSteps vm next
      return cptr
 
   where cfg = MachConfig

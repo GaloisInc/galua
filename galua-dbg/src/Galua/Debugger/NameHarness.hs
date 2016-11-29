@@ -20,7 +20,6 @@ import qualified Data.Set as Set
 import qualified Data.Vector as Vector
 import           Galua.FunValue (funValueCode, luaFunction, FunCode(..))
 import           Galua.LuaString (fromByteString)
-import           Galua.Reference
 import           Galua.Mach (HandlerType(DefaultHandler), MachineEnv(..), NextStep(Goto), StackFrame(CallFrame), Thread(..), VM(..), ApiCallStatus(NoApiCall), ExecEnv(..), parseLua, getThreadField, setThreadField)
 import qualified Galua.Util.SizedVector as SV
 import           Galua.Util.SizedVector (SizedVector)
@@ -186,7 +185,7 @@ executeCompiledStatment ::
   VM                  {- ^ For globals, and the currently executing thread -} ->
   ExecEnv             {- ^ Lookup free variables here -} ->
   CompiledStatment    {- ^ "Code pointer" -} ->
-  ([Value] -> NextStep) {- ^ Do this when we return -} ->
+  ([Value] -> IO NextStep) {- ^ Do this when we return -} ->
   IO NextStep
 executeCompiledStatment vm cenv cs resume =
   do globRef <- newIORef (Table (machGlobals (vmMachineEnv vm)))
@@ -211,12 +210,12 @@ executeCompiledStatment vm cenv cs resume =
 
 
 executeStatementInContext ::
-  VM -> Int -> ExecEnv -> String -> ([Value] -> NextStep) -> IO NextStep
+  VM -> Int -> ExecEnv -> String -> ([Value] -> IO NextStep) -> IO NextStep
 executeStatementInContext vm pc env statement resume =
   do let fun = funValueCode (execFunction env)
      res <- try (compileStatementForLocation fun pc statement)
      case res of
        Left (ParseError e) ->
           do b <- fromByteString (B8.pack e)
-             return (resume [String b])
+             resume [String b]
        Right cs -> executeCompiledStatment vm env cs resume

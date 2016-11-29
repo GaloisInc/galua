@@ -103,7 +103,7 @@ reentry label args l r k =
 
 wrapWithStack :: Int -> (SV.SizedVector (IORef Value) -> Mach a) -> Mach a
 wrapWithStack threadId k =
-  do Just threadRef <- lookupRef threadId
+  do Just threadRef <- machLookupRef threadId
      eenv <- getThreadField stExecEnv threadRef
      k (execStack eenv)
 

@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE BangPatterns #-}
 
 module Galua.Stepper
   ( oneStep
@@ -22,7 +23,6 @@ import qualified Galua.Util.SizedVector as SV
 import           Language.Lua.Bytecode (Function(..))
 
 import           Control.Monad ((<=<))
-import           Control.Monad.IO.Class
 import           Control.Concurrent
 import           Control.Concurrent.STM (atomically, takeTMVar)
 import           Control.Exception (assert)
@@ -38,23 +38,20 @@ data Cont r = Cont
   , runningInC        :: VM -> IO r
   , finishedOk        :: [Value] -> IO r
   , finishedWithError :: Value -> IO r
-  , theRef            :: AllocRef
   }
 
-oneStep :: AllocRef -> VM -> NextStep -> IO VMState
-oneStep ref = oneStep'
+oneStep :: VM -> NextStep -> IO VMState
+oneStep = oneStep'
   Cont { running = \a b -> return $! Running a b
        , runningInC = \a -> return $! RunningInC a
        , finishedOk = \a -> return $! FinishedOk a
        , finishedWithError = \a -> return $! FinishedWithError a
-       , theRef = ref
        }
 
 {-# INLINE oneStep' #-}
 oneStep' :: Cont r -> VM -> NextStep -> IO r
-oneStep' c vm instr = do
+oneStep' c !vm instr = do
   case instr of
-    PrimStep m          -> running c vm =<< runAllocWith (theRef c) m
     Goto pc             -> performGoto          c vm pc
     FunCall f vs mb k   -> performFunCall       c vm f vs mb k
     FunTailcall f vs    -> performTailCall      c vm f vs
@@ -77,25 +74,25 @@ performApiEnd ::
   Cont r ->
   VM                 {- ^ virtual machine state -} ->
   Maybe PrimArgument {- ^ C return value        -} ->
-  NextStep           {- ^ next step             -} ->
+  (IO NextStep)      {- ^ next step             -} ->
   IO r
 performApiEnd c vm res next =
   do eenv <- getThreadField stExecEnv (vmCurThread vm)
      writeIORef (execApiCall eenv) NoApiCall
      writeIORef (execLastResult eenv) res
      putMVar (machCServer (vmMachineEnv vm)) CResume
-     running c vm next
+     running c vm =<< next
 
-performApiStart :: Cont r -> VM -> ApiCall -> NextStep -> IO r
+performApiStart :: Cont r -> VM -> ApiCall -> IO NextStep -> IO r
 performApiStart c vm apiCall next =
   do eenv <- getThreadField stExecEnv (vmCurThread vm)
      writeIORef (execApiCall eenv) (ApiCallActive apiCall)
-     running c vm next
+     running c vm =<< next
 
 performGoto :: Cont r -> VM -> Int -> IO r
 performGoto c vm pc =
   do setThreadField stPC (vmCurThread vm) pc
-     running c vm (runMach vm (execute pc))
+     running c vm =<< runMach vm (execute pc)
 
 
 {-# INLINE performTailCall #-}
@@ -123,7 +120,7 @@ performTailCall c vm f vs =
      setThreadField stStack th (addElapsedToTop elapsed stack)
      setThreadField stExecEnv th newEnv
 
-     running c vm (next vm)
+     running c vm =<< next vm
 
 addElapsedToTop :: Clock.TimeSpec -> Stack StackFrame -> Stack StackFrame
 addElapsedToTop elapsed stack =
@@ -141,7 +138,7 @@ performFunCall ::
   Reference Closure     {- ^ closure to enter       -} ->
   [Value]               {- ^ arguments              -} ->
   Maybe Handler         {- ^ optional error handler -} ->
-  ([Value] -> NextStep) {- ^ return continuation    -} ->
+  ([Value] -> IO NextStep) {- ^ return continuation    -} ->
   IO r
 performFunCall c vm f vs mb k =
   do bumpCallCounter f vm
@@ -161,7 +158,7 @@ performFunCall c vm f vs mb k =
      setThreadField stHandlers th (consMb (fmap handlerType mb) handlers)
      setThreadField stStack th (Stack.push frame stack)
 
-     running c vm (next vm)
+     running c vm =<< next vm
 
 bumpCallCounter :: Reference Closure -> VM -> IO ()
 bumpCallCounter clo vm =
@@ -221,7 +218,7 @@ performFunReturn c vm vs =
                                                 Just _  -> tail handlers
                                                 Nothing -> handlers)
 
-                running c vm (k vs)
+                running c vm =<< k vs
 
 recordProfEntry :: MachineEnv -> FunName -> IO ()
 recordProfEntry menv funName =
@@ -318,7 +315,7 @@ performResume ::
   Cont r ->
   VM ->
   Reference Thread ->
-  (ThreadResult -> NextStep) ->
+  (ThreadResult -> IO NextStep) ->
   IO r
 performResume c vm tRef finishK =
   do st <- getThreadField threadStatus tRef
@@ -330,12 +327,12 @@ performResume c vm tRef finishK =
             let vm' = vm { vmCurThread = tRef
                          , vmBlocked   = Stack.push oldThread (vmBlocked vm)
                          }
-            running c vm' resumeK
+            running c vm' =<< resumeK
 
        _ -> error "performResume: Thread not suspended"
 
 
-performYield :: Cont r -> VM -> NextStep -> IO r
+performYield :: Cont r -> VM -> IO NextStep -> IO r
 performYield c vm k =
   do let ref = vmCurThread vm
 
@@ -377,7 +374,7 @@ performErrorReturn c vm e =
                setThreadField stStack    th s'
                setThreadField stPC       th pc
 
-               running c vm (k e)
+               running c vm =<< k e
 
           CallFrame pc eenv Nothing _ ->
             do let th = vmCurThread vm
@@ -390,17 +387,17 @@ performErrorReturn c vm e =
           ErrorFrame -> unwind s'
 
 
-runAllSteps :: AllocRef -> VM -> NextStep -> IO (Either Value [Value])
-runAllSteps ref vm i = oneStep' cont vm i
+runAllSteps :: VM -> NextStep -> IO (Either Value [Value])
+runAllSteps !vm i = oneStep' cont vm i
   where
-  cont = Cont { running    = runAllSteps ref
+  cont = Cont { running    = runAllSteps
               , runningInC = \v1 ->
                  do let luaMVar = machLuaServer (vmMachineEnv vm)
-                    cResult <- liftIO (atomically (takeTMVar luaMVar))
-                    runAllSteps ref v1 (runMach v1 (handleCCallState cResult))
+                    cResult <- atomically (takeTMVar luaMVar)
+                    next <- runMach v1 (handleCCallState cResult)
+                    runAllSteps v1 next
               , finishedOk = \vs -> return (Right vs)
               , finishedWithError = \v -> return (Left v)
-              , theRef = ref
               }
 
 
@@ -411,7 +408,7 @@ vmSwitchToNormal c vm res =
      case st of
        ThreadNormal k ->
          do setThreadField threadStatus th ThreadRunning
-            running c vm (k res)
+            running c vm =<< k res
 
        _ -> error "[BUG] vmSwitchToNormal: not a normal thread."
 
@@ -423,7 +420,7 @@ consMb Nothing xs = xs
 consMb (Just x) xs = x : xs
 
 
-enterClosure :: Reference Closure -> [Value] -> IO (ExecEnv, VM -> NextStep)
+enterClosure :: Reference Closure -> [Value] -> IO (ExecEnv, VM -> IO NextStep)
 enterClosure c vs =
   do let MkClosure { cloFun, cloUpvalues } = referenceVal c
          (stackElts, vas, start, code) =

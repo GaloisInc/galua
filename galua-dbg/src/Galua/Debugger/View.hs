@@ -76,7 +76,8 @@ import           HexFloatFormat (doubleToHex)
 tableChunk :: Int
 tableChunk = 20
 
-newtype ExportM a = ExportM (ReaderT AllocRef (StateT ExportableState IO) a)
+newtype ExportM a = ExportM (ReaderT (Maybe AllocRef)
+                            (StateT ExportableState IO) a)
                     deriving (Functor,Applicative,Monad)
 
 io :: IO a -> ExportM a
@@ -84,9 +85,15 @@ io = ExportM . inBase
 
 -- | Assumes that we are holding the lock
 runExportM :: Debugger -> ExportM a -> IO a
-runExportM Debugger { dbgNames, dbgExportable } (ExportM m) =
+runExportM Debugger { dbgStateVM, dbgExportable } (ExportM m) =
   do s      <- readIORef dbgExportable
-     (a,s1) <- runStateT s $ runReaderT dbgNames m
+     mms    <- readIORef dbgStateVM
+     let vm = case mms of
+                Running vm _  -> Just vm
+                RunningInC vm -> Just vm
+                _             -> Nothing
+
+     (a,s1) <- runStateT s $ runReaderT (vmAllocRef <$> vm) m
      writeIORef dbgExportable s1
      return a
 
@@ -108,17 +115,23 @@ setExpandedThread r = ExportM $ sets_ $ \rw ->
 
 getLiveExpandedThreads :: ExportM [Reference Thread]
 getLiveExpandedThreads = ExportM $
-  do n   <- ask
-     ids <- openThreads <$> get
-     let lkp x = do mb <- lookupRef x
-                    return (case mb of
-                              Nothing -> Left x
-                              Just a  -> Right a)
-     eiths <- inBase (runAllocWith n (mapM lkp (Set.toList ids)))
-     let (bad,good) = partitionEithers eiths
-     unless (null bad) $
-       sets_ $ \rw -> rw { openThreads = Set.difference ids (Set.fromList bad) }
-     return good
+  do mb <- ask
+     case mb of
+       Nothing ->
+         sets $ \rw -> ([], rw { openThreads = Set.empty })
+
+       Just aref ->
+         do ids <- openThreads <$> get
+            let lkp x = do mb <- lookupRef aref x
+                           return (case mb of
+                                     Nothing -> Left x
+                                     Just a  -> Right a)
+            eiths <- inBase (mapM lkp (Set.toList ids))
+            let (bad,good) = partitionEithers eiths
+            unless (null bad) $
+              sets_ $ \rw -> rw { openThreads = Set.difference ids
+                                                  (Set.fromList bad) }
+            return good
 
 --------------------------------------------------------------------------------
 

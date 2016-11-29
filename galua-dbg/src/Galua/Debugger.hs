@@ -115,15 +115,12 @@ import           System.Timeout(timeout)
 {- The fields in this are mutable, so that the interpreter can modify them
 easily, without having to pass the state aroud.  For example, when we
 load a new module, the interpreter uses an IO action, which modifies 
-dbgSource.  Similarly, `dbgNames` is updated when we allocate new
-values. -}
+dbgSource. -}
 data Debugger = Debugger
   { dbgSources   :: !(IORef Chunks)
     {- ^ Source code for chunks and corresponding parsed functions.
           The functions are also in the VM state, but that's only available
           while the machine is running. -}
-
-  , dbgNames     :: !AllocRef                  -- ^ Object identities
 
 
   , dbgCommand   :: !(TQueue (DebuggerCommand,Bool))
@@ -463,7 +460,7 @@ findNameResolveEnv dbg vm eid =
               _ -> nameResolveException ("Invalid stack frame: " ++ show sid)
 
        ThreadExecEnv tid ->
-         do mb <- runAllocWith (dbgNames dbg) (lookupRef tid)
+         do mb <- lookupRef (vmAllocRef vm) tid
             case mb of
               Nothing  -> nameResolveException "Invalid thread."
               Just ref ->
@@ -471,7 +468,7 @@ findNameResolveEnv dbg vm eid =
                    execEnvToNameResolveEnv metaTabs eenv
 
        ClosureEnvId cid ->
-         do mb <- runAllocWith (dbgNames dbg) (lookupRef cid)
+         do mb <- lookupRef (vmAllocRef vm) cid
             case mb of
               Nothing  -> nameResolveException "Invalid closure."
               Just ref ->
@@ -758,7 +755,7 @@ newEmptyDebugger threadVar opts =
                  , machOnQuery    = query
                  }
 
-     (cptr, dbgNames, vm, next) <- setupLuaState cfg
+     (cptr, vm, next) <- setupLuaState cfg
 
      dbgIdleReason   <- newIORef Ready
      dbgStateVM      <- newIORef (Running vm next)
@@ -772,7 +769,7 @@ newEmptyDebugger threadVar opts =
               return (Spec.specDecls s)
             `catch` \SomeException {} -> return [])
 
-     let dbg = Debugger { dbgSources, dbgNames, dbgIdleReason
+     let dbg = Debugger { dbgSources, dbgIdleReason
                         , dbgBreaks, dbgWatches
                         , dbgCommand, dbgCommandCounter, dbgClients
                         , dbgExportable, dbgStateVM
@@ -867,7 +864,7 @@ executeStatement dbg frame statement =
                 do recordConsoleInput statement
                    let stat = Text.unpack statement
                    next' <- executeStatementInContext vm pc env stat $ \vs ->
-                     PrimStep (Interrupt next <$ liftIO (recordConsoleValues vs))
+                     Interrupt next <$ liftIO (recordConsoleValues vs)
                    writeIORef (dbgStateVM dbg) (Running vm next')
 
               runNonBlock dbg
@@ -1009,7 +1006,7 @@ getCurrentLineNumber vm =
 
 doStepMode :: Debugger -> VM -> NextStep -> StepMode -> IO VMState
 doStepMode dbg vm next mode =
-  do vmstate <- oneStep (dbgNames dbg) vm next
+  do vmstate <- oneStep vm next
      mode' <- nextMode vm next mode
      case vmstate of
        RunningInC vm' ->
@@ -1023,7 +1020,7 @@ doStepMode dbg vm next mode =
                     doStepMode dbg vm' WaitForC (fromMaybe mode' mbNewMode)
 
                Right cResult ->
-                 do let next' = runMach vm' (handleCCallState cResult)
+                 do next' <- runMach vm' (handleCCallState cResult)
                     doStepMode dbg vm' next' mode'
 
        Running vm' next' ->
@@ -1087,7 +1084,7 @@ checkBreakPoint dbg mode vm nextStep k =
                                 return (Running vm nextStep)
                   Just c ->
                     do nextStep' <- executeCompiledStatment vm eenv (brkCond c)
-                                  $ \vs ->
+                                  $ \vs -> return $!
                                     let stop = valueBool (trimResult1 vs)
                                     in if stop
                                          then Interrupt nextStep

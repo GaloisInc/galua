@@ -145,11 +145,11 @@ data UserData = MkUserData
   }
 
 newUserData ::
-  NameM m => RefLoc -> ForeignPtr () -> Int -> m (Reference UserData)
-newUserData refLoc x n =
+  AllocRef -> RefLoc -> ForeignPtr () -> Int -> IO (Reference UserData)
+newUserData aref refLoc x n =
   do uval <- liftIO (newIORef Nil)
      mtref <- liftIO (newIORef Nothing)
-     newRef refLoc (MkUserData x n uval mtref)
+     newRef aref refLoc (MkUserData x n uval mtref)
 
 ------------------------------------------------------------------------
 -- Tables
@@ -158,16 +158,17 @@ newUserData refLoc x n =
 type Table = Tab.Table Value
 
 newTable ::
-  NameM m =>
+  AllocRef ->
   RefLoc ->
   Int {- ^ array size -} ->
   Int {- ^ hashtable size -} ->
-  m (Reference Table)
-newTable refLoc arraySize hashSize =
-  newRef refLoc =<< liftIO (Tab.newTable arraySize hashSize)
+  IO (Reference Table)
+newTable aref refLoc arraySize hashSize =
+  newRef aref refLoc =<< Tab.newTable arraySize hashSize
 
 setTableMeta :: MonadIO m => Reference Table -> Maybe (Reference Table) -> m ()
-setTableMeta tr mt = liftIO $ Tab.setTableMeta (referenceVal tr) $ maybe Nil Table mt
+setTableMeta tr mt = liftIO $ Tab.setTableMeta (referenceVal tr)
+                            $ maybe Nil Table mt
 
 getTableMeta :: MonadIO m => Reference Table -> m (Maybe (Reference Table))
 getTableMeta ref = liftIO $ do v <- Tab.getTableMeta (referenceVal ref)
@@ -184,12 +185,11 @@ setTableRaw ref key !val = liftIO $ Tab.setTableRaw (referenceVal ref) key val
 tableLen :: MonadIO io => Reference Table -> io Int
 tableLen ref = liftIO (Tab.tableLen (referenceVal ref))
 
-tableFirst :: NameM m => Reference Table -> m (Maybe (Value,Value))
+tableFirst :: MonadIO m => Reference Table -> m (Maybe (Value,Value))
 tableFirst ref = liftIO (Tab.tableFirst (referenceVal ref))
 
-
 tableNext :: MonadIO m => Reference Table -> Value -> m (Maybe (Value,Value))
-tableNext ref key = liftIO $ Tab.tableNext (referenceVal ref) key
+tableNext ref key = liftIO (Tab.tableNext (referenceVal ref) key)
 
 ------------------------------------------------------------------------
 -- Value types
@@ -232,9 +232,10 @@ data PrimArgument
   | PrimFunPtrArg (FunPtr ())
 
 newClosure ::
-  NameM m =>
-  RefLoc -> FunctionValue -> IOVector (IORef Value) -> m (Reference Closure)
-newClosure refLoc f us = newRef refLoc MkClosure { cloFun = f, cloUpvalues = us }
+  AllocRef ->
+  RefLoc -> FunctionValue -> IOVector (IORef Value) -> IO (Reference Closure)
+newClosure aref refLoc f us =
+  newRef aref refLoc MkClosure { cloFun = f, cloUpvalues = us }
 
 
 ------------------------------------------------------------------------
