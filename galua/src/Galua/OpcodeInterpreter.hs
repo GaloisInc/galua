@@ -67,7 +67,7 @@ execute pc =
 -- | Compute the result of executing the opcode at the given address
 -- within the current function execution environment.
 execute' :: ExecEnv -> Int -> Mach a
-execute' eenv !pc =
+execute' !eenv !pc =
 
   do instr <- liftIO (loadInstruction eenv pc)
      let advance      = jump 0
@@ -342,7 +342,7 @@ instance LValue Upvalue where
   getLValue eenv (UpReg x) = getLValue eenv x
   {-# INLINE getLValue #-}
 
-{-# INLIEN set #-}
+{-# INLINE set #-}
 set :: LValue a => ExecEnv -> a -> Value -> IO ()
 set eenv r !x =
   do ref <- getLValue eenv r
