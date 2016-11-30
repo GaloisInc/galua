@@ -6,7 +6,7 @@ module Galua where
 import           Galua.Mach( VM, MachConfig(..)
                            , MachineEnv(..), newMachineEnv, NextStep(WaitForC)
                            , emptyVM, threadCPtr)
-import           Galua.Reference(AllocRef, newAllocRef)
+import           Galua.Reference(newAllocRef)
 import           Galua.Stepper (runAllSteps)
 import           Galua.Value (Value(Nil), referenceVal)
 

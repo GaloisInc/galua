@@ -89,9 +89,9 @@ runExportM Debugger { dbgStateVM, dbgExportable } (ExportM m) =
   do s      <- readIORef dbgExportable
      mms    <- readIORef dbgStateVM
      let vm = case mms of
-                Running vm _  -> Just vm
-                RunningInC vm -> Just vm
-                _             -> Nothing
+                Running vm' _  -> Just vm'
+                RunningInC vm' -> Just vm'
+                _              -> Nothing
 
      (a,s1) <- runStateT s $ runReaderT (vmAllocRef <$> vm) m
      writeIORef dbgExportable s1
@@ -122,8 +122,8 @@ getLiveExpandedThreads = ExportM $
 
        Just aref ->
          do ids <- openThreads <$> get
-            let lkp x = do mb <- lookupRef aref x
-                           return (case mb of
+            let lkp x = do mbA <- lookupRef aref x
+                           return (case mbA of
                                      Nothing -> Left x
                                      Just a  -> Right a)
             eiths <- inBase (mapM lkp (Set.toList ids))
@@ -486,7 +486,7 @@ exportThread funs mbNext th =
      stack <- io $ getThreadField stStack th
 
      env   <- exportExecEnv funs pc eid eenv
-     stack <- mapM (exportStackFrameShort funs) (toList stack)
+     stackOut <- mapM (exportStackFrameShort funs) (toList stack)
      hs    <- mapM (exportHandler funs) hdlrs
      cur   <- exportCallStackFrameShort funs pc eenv mbNext
      return $ JS.object
@@ -494,7 +494,7 @@ exportThread funs mbNext th =
                 , "name"     .= prettyRef th
                 , "status"   .= exportThreadStatus stat
                 , "pc"       .= pc
-                , "stack"    .= (cur : stack)
+                , "stack"    .= (cur : stackOut)
                 , "handlers" .= hs
                 , "env"      .= env
                 ]

@@ -1,10 +1,8 @@
 module Galua.Arguments where
 
 import           Control.Monad.IO.Class
-import           Control.Monad (when)
 import           Data.IORef
 import           Data.Foldable (for_)
-import qualified Data.Vector.Mutable as IOVector
 
 import           Galua.Mach
 import           Galua.Number
