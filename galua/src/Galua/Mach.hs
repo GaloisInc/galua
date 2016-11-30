@@ -128,7 +128,7 @@ data NextStep
     -- ^ Yield to C, wait for a response from the C reentry thread
     -- See 'CCallState' for possible responses
 
-  | Resume {-# UNPACK #-} !(Reference Thread) (ThreadResult -> IO NextStep)
+  | Resume !(Reference Thread) (ThreadResult -> IO NextStep)
     -- ^ Resume the given suspended thread
 
   | Yield (IO NextStep)
@@ -179,7 +179,7 @@ data StackFrame
 data Thread = MkThread
   { threadStatus :: {-# UNPACK #-} !(IORef ThreadStatus)
 
-  , threadCPtr   :: !(ForeignPtr ())
+  , threadCPtr   :: {-# UNPACK #-} !(ForeignPtr ())
     {- ^ The representation of thread used in C.
          This contains space for the setjmp/longjmp buffer, and a reference
          back to this object. -}

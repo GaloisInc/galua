@@ -16,7 +16,6 @@ import           Language.Lua.Bytecode(UpIx(..))
 
 import qualified Galua.Mach             as C -- concrete
 import qualified Galua.Value            as C hiding (getTableMeta)
-import qualified Galua.Reference        as C
 import           Galua.LuaString(toByteString)
 import qualified Galua.Micro.Type.Value as A -- abstract
 
