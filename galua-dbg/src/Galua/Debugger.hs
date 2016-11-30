@@ -863,9 +863,10 @@ executeStatement dbg frame statement =
            do whenRunning dbg () $ \vm next ->
                 do recordConsoleInput statement
                    let stat = Text.unpack statement
-                   next' <- executeStatementInContext vm pc env stat $ \vs ->
-                     Interrupt next <$ liftIO (recordConsoleValues vs)
-                   writeIORef (dbgStateVM dbg) (Running vm next')
+                   (next',vm') <-
+                      executeStatementInContext vm pc env stat $ \vs ->
+                        Interrupt next <$ liftIO (recordConsoleValues vs)
+                   writeIORef (dbgStateVM dbg) (Running vm' next')
 
               runNonBlock dbg
 
@@ -998,7 +999,7 @@ handleCommand dbg isIdle cmd =
 getCurrentLineNumber :: VM -> IO Int
 getCurrentLineNumber vm =
     do let th = vmCurThread vm
-       eenv <- getThreadField stExecEnv th
+           eenv = vmCurExecEnv vm
        pc   <- getThreadField stPC th
        return $! fromMaybe 0 $
               do (_,func) <- luaOpCodes (execFunction eenv)
@@ -1070,7 +1071,7 @@ checkBreakPoint :: Debugger -> StepMode -> VM -> NextStep ->
                                                     IO VMState -> IO VMState
 checkBreakPoint dbg mode vm nextStep k =
   do let th = vmCurThread vm
-     eenv <- getThreadField stExecEnv th
+         eenv = vmCurExecEnv vm
      let curFun = funValueName (execFunction eenv)
      pc <- getThreadField stPC th
      case curFun of
@@ -1083,13 +1084,14 @@ checkBreakPoint dbg mode vm nextStep k =
                   Nothing -> do setIdleReason dbg ReachedBreakPoint
                                 return (Running vm nextStep)
                   Just c ->
-                    do nextStep' <- executeCompiledStatment vm eenv (brkCond c)
+                    do (nextStep',vm') <-
+                            executeCompiledStatment vm eenv (brkCond c)
                                   $ \vs -> return $!
                                     let stop = valueBool (trimResult1 vs)
                                     in if stop
                                          then Interrupt nextStep
                                          else nextStep
-                       doStepMode dbg vm nextStep' (StepOut mode)
+                       doStepMode dbg vm' nextStep' (StepOut mode)
               _ -> k
        _ -> k
 

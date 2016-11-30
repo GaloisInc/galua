@@ -62,21 +62,28 @@ data VM = VM
   , vmBlocked     :: !(Stack (Reference Thread))
     -- ^ Blocked coroutines (they resumed something)
 
-  , vmCurThread   :: !(Reference Thread)
+  , vmCurThread   :: (Reference Thread)
     -- ^ This is what's executing at the moment.
+
+  , vmCurExecEnv  :: ExecEnv
+    -- ^ This is a copy of the current execution environment for
+    -- the current thread for quicker access.
 
   , vmAllocRef    :: {-# UNPACK #-} !AllocRef
     -- ^ This is used to allocate Lua references.
+
   }
 
 
-emptyVM :: AllocRef -> MachineEnv -> VM
+emptyVM :: AllocRef -> MachineEnv -> IO VM
 emptyVM aref menv =
-   VM { vmMachineEnv = menv
-      , vmBlocked    = Stack.empty
-      , vmCurThread  = machMainThreadRef menv
-      , vmAllocRef   = aref
-      }
+  do let vmCurThread = machMainThreadRef menv
+     vmCurExecEnv <- getThreadField stExecEnv vmCurThread
+     return VM { vmMachineEnv = menv
+               , vmBlocked    = Stack.empty
+               , vmAllocRef   = aref
+               , ..
+               }
 
 
 data VMState  = FinishedOk ![Value]
@@ -183,6 +190,7 @@ data Thread = MkThread
   , stPC        :: {-# UNPACK #-} !(IORef Int)
 
   }
+
 
 instance MakeWeak Thread where
   makeWeak th = mkWeakIORef' (stPC th) th
@@ -429,9 +437,10 @@ machGoto !n = abort (Goto n)
 machRefLoc :: Mach RefLoc
 machRefLoc =
   do tref <- machCurrentThread
+     vm   <- machVM
      liftIO $
        do pc    <- getThreadField stPC tref
-          eenv  <- getThreadField stExecEnv tref
+          let eenv = vmCurExecEnv vm
           stack <- getThreadField stStack tref
           return RefLoc { refLocCaller = getCaller stack
                         , refLocSite   = mkLoc eenv pc
@@ -478,8 +487,7 @@ getsMachEnv f = fmap f machCurrentEnv
 -- a function.
 getsExecEnv :: (ExecEnv -> a) -> Mach a
 getsExecEnv f =
-  do th   <- machCurrentThread
-     eenv <- getThreadField stExecEnv th
+  do eenv <- getsVM vmCurExecEnv
      return (f eenv)
 {-# INLINE getsExecEnv #-}
 

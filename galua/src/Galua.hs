@@ -24,8 +24,8 @@ setupLuaState cfg =
   do allocref <- newAllocRef
      menv <- newMachineEnv allocref cfg
 
-     let vm   = emptyVM allocref menv
-         cptr = unsafeForeignPtrToPtr
+     vm <- emptyVM allocref menv
+     let cptr = unsafeForeignPtrToPtr
               $ threadCPtr $ referenceVal $ machMainThreadRef menv
      return (cptr, vm, WaitForC)
 

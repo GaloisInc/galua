@@ -186,13 +186,13 @@ executeCompiledStatment ::
   ExecEnv             {- ^ Lookup free variables here -} ->
   CompiledStatment    {- ^ "Code pointer" -} ->
   ([Value] -> IO NextStep) {- ^ Do this when we return -} ->
-  IO NextStep
+  IO (NextStep, VM)
 executeCompiledStatment vm cenv cs resume =
   do globRef <- newIORef (Table (machGlobals (vmMachineEnv vm)))
      env     <- execEnvForCompiledStatment globRef cenv cs
      let th = vmCurThread vm
 
-     thEnv   <- getThreadField stExecEnv th
+     let thEnv = vmCurExecEnv vm
      thPc    <- getThreadField stPC th
      thStack <- getThreadField stStack th
      thHandlers <- getThreadField stHandlers th
@@ -204,18 +204,21 @@ executeCompiledStatment vm cenv cs resume =
      setThreadField stHandlers th (DefaultHandler : thHandlers)
      setThreadField stStack th (Stack.push frame thStack)
 
-     return (Goto 0)
+     return (Goto 0, vm { vmCurExecEnv = env } )
 
 
 
 
 executeStatementInContext ::
-  VM -> Int -> ExecEnv -> String -> ([Value] -> IO NextStep) -> IO NextStep
+  VM -> Int -> ExecEnv -> String -> ([Value] -> IO NextStep) -> IO (NextStep,VM)
 executeStatementInContext vm pc env statement resume =
   do let fun = funValueCode (execFunction env)
      res <- try (compileStatementForLocation fun pc statement)
      case res of
        Left (ParseError e) ->
           do b <- fromByteString (B8.pack e)
-             resume [String b]
+             next <- resume [String b]
+             return (next, vm)
        Right cs -> executeCompiledStatment vm env cs resume
+
+

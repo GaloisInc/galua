@@ -76,7 +76,7 @@ performApiEnd ::
   (IO NextStep)      {- ^ next step             -} ->
   IO r
 performApiEnd c vm res next =
-  do eenv <- getThreadField stExecEnv (vmCurThread vm)
+  do let eenv = vmCurExecEnv vm
      writeIORef (execApiCall eenv) NoApiCall
      writeIORef (execLastResult eenv) res
      putMVar (machCServer (vmMachineEnv vm)) CResume
@@ -84,7 +84,7 @@ performApiEnd c vm res next =
 
 performApiStart :: Cont r -> VM -> ApiCall -> IO NextStep -> IO r
 performApiStart c vm apiCall next =
-  do eenv <- getThreadField stExecEnv (vmCurThread vm)
+  do let eenv = vmCurExecEnv vm
      writeIORef (execApiCall eenv) (ApiCallActive apiCall)
      running c vm =<< next
 
@@ -107,19 +107,20 @@ performTailCall c vm f vs =
      (newEnv, next) <- enterClosure f vs
 
      let th = vmCurThread vm
+         execEnv = vmCurExecEnv vm
 
-     execEnv <- getThreadField stExecEnv th
      recordProfTime (execCreateTime newEnv) (vmMachineEnv vm) execEnv
      recordProfEntry (vmMachineEnv vm) (funValueName (execFunction newEnv))
 
      stack <- getThreadField stStack th
-     eenv  <- getThreadField stExecEnv th
+     let eenv = vmCurExecEnv vm
      let elapsed = execCreateTime newEnv - execCreateTime eenv
 
      setThreadField stStack th (addElapsedToTop elapsed stack)
      setThreadField stExecEnv th newEnv
+     let newVM = vm { vmCurExecEnv = newEnv }
 
-     running c vm =<< next vm
+     running c newVM =<< next newVM
 
 addElapsedToTop :: Clock.TimeSpec -> Stack StackFrame -> Stack StackFrame
 addElapsedToTop elapsed stack =
@@ -147,7 +148,7 @@ performFunCall c vm f vs mb k =
      let th = vmCurThread vm
 
      pc       <- getThreadField stPC th
-     eenv     <- getThreadField stExecEnv th
+     let eenv = vmCurExecEnv vm
      stack    <- getThreadField stStack th
      handlers <- getThreadField stHandlers th
 
@@ -157,7 +158,8 @@ performFunCall c vm f vs mb k =
      setThreadField stHandlers th (consMb (fmap handlerType mb) handlers)
      setThreadField stStack th (Stack.push frame stack)
 
-     running c vm =<< next vm
+     let newVM = vm { vmCurExecEnv = newEnv }
+     running c newVM =<< next newVM
 
 bumpCallCounter :: Reference Closure -> VM -> IO ()
 bumpCallCounter clo vm =
@@ -190,7 +192,7 @@ performFunReturn c vm vs =
   do let th = vmCurThread vm
 
      now <- Clock.getTime Clock.ProcessCPUTime
-     eenv <- getThreadField stExecEnv th
+     let eenv = vmCurExecEnv vm
      stack <- getThreadField stStack th
 
      let elapsed = now - execCreateTime eenv
@@ -217,7 +219,7 @@ performFunReturn c vm vs =
                                                 Just _  -> tail handlers
                                                 Nothing -> handlers)
 
-                running c vm =<< k vs
+                running c vm { vmCurExecEnv = fenv } =<< k vs
 
 recordProfEntry :: MachineEnv -> FunName -> IO ()
 recordProfEntry menv funName =
@@ -264,7 +266,7 @@ addChildTime elapsed e =
 performThreadFail :: Cont r -> VM -> Value -> IO r
 performThreadFail c vm e =
   do let th = vmCurThread vm
-     eenv <- getThreadField stExecEnv th
+         eenv = vmCurExecEnv vm
      stack <- getThreadField stStack th
 
      abortApiCall (machCServer (vmMachineEnv vm)) eenv
@@ -323,8 +325,10 @@ performResume c vm tRef finishK =
          do let oldThread = vmCurThread vm
             setThreadField threadStatus oldThread (ThreadNormal finishK)
             setThreadField threadStatus tRef      ThreadRunning
+            newEnv <- getThreadField stExecEnv tRef
             let vm' = vm { vmCurThread = tRef
                          , vmBlocked   = Stack.push oldThread (vmBlocked vm)
+                         , vmCurExecEnv = newEnv
                          }
             running c vm' =<< resumeK
 
@@ -335,7 +339,7 @@ performYield :: Cont r -> VM -> IO NextStep -> IO r
 performYield c vm k =
   do let ref = vmCurThread vm
 
-     eenv <- getThreadField stExecEnv ref
+     let eenv = vmCurExecEnv vm
      let apiRef = execApiCall eenv
      writeIORef apiRef NoApiCall
      putMVar (machCServer (vmMachineEnv vm)) CAbort
@@ -345,7 +349,12 @@ performYield c vm k =
                      running c vm (ThrowError (String str))
        Just (t, ts) ->
          do setThreadField threadStatus (vmCurThread vm) (ThreadSuspended k)
-            vmSwitchToNormal c vm{ vmCurThread = t, vmBlocked = ts } ThreadYield
+            newEnv <- getThreadField stExecEnv t
+            vmSwitchToNormal c vm { vmCurThread = t
+                                  , vmBlocked = ts
+                                  , vmCurExecEnv = newEnv
+                                  } ThreadYield
+
 
 
 -- | Unwind the call stack until a handler is found or the stack becomes
@@ -355,7 +364,7 @@ performYield c vm k =
 performErrorReturn :: Cont r -> VM -> Value -> IO r
 performErrorReturn c vm e =
   do let ref = vmCurThread vm
-     eenv <- getThreadField stExecEnv ref
+         eenv = vmCurExecEnv vm
      abortApiCall (machCServer (vmMachineEnv vm)) eenv
 
      stack <- getThreadField stStack ref
@@ -373,7 +382,7 @@ performErrorReturn c vm e =
                setThreadField stStack    th s'
                setThreadField stPC       th pc
 
-               running c vm =<< k e
+               running c vm { vmCurExecEnv = fenv } =<< k e
 
           CallFrame pc eenv Nothing _ ->
             do let th = vmCurThread vm
@@ -381,7 +390,7 @@ performErrorReturn c vm e =
                setThreadField stStack   th s'
                setThreadField stPC      th pc
 
-               running c vm (ErrorReturn e)
+               running c vm { vmCurExecEnv = eenv } (ErrorReturn e)
 
           ErrorFrame -> unwind s'
 
