@@ -66,6 +66,7 @@ data VM = VM
     -- ^ This is what's executing at the moment.
 
   , vmAllocRef    :: {-# UNPACK #-} !AllocRef
+    -- ^ This is used to allocate Lua references.
   }
 
 
@@ -216,7 +217,8 @@ data ThreadResult
   | ThreadError Value           -- ^ The resumed thread crashed.
 
 
-setThreadField :: MonadIO m => (Thread -> IORef a) -> Reference Thread -> a -> m ()
+setThreadField ::
+  MonadIO m => (Thread -> IORef a) -> Reference Thread -> a -> m ()
 setThreadField sel = \ref !val ->
   liftIO (writeIORef (sel (referenceVal ref)) val)
 {-# INLINE getThreadField #-}
