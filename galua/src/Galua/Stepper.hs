@@ -113,8 +113,7 @@ performTailCall c vm f vs =
      recordProfEntry (vmMachineEnv vm) (funValueName (execFunction newEnv))
 
      stack <- getThreadField stStack th
-     let eenv = vmCurExecEnv vm
-     let elapsed = execCreateTime newEnv - execCreateTime eenv
+     let elapsed = execCreateTime newEnv - execCreateTime execEnv
 
      setThreadField stStack th (addElapsedToTop elapsed stack)
      setThreadField stExecEnv th newEnv
@@ -337,9 +336,7 @@ performResume c vm tRef finishK =
 
 performYield :: Cont r -> VM -> IO NextStep -> IO r
 performYield c vm k =
-  do let ref = vmCurThread vm
-
-     let eenv = vmCurExecEnv vm
+  do let eenv = vmCurExecEnv vm
      let apiRef = execApiCall eenv
      writeIORef apiRef NoApiCall
      putMVar (machCServer (vmMachineEnv vm)) CAbort
