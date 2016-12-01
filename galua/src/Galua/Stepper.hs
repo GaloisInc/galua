@@ -178,7 +178,9 @@ performThreadExit c vm vs =
     Nothing      -> finishedOk c vs
     Just (t, ts) ->
       do setThreadField threadStatus (vmCurThread vm) ThreadNew
-         vmSwitchToNormal c vm{ vmCurThread = t, vmBlocked = ts }
+         eenv <- getThreadField stExecEnv t
+         vmSwitchToNormal c vm{ vmCurThread = t, vmBlocked = ts
+                              , vmCurExecEnv = eenv }
                               (ThreadReturn vs)
 
 -- | This function implements the logic for FunReturn. It ends execution
@@ -336,8 +338,8 @@ performResume c vm tRef finishK =
 
 performYield :: Cont r -> VM -> IO NextStep -> IO r
 performYield c vm k =
-  do let eenv = vmCurExecEnv vm
-     let apiRef = execApiCall eenv
+  do let eenv   = vmCurExecEnv vm
+         apiRef = execApiCall eenv
      writeIORef apiRef NoApiCall
      putMVar (machCServer (vmMachineEnv vm)) CAbort
 
