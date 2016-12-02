@@ -129,15 +129,6 @@ function fillInExecEnv(dbgState, threadParts, env) {
                             , drawValueList(dbgState, 'regs', env.registers)
                             ])
 
-  if (env.result) {
-     var vals = $('<table/>').addClass('bordered')
-     vals.append(
-             [ $('<caption/>').text('Last C result'),
-               $('<tr/>').append($('<td/>').append(drawPrimArg(env.result)))
-             ])
-     threadParts.locals.append(vals)
-  }
-
 
   if (env.code) {
     var oldPC = dbgState.programCounter
