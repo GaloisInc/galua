@@ -169,7 +169,6 @@ bumpCallCounter clo vm =
   where prof = profCallCounters $ machProfiling $ vmMachineEnv vm
 
 
-{-# INLINE performThreadExit #-}
 performThreadExit :: Cont r -> VM -> [Value] -> IO r
 performThreadExit c vm vs =
   case Stack.pop (vmBlocked vm) of
@@ -185,7 +184,6 @@ performThreadExit c vm vs =
 -- for the current execution environment and resumes the next environment
 -- on the stack. In the case that the next frame is an error marker, it
 -- begins unwinding the stack until a suitable handler is found.
-{-# INLINE performFunReturn #-}
 performFunReturn :: Cont r -> VM -> [Value] -> IO r
 performFunReturn c vm vs =
   do let th = vmCurThread vm
