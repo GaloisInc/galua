@@ -481,7 +481,9 @@ exportThread funs mbNext th =
   do let eid = ThreadExecEnv (referenceId th)
      eenv  <- io $ getThreadField stExecEnv th
      stat  <- io $ getThreadField threadStatus th
-     pc    <- io $ getThreadField stPC th
+     pc    <- case mbNext of
+                Just (Goto pc) -> return pc
+                _              -> io $ getThreadField stPC th
      hdlrs <- io $ getThreadField stHandlers th
      stack <- io $ getThreadField stStack th
 
@@ -631,7 +633,7 @@ exportCallStackFrameShort funs pc env mbnext =
      st  <- io (readIORef (execApiCall env))
      apiInfo <- case mbnext of
                   Just (ApiStart api _)   -> exportApiCall api ApiCallStarting
-                  Just (ApiEnd   api _ _) -> exportApiCall api ApiCallEnding
+                  Just (ApiEnd api res _) -> exportApiCall api (ApiCallEnding res)
                   _ -> case st of
                          NoApiCall -> pure []
                          ApiCallAborted api  -> exportApiCall api ApiCallRunning
@@ -641,17 +643,21 @@ exportCallStackFrameShort funs pc env mbnext =
                        : "ref"    .= ref
                        : exportFunctionValue funs pc (execFunction env)))
 
-data ApiCallPhase = ApiCallStarting | ApiCallRunning | ApiCallEnding
+data ApiCallPhase = ApiCallStarting | ApiCallRunning | ApiCallEnding (Maybe PrimArgument)
 
 exportApiCall :: ApiCall -> ApiCallPhase -> ExportM [ JS.Pair ]
 exportApiCall api phase =
   do args <- traverse exportPrimArg (apiCallArgs api)
+     cresult <- case phase of
+                  ApiCallEnding mb -> traverse exportPrimArg mb
+                  _                -> return Nothing
      pure [ "method" .= apiCallMethod api
           , "args"   .= args
           , "phase"  .= case phase of
                           ApiCallStarting -> "starting" :: Text
                           ApiCallRunning  -> "running"
-                          ApiCallEnding   -> "ending"
+                          ApiCallEnding _ -> "ending"
+          , "cresult" .= cresult
           , "return" .= JS.object (exportCObjInfo (apiCallReturn api))
           ]
 
@@ -834,12 +840,10 @@ exportExecEnv funs pc eid
      vAs <- zipWithM (\n -> named (VP_Varargs env n) Nothing) [0..] =<<
                                                     io (readIORef execVarargs)
 
-     cRes <- traverse exportPrimArg =<< io (readIORef (execLastResult env))
      return $ JS.object $ [ "registers" .= regVs
                           , "upvalues"  .= uVs
                           , "varargs"   .= vAs
                           , "code"      .= code
-                          , "result"    .= cRes
                           ] ++ exportFunctionValue funs pc execFunction
 
   where

@@ -942,6 +942,9 @@ data StepMode
     -- If the op-code is a function call, do not stop until the function
     -- returns, or something else causes us to stop.
 
+  | StepOutOp
+    -- ^ Finish evaluating the current code, step over function calls
+
   | Stop
     -- ^ Evaluate until the closest safe place to stop.
 
@@ -980,7 +983,9 @@ runDebugger dbg =
               case state of
                 Running vm next ->
                   do setIdleReason dbg Executing
-                     writeIORef (dbgStateVM dbg) =<< doStepMode dbg vm next mode
+                     let mode' = nextMode vm next mode
+                     vms <- doStepMode dbg vm next $! mode'
+                     writeIORef (dbgStateVM dbg) vms
                 _ -> return ()
               clients  <- readIORef (dbgClients dbg)
               writeIORef (dbgClients dbg) []
@@ -1028,10 +1033,12 @@ doStepMode dbg vm next mode =
 
                Right cResult ->
                  do next' <- runMach vm' (handleCCallState cResult)
-                    doStepMode dbg vm' next' $! nextMode vm next' mode
+                    let mode' = nextMode vm' next' mode
+                    checkStop dbg mode' (Running vm' next') $
+                      doStepMode dbg vm' next' mode'
 
        Running vm' next' ->
-        do mode' <- return $! nextMode vm next' mode
+        do mode' <- return $! nextMode vm' next' mode
            checkStopError dbg vm' next' $
              if not (mayPauseBefore next')
                then doStepMode dbg vm' next' mode'
@@ -1110,7 +1117,6 @@ mayPauseBefore nextStep =
 
 
 
-
 nextMode :: VM -> NextStep -> StepMode -> StepMode
 
 nextMode _ Interrupt{} _ = Stop
@@ -1129,11 +1135,20 @@ nextMode vm step mode =
 
     StepOverOp ->
       case step of
+        Goto    {}      -> StepOutOp
+        ApiStart{}      -> StepOutOp
+        ApiEnd {}       -> StepOutOp
+        FunCall {}      -> StepOut StepOutOp
+        Resume  {}      -> StepOutYield StepOutOp
+        _               -> mode
+
+    StepOutOp ->
+      case step of
         Goto    {}      -> Stop
-        ApiStart{}      -> StepOut mode
+        ApiStart{}      -> Stop
         ApiEnd {}       -> Stop
-        FunCall {}      -> StepOut mode
-        Resume  {}      -> StepOutYield mode
+        FunCall {}      -> StepOut StepOutOp
+        Resume  {}      -> StepOutYield StepOutOp
         _               -> mode
 
     StepOut m ->

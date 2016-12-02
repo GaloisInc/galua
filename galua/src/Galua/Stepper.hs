@@ -62,7 +62,7 @@ oneStep' c !vm instr = do
     Resume tRef k       -> performResume        c vm tRef k
     Yield k             -> performYield         c vm k
     ApiStart apiCall op -> performApiStart      c vm apiCall op
-    ApiEnd _ res next   -> performApiEnd        c vm res next
+    ApiEnd _ _ next     -> performApiEnd        c vm next
     WaitForC            -> runningInC           c vm
     Interrupt n         -> running              c vm n
 
@@ -72,13 +72,11 @@ oneStep' c !vm instr = do
 performApiEnd ::
   Cont r ->
   VM                 {- ^ virtual machine state -} ->
-  Maybe PrimArgument {- ^ C return value        -} ->
   (IO NextStep)      {- ^ next step             -} ->
   IO r
-performApiEnd c vm res next =
+performApiEnd c vm next =
   do let eenv = vmCurExecEnv vm
      writeIORef (execApiCall eenv) NoApiCall
-     writeIORef (execLastResult eenv) res
      putMVar (machCServer (vmMachineEnv vm)) CResume
      running c vm =<< next
 
@@ -452,7 +450,6 @@ enterClosure c vs =
      traverse_ (SV.push stack <=< newIORef) stackElts
      vasRef   <- newIORef vas
      apiRef   <- newIORef NoApiCall
-     resultRef <- newIORef Nothing
      time     <- Clock.getTime Clock.ProcessCPUTime
 
      let newEnv = ExecEnv { execStack    = stack
@@ -460,7 +457,6 @@ enterClosure c vs =
                           , execFunction = cloFun
                           , execVarargs  = vasRef
                           , execApiCall  = apiRef
-                          , execLastResult = resultRef
                           , execClosure  = Closure c
                           , execCreateTime = time
                           , execChildTime  = 0

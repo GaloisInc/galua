@@ -315,7 +315,6 @@ data ExecEnv = ExecEnv
 
     -- Interaction with the C world
   , execApiCall    :: {-# UNPACK #-} !(IORef ApiCallStatus)
-  , execLastResult :: {-# UNPACK #-} !(IORef (Maybe PrimArgument))
   , execInstructions :: {-# UNPACK #-} !(Vector OpCode)
 
     -- Profiling
@@ -360,7 +359,6 @@ newThreadExecEnv =
                     , execFunction = cFunction blankCFunName
                     , execVarargs  = var
                     , execApiCall  = api
-                    , execLastResult = resultRef
                     , execInstructions = Vector.empty
                     , execClosure  = Nil
                     , execCreateTime = time
