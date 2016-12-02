@@ -1138,8 +1138,8 @@ nextMode vm step mode =
         Goto    {}      -> StepOutOp
         ApiStart{}      -> StepOutOp
         ApiEnd {}       -> StepOutOp
-        FunCall {}      -> StepOut StepOutOp
-        Resume  {}      -> StepOutYield StepOutOp
+        FunCall {}      -> StepOut StepOutOp      -- shouldn't happen
+        Resume  {}      -> StepOutYield StepOutOp -- shouldn't happen
         _               -> mode
 
     StepOutOp ->

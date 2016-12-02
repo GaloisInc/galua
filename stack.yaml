@@ -12,5 +12,5 @@ extra-deps:
 - config-value-0.5
 - config-value-getopt-0.1.0.0
 - elf-0.27
-- lua-bc-0.1.0.2
+- lua-bc-0.1.0.3
 - alex-tools-0.1.1.0
