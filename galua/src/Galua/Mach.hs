@@ -139,8 +139,9 @@ data NextStep
   | ApiStart ApiCall (IO NextStep)
   | ApiEnd ApiCall (Maybe PrimArgument) (IO NextStep)
 
-  | Interrupt NextStep -- ^ used to interrupt execution when in debugger
-
+  | Interrupt !Bool NextStep
+    -- ^ used to control the execution of the debugger; if the True, then stop
+    -- execution, if `False` definitely keep gonig.
 
 dumpNextStep :: NextStep -> String
 dumpNextStep next =
@@ -158,7 +159,7 @@ dumpNextStep next =
     Yield _         -> "yield"
     ApiStart api _  -> "apistart " ++ apiCallMethod api
     ApiEnd api _ _  -> "apiend " ++ apiCallMethod api
-    Interrupt _     -> "interrupt"
+    Interrupt {}    -> "interrupt"
 
 
 
@@ -289,7 +290,7 @@ data ProfilingInfo = ProfilingInfo
   }
 
 data FunctionRuntimes = FunctionRuntimes
-  { runtimeIndividual :: {-# UNPACK #-} !Clock.TimeSpec -- ^ Time spent in this fuction directly
+  { runtimeIndividual :: {-# UNPACK #-} !Clock.TimeSpec -- ^ Time spent in this function directly
   , runtimeCumulative :: {-# UNPACK #-} !Clock.TimeSpec -- ^ Time spent in this function its calls
   , runtimeCounter    :: !Int -- ^ Number of active stack frames
   }

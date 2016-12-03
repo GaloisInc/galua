@@ -865,7 +865,7 @@ executeStatement dbg frame statement =
                    let stat = Text.unpack statement
                    (next',vm') <-
                       executeStatementInContext vm pc env stat $ \vs ->
-                        Interrupt next <$ liftIO (recordConsoleValues vs)
+                        Interrupt True next <$ liftIO (recordConsoleValues vs)
                    writeIORef (dbgStateVM dbg) (Running vm' next')
 
               runNonBlock dbg
@@ -1096,11 +1096,7 @@ checkBreakPoint dbg mode vm nextStep k =
                   Just c ->
                     do (nextStep',vm') <-
                             executeCompiledStatment vm eenv (brkCond c)
-                                  $ \vs -> return $!
-                                    let stop = valueBool (trimResult1 vs)
-                                    in if stop
-                                         then Interrupt nextStep
-                                         else nextStep
+                              $ \vs -> return $! Interrupt (valueBool (trimResult1 vs)) nextStep
                        doStepMode dbg vm' nextStep' (StepOut mode)
               _ -> k
        _ -> k
@@ -1119,7 +1115,9 @@ mayPauseBefore nextStep =
 
 nextMode :: VM -> NextStep -> StepMode -> StepMode
 
-nextMode _ Interrupt{} _ = Stop
+nextMode vm (Interrupt stop next) mode
+  | stop      = Stop
+  | otherwise = nextMode vm next mode
 
 nextMode vm step mode =
   case mode of

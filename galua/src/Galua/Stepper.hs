@@ -47,7 +47,6 @@ oneStep = oneStep'
        , finishedWithError = \a -> return $! FinishedWithError a
        }
 
-{-# INLINE oneStep' #-}
 oneStep' :: Cont r -> VM -> NextStep -> IO r
 oneStep' c !vm instr = do
   case instr of
@@ -64,7 +63,8 @@ oneStep' c !vm instr = do
     ApiStart apiCall op -> performApiStart      c vm apiCall op
     ApiEnd _ _ next     -> performApiEnd        c vm next
     WaitForC            -> runningInC           c vm
-    Interrupt n         -> running              c vm n
+    Interrupt True n    -> running              c vm n
+    Interrupt False n   -> oneStep' c vm n
 
 
 
