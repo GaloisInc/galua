@@ -139,9 +139,7 @@ data NextStep
   | ApiStart ApiCall (IO NextStep)
   | ApiEnd ApiCall (Maybe PrimArgument) (IO NextStep)
 
-  | Interrupt !Bool NextStep
-    -- ^ used to control the execution of the debugger; if the True, then stop
-    -- execution, if `False` definitely keep gonig.
+  | Interrupt NextStep
 
 dumpNextStep :: NextStep -> String
 dumpNextStep next =
@@ -290,9 +288,14 @@ data ProfilingInfo = ProfilingInfo
   }
 
 data FunctionRuntimes = FunctionRuntimes
-  { runtimeIndividual :: {-# UNPACK #-} !Clock.TimeSpec -- ^ Time spent in this function directly
-  , runtimeCumulative :: {-# UNPACK #-} !Clock.TimeSpec -- ^ Time spent in this function its calls
-  , runtimeCounter    :: !Int -- ^ Number of active stack frames
+  { runtimeIndividual :: {-# UNPACK #-} !Clock.TimeSpec
+    -- ^ Time spent in this function directly
+
+  , runtimeCumulative :: {-# UNPACK #-} !Clock.TimeSpec
+    -- ^ Time spent in this function its calls
+
+  , runtimeCounter    :: !Int
+    -- ^ Number of active stack frames
   }
 
 data MachConfig = MachConfig

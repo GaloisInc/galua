@@ -193,12 +193,12 @@ executeCompiledStatment vm cenv cs resume =
      let th = vmCurThread vm
 
      let thEnv = vmCurExecEnv vm
-     thPc    <- getThreadField stPC th
-     thStack <- getThreadField stStack th
+     thPc       <- getThreadField stPC th
+     thStack    <- getThreadField stStack th
      thHandlers <- getThreadField stHandlers th
 
      let recover e  = resume [e]
-         frame = CallFrame thPc thEnv (Just recover) resume
+         frame      = CallFrame thPc thEnv (Just recover) resume
 
      setThreadField stExecEnv th env
      setThreadField stHandlers th (DefaultHandler : thHandlers)

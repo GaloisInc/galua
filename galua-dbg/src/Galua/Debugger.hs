@@ -182,6 +182,8 @@ data BreakCondition = BreakCondition
     -- ^ Use this to evaluate the condition
   , brkText :: Text
     -- ^ Use this to display the condition
+  , brkActive :: IORef (Maybe Bool)
+    -- ^ Did we alerady check this conditoin.
   }
 
 
@@ -865,7 +867,7 @@ executeStatement dbg frame statement =
                    let stat = Text.unpack statement
                    (next',vm') <-
                       executeStatementInContext vm pc env stat $ \vs ->
-                        Interrupt True next <$ liftIO (recordConsoleValues vs)
+                        Interrupt next <$ recordConsoleValues vs
                    writeIORef (dbgStateVM dbg) (Running vm' next')
 
               runNonBlock dbg
@@ -899,9 +901,12 @@ prepareCondition dbg (pc,fid) expr =
   do fun  <- lookupFID dbg fid
      let stat = "return " ++ Text.unpack expr
      res <- try (compileStatementForLocation (LuaOpCodes fun) pc stat)
+     act <- newIORef Nothing
      return $! case res of
        Left ParseError{} -> Nothing
-       Right cp -> Just BreakCondition { brkCond = cp, brkText = expr }
+       Right cp -> Just BreakCondition { brkCond = cp
+                                       , brkText = expr
+                                       , brkActive = act }
 
 lookupFID :: Debugger -> FunId -> IO Function
 lookupFID dbg fid =
@@ -1091,15 +1096,30 @@ checkBreakPoint dbg mode vm nextStep k =
             case Map.lookup loc breaks of
               Just mbCond ->
                 case mbCond of
-                  Nothing -> do setIdleReason dbg ReachedBreakPoint
-                                return (Running vm nextStep)
+                  Nothing -> atBreak
                   Just c ->
-                    do (nextStep',vm') <-
-                            executeCompiledStatment vm eenv (brkCond c)
-                              $ \vs -> return $! Interrupt (valueBool (trimResult1 vs)) nextStep
-                       doStepMode dbg vm' nextStep' (StepOut mode)
+                    do act <- readIORef (brkActive c)
+                       case act of
+                         -- Already checked if active
+                         Just active ->
+                           do writeIORef (brkActive c) Nothing
+                              if active then atBreak else k
+
+                         -- Start evaluating the breakpoint condition
+                         Nothing ->
+                           do (nextStep',vm') <-
+                                 executeCompiledStatment vm eenv (brkCond c)
+                                   $ \vs -> do writeIORef (brkActive c)
+                                                 $! Just
+                                                 $! valueBool (trimResult1 vs)
+                                               return nextStep
+                              doStepMode dbg vm' nextStep' (StepOut mode)
               _ -> k
        _ -> k
+
+  where
+  atBreak = do setIdleReason dbg ReachedBreakPoint
+               return (Running vm nextStep)
 
 
 -- | Before executing this "step" we may pause execution.
@@ -1115,9 +1135,7 @@ mayPauseBefore nextStep =
 
 nextMode :: VM -> NextStep -> StepMode -> StepMode
 
-nextMode vm (Interrupt stop next) mode
-  | stop      = Stop
-  | otherwise = nextMode vm next mode
+nextMode _ (Interrupt _) _ = Stop
 
 nextMode vm step mode =
   case mode of
