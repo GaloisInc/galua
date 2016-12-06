@@ -183,7 +183,7 @@ data BreakCondition = BreakCondition
   , brkText :: Text
     -- ^ Use this to display the condition
   , brkActive :: IORef (Maybe Bool)
-    -- ^ Did we alerady check this conditoin.
+    -- ^ Did we alerady check this condition.
   }
 
 
