@@ -7,7 +7,7 @@ packages:
 - location: galua-spec
 - location: lib/dwarf-tools
 - location: lib/language-lua
-resolver: lts-7.11
+resolver: lts-7.12
 extra-deps:
 - config-value-0.5
 - config-value-getopt-0.1.0.0
