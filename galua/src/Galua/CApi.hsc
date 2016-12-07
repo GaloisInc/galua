@@ -27,11 +27,14 @@ import Foreign.Marshal.Array
 import Foreign.StablePtr
 import Foreign.Storable
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Lazy as L
+import qualified Data.ByteString.Unsafe as U
 import qualified Data.ByteString.Char8 as B8
 import System.IO
 import System.IO.Unsafe (unsafeInterleaveIO)
 
 import Language.Lua.Bytecode
+import Language.Lua.Bytecode.Parser
 import Language.Lua.Bytecode.Debug
 import Language.Lua.Bytecode.FunId
 
@@ -1041,13 +1044,40 @@ lua_concat_hs l r n =
 ------------------------------------------------------------------------
 
 foreign export ccall lua_dump_hs ::
-  EntryPoint (FunPtr () -> Ptr () -> CInt -> Ptr CInt -> IO CInt)
+  EntryPoint (FunPtr LuaWriter -> Ptr () -> CInt -> Ptr CInt -> IO CInt)
+
+type LuaWriter =
+  Ptr () {- ^ lua_State *L  -} ->
+  Ptr () {- ^ const void* p -} ->
+  CSize  {- ^ size_t sz     -} ->
+  Ptr () {- ^ void* ud      -} ->
+  IO CInt
+
+type Dynamic a = FunPtr a -> a
+foreign import ccall "dynamic" lua_writer :: Dynamic LuaWriter
 
 -- [-0, +0, -]
-lua_dump_hs :: EntryPoint (FunPtr () -> Ptr () -> CInt -> Ptr CInt -> IO CInt)
-lua_dump_hs l r writer dat strip _out =
-  reentry "lua_dump" [cArg writer, cArg dat, cArg strip] l r $ \_args ->
-    luaError "lua_dump not implemented"
+lua_dump_hs :: EntryPoint (FunPtr LuaWriter -> Ptr () -> CInt -> Ptr CInt -> IO CInt)
+lua_dump_hs l r writer dat strip out =
+  reentry "lua_dump" [cArg writer, cArg dat, cArg strip] l r $ \args ->
+    do clo <- functionArgument (-1) args
+       fun <- case luaOpCodes (cloFun (referenceVal clo)) of
+                Nothing -> luaError "expected lua function" -- ?
+                Just (_,fun) -> return fun
+       let bytecode = dumpLuaBytecode
+                        luaBytecodeMode53
+                        (Chunk (length (funcUpvalues fun)) fun)
+           loop [] = result out 0
+           loop (x:xs) =
+             U.unsafeUseAsCStringLen x $ \(ptr, len) ->
+               do res <- lua_writer writer l (castPtr ptr) (fromIntegral len) dat
+                  if res == 0 then
+                    loop xs
+                  else
+                    result out (fromIntegral res)
+
+       liftIO (loop (L.toChunks bytecode))
+
 
 ------------------------------------------------------------------------
 
