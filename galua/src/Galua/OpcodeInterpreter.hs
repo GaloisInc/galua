@@ -7,7 +7,6 @@ module Galua.OpcodeInterpreter(execute) where
 
 import           Control.Exception hiding (Handler)
 import           Control.Monad
-import           Control.Monad.IO.Class
 import           Data.Foldable
 import           Data.IORef
 import qualified Data.Vector as Vector
@@ -58,213 +57,226 @@ loadExtraArg eenv pc =
 
 
 
-execute :: Int {- ^ program counter -} -> Mach a
-execute pc =
-  do eenv <- getsExecEnv id
-     execute' eenv pc
-
-
 -- | Compute the result of executing the opcode at the given address
 -- within the current function execution environment.
-execute' :: ExecEnv -> Int -> Mach a
-execute' !eenv !pc =
+execute :: VM -> Int -> IO NextStep
+execute !vm !pc =
 
-  do instr <- liftIO (loadInstruction eenv pc)
+  do let eenv = vmCurExecEnv vm
+
+     instr <- loadInstruction eenv pc
      let advance      = jump 0
-         jump i       = machGoto (pc + i + 1)
+         jump i       = return $! Goto (pc + i + 1)
          getExtraArg  = loadExtraArg eenv (pc+1)
          tgt =: m     = do a <- m
-                           liftIO (set eenv tgt a)
+                           set eenv tgt a
                            advance
 
+         binOp f tgt src1 src2 =
+           do x1 <- get eenv src1
+              x2 <- get eenv src2
+              unMach (f x1 x2) vm (\y -> tgt =: return y)
+
+         unOp f tgt src1 =
+           do x1 <- get eenv src1
+              unMach (f x1) vm (\y -> tgt =: return y)
+
+         relOp f invert op1 op2 =
+           do x1  <- get eenv op1
+              x2  <- get eenv op2
+              -- if ((RK(B) ? RK(C)) ~= A) then pc++
+              unMach (f x1 x2) vm $ \res ->
+                jump (if res /= invert then 1 else 0)
+
+
      case instr of
-       OP_MOVE     tgt src -> tgt =: liftIO (get eenv src)
-       OP_LOADK    tgt src -> tgt =: liftIO (get eenv src)
-       OP_GETUPVAL tgt src -> tgt =: liftIO (get eenv src)
-       OP_SETUPVAL src tgt -> tgt =: liftIO (get eenv src)
+       OP_MOVE     tgt src -> tgt =: get eenv src
+       OP_LOADK    tgt src -> tgt =: get eenv src
+       OP_GETUPVAL tgt src -> tgt =: get eenv src
+       OP_SETUPVAL src tgt -> tgt =: get eenv src
                    -- SETUPVAL's argument order is different!
 
        OP_LOADKX tgt ->
-         do liftIO (do src <- Kst <$> getExtraArg
-                       set eenv tgt =<< get eenv src)
+         do src <- Kst <$> getExtraArg
+            set eenv tgt =<< get eenv src
             jump 1 -- skip over the extrarg
 
        OP_LOADBOOL tgt b c ->
-         do liftIO (set eenv tgt (Bool b))
+         do set eenv tgt (Bool b)
             jump (if c then 1 else 0)
 
        OP_LOADNIL tgt count ->
-         do liftIO (traverse_ (\r -> set eenv r Nil) [tgt .. plusReg tgt count])
+         do traverse_ (\r -> set eenv r Nil) [tgt .. plusReg tgt count]
             advance
 
-       OP_GETTABUP tgt src tabKey -> tgt =: binOp eenv m__index src tabKey
-       OP_GETTABLE tgt src tabKey -> tgt =: binOp eenv m__index src tabKey
+       OP_GETTABUP tgt src tabKey -> binOp m__index tgt src tabKey
+       OP_GETTABLE tgt src tabKey -> binOp m__index tgt src tabKey
 
        OP_SETTABUP tgt key src ->
-         do t <- liftIO (get eenv tgt)
-            k <- liftIO (get eenv key)
-            v <- liftIO (get eenv src)
-            m__newindex t k v
-            advance
+         do t <- get eenv tgt
+            k <- get eenv key
+            v <- get eenv src
+            unMach (m__newindex t k v) vm $ \_ -> advance
 
        OP_SETTABLE tgt key src ->
-         do t <- liftIO (get eenv tgt)
-            k <- liftIO (get eenv key)
-            v <- liftIO (get eenv src)
-            m__newindex t k v
-            advance
+         do t <- get eenv tgt
+            k <- get eenv key
+            v <- get eenv src
+            unMach (m__newindex t k v) vm $ \_ -> advance
 
        OP_NEWTABLE tgt arraySize hashSize ->
-        tgt =: (Table <$> machNewTable arraySize hashSize)
+        tgt =: (Table <$> machNewTable' vm arraySize hashSize)
 
        OP_SELF tgt src key ->
-         do t <- liftIO (get eenv src)
-            k <- liftIO (get eenv key)
-            v <- m__index t k
-            liftIO $ do set eenv tgt v
-                        set eenv (succ tgt) t
-            advance
+         do t <- get eenv src
+            k <- get eenv key
+            unMach (m__index t k) vm $ \v ->
+              do set eenv tgt v
+                 set eenv (succ tgt) t
+                 advance
 
-       OP_ADD  tgt op1 op2 -> tgt =: binOp eenv m__add  op1 op2
-       OP_SUB  tgt op1 op2 -> tgt =: binOp eenv m__sub  op1 op2
-       OP_MUL  tgt op1 op2 -> tgt =: binOp eenv m__mul  op1 op2
-       OP_MOD  tgt op1 op2 -> tgt =: binOp eenv m__mod  op1 op2
-       OP_POW  tgt op1 op2 -> tgt =: binOp eenv m__pow  op1 op2
-       OP_DIV  tgt op1 op2 -> tgt =: binOp eenv m__div  op1 op2
-       OP_IDIV tgt op1 op2 -> tgt =: binOp eenv m__idiv op1 op2
-       OP_BAND tgt op1 op2 -> tgt =: binOp eenv m__band op1 op2
-       OP_BOR  tgt op1 op2 -> tgt =: binOp eenv m__bor  op1 op2
-       OP_BXOR tgt op1 op2 -> tgt =: binOp eenv m__bxor op1 op2
-       OP_SHL  tgt op1 op2 -> tgt =: binOp eenv m__shl  op1 op2
-       OP_SHR  tgt op1 op2 -> tgt =: binOp eenv m__shr  op1 op2
+       OP_ADD  tgt op1 op2 -> binOp m__add  tgt op1 op2
+       OP_SUB  tgt op1 op2 -> binOp m__sub  tgt op1 op2
+       OP_MUL  tgt op1 op2 -> binOp m__mul  tgt op1 op2
+       OP_MOD  tgt op1 op2 -> binOp m__mod  tgt op1 op2
+       OP_POW  tgt op1 op2 -> binOp m__pow  tgt op1 op2
+       OP_DIV  tgt op1 op2 -> binOp m__div  tgt op1 op2
+       OP_IDIV tgt op1 op2 -> binOp m__idiv tgt op1 op2
+       OP_BAND tgt op1 op2 -> binOp m__band tgt op1 op2
+       OP_BOR  tgt op1 op2 -> binOp m__bor  tgt op1 op2
+       OP_BXOR tgt op1 op2 -> binOp m__bxor tgt op1 op2
+       OP_SHL  tgt op1 op2 -> binOp m__shl  tgt op1 op2
+       OP_SHR  tgt op1 op2 -> binOp m__shr  tgt op1 op2
 
-       OP_UNM  tgt op1  -> tgt =: (liftIO (get eenv op1) >>= m__unm)
-       OP_BNOT tgt op1  -> tgt =: (liftIO (get eenv op1) >>= m__bnot)
-       OP_LEN  tgt op1  -> tgt =: (liftIO (get eenv op1) >>= m__len)
-       OP_NOT  tgt op1  -> tgt =: liftIO
-                                   (Bool . not . valueBool <$> get eenv op1)
+       OP_UNM  tgt op1  -> unOp m__unm  tgt op1
+       OP_BNOT tgt op1  -> unOp m__bnot tgt op1
+       OP_LEN  tgt op1  -> unOp m__len  tgt op1
+       OP_NOT  tgt op1  -> tgt =: (Bool . not . valueBool <$> get eenv op1)
 
 
        OP_CONCAT tgt start end ->
-         do xs  <- liftIO (traverse (get eenv) [start .. end])
-            tgt =: m__concat xs
+         do xs  <- traverse (get eenv) [start .. end]
+            unMach (m__concat xs) vm $ \v -> tgt =: return v
 
        OP_JMP mbCloseReg jmp ->
-         do liftIO (traverse_ (closeStack eenv) mbCloseReg)
+         do traverse_ (closeStack eenv) mbCloseReg
             jump jmp
 
-       OP_EQ invert op1 op2 -> jump =<< relOp eenv m__eq invert op1 op2
-       OP_LT invert op1 op2 -> jump =<< relOp eenv m__lt invert op1 op2
-       OP_LE invert op1 op2 -> jump =<< relOp eenv m__le invert op1 op2
+       OP_EQ invert op1 op2 -> relOp m__eq invert op1 op2
+       OP_LT invert op1 op2 -> relOp m__lt invert op1 op2
+       OP_LE invert op1 op2 -> relOp m__le invert op1 op2
 
        OP_TEST ra c ->
-          do a <- liftIO (get eenv ra)
+          do a <- get eenv ra
              jump (if valueBool a == c then 0 else 1)
 
        OP_TESTSET ra rb c ->
-          do b <- liftIO (get eenv rb)
+          do b <- get eenv rb
              if valueBool b == c
-               then do liftIO (set eenv ra b)
+               then do set eenv ra b
                        advance
                else jump 1
 
        OP_CALL a b c ->
-         do u      <- liftIO (get eenv a)
-            args   <- liftIO (getCallArguments eenv (succ a) b)
-            result <- m__call u args
-            liftIO (setCallResults eenv a c result)
-            advance
+         do u      <- get eenv a
+            args   <- getCallArguments eenv (succ a) b
+            unMach (m__call u args) vm $ \result ->
+              do setCallResults eenv a c result
+                 advance
 
        OP_TAILCALL a b _c ->
-         do u       <- liftIO (get eenv a)
-            args    <- liftIO (getCallArguments eenv (succ a) b)
-            (f,as)  <- resolveFunction u args
-            machTailcall f as
+         do u       <- get eenv a
+            args    <- getCallArguments eenv (succ a) b
+            unMach (resolveFunction u args) vm $ \(f,as) ->
+                                                  return (FunTailcall f as)
 
-       OP_RETURN a c ->
-         do vs <- liftIO (getCallArguments eenv a c)
-            machReturn vs
+       OP_RETURN a c -> FunReturn <$> getCallArguments eenv a c
 
        OP_FORLOOP a sBx ->
-         do initial <- forloopAsNumber "initial" =<< liftIO (get eenv a)
-            limit   <- forloopAsNumber "limit"   =<< liftIO (get eenv (plusReg a 1))
-            step    <- forloopAsNumber "step"    =<< liftIO (get eenv (plusReg a 2))
+          get eenv a             >>= \v1 ->
+          get eenv (plusReg a 1) >>= \v2 ->
+          get eenv (plusReg a 2) >>= \v3 ->
+          forloopAsNumber "initial" v1 $ \initial ->
+          forloopAsNumber "limit"   v2 $ \limit ->
+          forloopAsNumber "step"    v3 $ \step ->
             let next = initial + step
                 cond | 0 < step = next <= limit
                      | otherwise = limit <= next
-            if cond
-              then do liftIO (set eenv a (Number next))
-                      liftIO (set eenv (plusReg a 3) (Number next))
-                      jump sBx
-              else advance
+            in if cond
+                 then do set eenv a (Number next)
+                         set eenv (plusReg a 3) (Number next)
+                         jump sBx
+                 else advance
 
        OP_FORPREP a jmp ->
-         do initial <- forloopAsNumber "initial" =<< liftIO (get eenv a)
-            limit   <- forloopAsNumber "limit"   =<< liftIO (get eenv (plusReg a 1))
-            step    <- forloopAsNumber "step"    =<< liftIO (get eenv (plusReg a 2))
-            liftIO (set eenv a (Number (initial - step)))
-            liftIO (set eenv (plusReg a 1) (Number limit)) -- save back the Number form
-            liftIO (set eenv (plusReg a 2) (Number step))  -- save back the Number form
-            jump jmp
+          get eenv a             >>= \v1 ->
+          get eenv (plusReg a 1) >>= \v2 ->
+          get eenv (plusReg a 2) >>= \v3 ->
+          forloopAsNumber "initial" v1 $ \initial ->
+          forloopAsNumber "limit"   v2 $ \limit ->
+          forloopAsNumber "step"    v3 $ \step ->
+            do set eenv a (Number (initial - step))
+               set eenv (plusReg a 1) (Number limit)
+               -- save back the Number form
+               set eenv (plusReg a 2) (Number step)
+               -- save back the Number form
+               jump jmp
 
        OP_TFORCALL a c ->
-         do f  <- liftIO (get eenv a)
-            a1 <- liftIO (get eenv (plusReg a 1))
-            a2 <- liftIO (get eenv (plusReg a 2))
-            result <- m__call f [a1,a2]
-            let resultRegs = regRange (plusReg a 3) c
-            liftIO (zipWithM_ (set eenv) resultRegs (result ++ repeat Nil))
-            advance
+         do f  <- get eenv a
+            a1 <- get eenv (plusReg a 1)
+            a2 <- get eenv (plusReg a 2)
+            unMach (m__call f [a1,a2]) vm $ \result ->
+              do let resultRegs = regRange (plusReg a 3) c
+                 zipWithM_ (set eenv) resultRegs (result ++ repeat Nil)
+                 advance
 
        OP_TFORLOOP a sBx ->
-         do v <- liftIO (get eenv (succ a))
+         do v <- get eenv (succ a)
             if v == Nil
               then advance
-              else do liftIO (set eenv a v)
+              else do set eenv a v
                       jump sBx
 
-       OP_SETLIST a b c -> jump =<< liftIO work
-         where
-         work = do tab' <- get eenv a
-                   tab <- case tab' of
-                            Table tab -> return tab
-                            _ -> interpThrow SetListNeedsTable
+       OP_SETLIST a b c ->
+         do tab' <- get eenv a
+            tab <- case tab' of
+                     Table tab -> return tab
+                     _ -> interpThrow SetListNeedsTable
 
-                   count <-
-                     if b == 0
-                        then do Reg top <- getTop eenv
-                                let Reg aval = a
-                                return (top - aval - 1)
-                        else return b
+            count <-
+              if b == 0
+                 then do Reg top <- getTop eenv
+                         let Reg aval = a
+                         return (top - aval - 1)
+                 else return b
 
-                   (offset, skip) <-
-                      if c == 0
-                        then do k <- getExtraArg
-                                return (50*k,1)
-                        else return (50 * (c-1), 0)
+            (offset, skip) <-
+               if c == 0
+                 then do k <- getExtraArg
+                         return (50*k,1)
+                 else return (50 * (c-1), 0)
 
-                   forM_ [1..count] $ \i ->
-                     do x <- get eenv (plusReg a i)
-                        setTableRaw tab (Number (Int (offset+i))) x
+            forM_ [1..count] $ \i ->
+              do x <- get eenv (plusReg a i)
+                 setTableRaw tab (Number (Int (offset+i))) x
 
-                   resetTop eenv
-                   return skip
+            resetTop eenv
+            jump skip
 
        OP_CLOSURE tgt i ->
-         do (f,us) <- liftIO $
-               do (fid,closureFunc) <- getProto eenv i
-                  vs <- traverse (getLValue eenv) (funcUpvalues closureFunc)
-                  closureUpvals <- Vector.thaw vs
-                  return (luaFunction fid closureFunc, closureUpvals)
-
-            tgt =: (Closure <$> machNewClosure f us)
+         do (fid,closureFunc) <- getProto eenv i
+            vs <- traverse (getLValue eenv) (funcUpvalues closureFunc)
+            closureUpvals <- Vector.thaw vs
+            let f = luaFunction fid closureFunc
+            tgt =: (Closure <$> machNewClosure' vm f closureUpvals)
 
        OP_VARARG a b ->
          do let varargs = execVarargs eenv
-            liftIO (setCallResults eenv a b =<< readIORef varargs)
+            setCallResults eenv a b =<< readIORef varargs
             advance
 
-       OP_EXTRAARG{} -> liftIO $ interpThrow UnexpectedExtraArg
+       OP_EXTRAARG{} -> interpThrow UnexpectedExtraArg
 
 
 -- | Get a list of the `count` values stored from `start`.
@@ -305,11 +317,12 @@ closeStack eenv (Reg a) =
 
 -- | Interpret a value as an input to a for-loop. If the value
 -- is not a number an error is raised using the given name.
-forloopAsNumber :: String {- ^ argument name -} -> Value -> Mach Number
-forloopAsNumber label v =
+forloopAsNumber :: String {- ^ argument name -} -> Value ->
+                  (Number -> IO NextStep) -> IO NextStep
+forloopAsNumber label v cont =
   case valueNumber v of
-    Just n  -> return n
-    Nothing -> luaError ("'for' " ++ label ++ " must be a number")
+    Just n  -> cont n
+    Nothing -> luaError' ("'for' " ++ label ++ " must be a number")
 
 curLuaFunction :: ExecEnv -> IO (FunId, Function)
 curLuaFunction eenv =
@@ -394,33 +407,12 @@ getProto eenv (ProtoIx i) =
 -- Binary operations
 ------------------------------------------------------------------------
 
-{-# INLINE binOp #-}
-binOp ::
-  (RValue a, RValue b) =>
-    ExecEnv -> (Value -> Value -> Mach c) -> a -> b -> Mach c
-binOp eenv f src1 src2 =
-  do x1 <- liftIO (get eenv src1)
-     x2 <- liftIO (get eenv src2)
-     f x1 x2
-
 
 
 
 ------------------------------------------------------------------------
 -- Relational operations
 ------------------------------------------------------------------------
-
-{-# INLINE relOp #-}
-relOp ::
-  ExecEnv ->
-  (Value -> Value -> Mach Bool) ->
-  Bool -> RK -> RK -> Mach Int {- ^ how many instructions to advance -}
-relOp eenv (?) invert op1 op2 =
-  do x1  <- liftIO (get eenv op1)
-     x2  <- liftIO (get eenv op2)
-     -- if ((RK(B) ? RK(C)) ~= A) then pc++
-     res <- x1 ? x2
-     return (if res /= invert then 1 else 0)
 
 
 ------------------------------------------------------------------------

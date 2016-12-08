@@ -458,6 +458,27 @@ machRefLoc =
                    LuaFID fid -> InLua fid pc
 
 
+machRefLoc' :: VM -> IO RefLoc
+machRefLoc' vm =
+  do let tref = vmCurThread vm
+     pc    <- getThreadField stPC tref
+     let eenv = vmCurExecEnv vm
+     stack <- getThreadField stStack tref
+     return RefLoc { refLocCaller = getCaller stack
+                   , refLocSite   = mkLoc eenv pc
+                   }
+  where
+  getCaller st = case Stack.pop st of
+                   Just (ErrorFrame, more)       -> getCaller more
+                   Just (CallFrame pc env _ _,_) -> mkLoc env pc
+                   Nothing -> MachSetup -- XXX: or can this happen?
+
+  mkLoc env pc = case funValueName (execFunction env) of
+                   CFID nm    -> InC nm
+                   LuaFID fid -> InLua fid pc
+
+
+
 
 -- private
 abort :: NextStep -> Mach a
@@ -547,6 +568,31 @@ setTypeMetatable typ mb =
        case mb of
          Just metatable -> Map.insert typ metatable
          Nothing        -> Map.delete typ
+
+luaError' :: String -> IO NextStep
+luaError' str =
+  do s <- fromByteString (packUtf8 str)
+     return (ThrowError (String s))
+
+machNewClosure' ::
+  VM -> FunctionValue -> IOVector (IORef Value) -> IO (Reference Closure)
+machNewClosure' vm fun upvals =
+  do let aref = vmAllocRef vm
+     loc  <- machRefLoc' vm
+     newClosure aref loc fun upvals
+
+machNewTable' ::
+  VM ->
+  Int {- ^ array size -} ->
+  Int {- ^ hashtable size -} ->
+  IO (Reference Table)
+machNewTable' vm aSz hSz =
+  do let aref = vmAllocRef vm
+     loc <- machRefLoc' vm
+     newTable aref loc aSz hSz
+
+
+
 
 
 luaError :: String -> Mach b

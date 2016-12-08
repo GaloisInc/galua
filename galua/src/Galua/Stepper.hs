@@ -87,7 +87,7 @@ performApiStart c vm apiCall next =
 performGoto :: Cont r -> VM -> Int -> IO r
 performGoto c vm pc =
   do setThreadField stPC (vmCurThread vm) pc
-     running c vm =<< runMach vm (execute pc)
+     running c vm =<< execute vm pc
 
 
 {-# INLINE performTailCall #-}
