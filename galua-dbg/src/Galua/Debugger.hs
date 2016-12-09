@@ -1037,7 +1037,7 @@ doStepMode dbg vm next mode =
                     doStepMode dbg vm' WaitForC (fromMaybe mode mbNewMode)
 
                Right cResult ->
-                 do next' <- runMach vm' (handleCCallState cResult)
+                 do next' <- handleCCallState vm' cResult
                     let mode' = nextMode vm' next' mode
                     checkStop dbg mode' (Running vm' next') $
                       doStepMode dbg vm' next' mode'

@@ -1,4 +1,4 @@
-{-# LANGUAGE ForeignFunctionInterface #-}
+{-# LANGUAGE ForeignFunctionInterface, BangPatterns #-}
 module Galua.CallIntoC (execCFunction, handleCCallState) where
 
 import           Galua.Mach
@@ -10,60 +10,57 @@ import qualified Galua.Util.SizedVector as SV
 
 import           Control.Concurrent
 import           Data.Traversable
-import           Control.Monad.IO.Class
-import           Data.Foldable
 import           Data.IORef
 
-execCFunction :: CFunName -> Mach a
-execCFunction cfun =
-  do mvar <- getsMachEnv machCServer
-     liftIO (putMVar mvar (CCallback (cfunAddr cfun)))
-     machWaitForC
+execCFunction :: VM -> CFunName -> IO NextStep
+execCFunction !vm cfun =
+  do let mvar = machCServer (vmMachineEnv vm)
+     putMVar mvar (CCallback (cfunAddr cfun))
+     return WaitForC
 
-handleCCallState :: CCallState -> Mach a
-handleCCallState cResult =
+handleCCallState :: VM -> CCallState -> IO NextStep
+handleCCallState !vm cResult =
   case cResult of
-    CReturned n -> returnFromC n
+    CReturned n -> returnFromC vm n
     CReEntry label returnAddress primargs k ->
-      do handleGC
-         reentryFromC label returnAddress primargs k
-         machWaitForC
+      handleGC vm (reentryFromC vm label returnAddress primargs k)
 
-handleGC :: Mach ()
-handleGC =
-  do garbageRef <- getsMachEnv machGarbage
-     garbage    <- liftIO (atomicModifyIORef garbageRef (\xs -> ([], xs)))
-     traverse_ m__gc garbage
+handleGC :: VM -> NextStep -> IO NextStep
+handleGC vm next =
+  do let garbageRef = machGarbage (vmMachineEnv vm)
+     garbage    <- atomicModifyIORef garbageRef (\xs -> ([], xs))
+     let collect []       = return next
+         collect (v : vs) = unMach (m__gc v) vm $ \_ -> collect vs
+     collect garbage
 
 
 reentryFromC ::
+  VM ->
   String         {- ^ name of entry point      -} ->
   CObjInfo       {- ^ return address           -} ->
   [PrimArgument] {- ^ arguments at entry point -} ->
   Mach (Maybe PrimArgument) {- ^ code to run   -} ->
-  Mach ()
-reentryFromC label returnAddress primargs k =
+  NextStep
+reentryFromC vm label returnAddress primargs k =
   do let apiCall = ApiCall
            { apiCallMethod = label
            , apiCallReturn = returnAddress
            , apiCallArgs = primargs
            }
-     machApiCall apiCall k
+     machApiCall vm apiCall k
 
 
 
 -- | Clean up memory allocations during handling of C call, extract results
 -- from the stack, and return from the current call frame.
 returnFromC ::
+  VM ->
   Int  {- ^ Number of values returned from the C call -} ->
-  Mach a
-returnFromC n =
-  do eenv  <- getsExecEnv id
-
-     rs <- liftIO $
-       do sz <- SV.size (execStack eenv)
+  IO NextStep
+returnFromC vm n =
+  do let stack = execStack (vmCurExecEnv vm)
+     FunReturn <$>
+       do sz <- SV.size stack
           for [ sz - n .. sz - 1 ] $ \i ->
-            readIORef =<< SV.get (execStack eenv) i
-
-     machReturn rs
+             readIORef =<< SV.get stack i
 

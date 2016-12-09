@@ -632,8 +632,8 @@ exportCallStackFrameShort funs pc env mbnext =
   do ref <- newThing (ExportableStackFrame pc env)
      st  <- io (readIORef (execApiCall env))
      apiInfo <- case mbnext of
-                  Just (ApiStart api _)   -> exportApiCall api ApiCallStarting
-                  Just (ApiEnd api res _) -> exportApiCall api (ApiCallEnding res)
+                  Just (ApiStart api _) -> exportApiCall api ApiCallStarting
+                  Just (ApiEnd api res) -> exportApiCall api (ApiCallEnding res)
                   _ -> case st of
                          NoApiCall -> pure []
                          ApiCallAborted api  -> exportApiCall api ApiCallRunning

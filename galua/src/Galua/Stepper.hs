@@ -62,7 +62,7 @@ oneStep' c !vm instr = do
     Resume tRef k       -> performResume        c vm tRef k
     Yield k             -> performYield         c vm k
     ApiStart apiCall op -> performApiStart      c vm apiCall op
-    ApiEnd _ _ next     -> performApiEnd        c vm next
+    ApiEnd _ _          -> performApiEnd        c vm
     WaitForC            -> runningInC           c vm
     Interrupt n         -> running              c vm n
 
@@ -70,13 +70,12 @@ oneStep' c !vm instr = do
 performApiEnd ::
   Cont r ->
   VM                 {- ^ virtual machine state -} ->
-  (IO NextStep)      {- ^ next step             -} ->
   IO r
-performApiEnd c vm next =
+performApiEnd c vm =
   do let eenv = vmCurExecEnv vm
      writeIORef (execApiCall eenv) NoApiCall
      putMVar (machCServer (vmMachineEnv vm)) CResume
-     running c vm =<< next
+     running c vm WaitForC
 
 performApiStart :: Cont r -> VM -> ApiCall -> IO NextStep -> IO r
 performApiStart c vm apiCall next =
@@ -397,7 +396,7 @@ runAllSteps !vm i = oneStep' cont vm i
               , runningInC = \v1 ->
                  do let luaMVar = machLuaServer (vmMachineEnv vm)
                     cResult <- atomically (takeTMVar luaMVar)
-                    next <- runMach v1 (handleCCallState cResult)
+                    next <- handleCCallState v1 cResult
                     runAllSteps v1 next
               , finishedOk = \vs -> return (Right vs)
               , finishedWithError = \v -> return (Left v)
@@ -438,9 +437,9 @@ enterClosure c vs =
                         | funcIsVararg f = extraArgs
                         | otherwise      = []
 
-                  in (stack, varargs, machGoto 0, funcCode f)
+                  in (stack, varargs, \_ -> return (Goto 0), funcCode f)
 
-             CCode cfun -> (vs, [], execCFunction cfun, mempty)
+             CCode cfun -> (vs, [], \vm -> execCFunction vm cfun, mempty)
 
      stack    <- SV.new
      traverse_ (SV.push stack <=< newIORef) stackElts
@@ -459,4 +458,4 @@ enterClosure c vs =
                           , execInstructions  = code
                           }
 
-     newEnv `seq` return (newEnv, \vm -> runMach vm start)
+     newEnv `seq` return (newEnv, start)

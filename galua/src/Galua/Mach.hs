@@ -137,7 +137,7 @@ data NextStep
   | ThreadFail Value
 
   | ApiStart ApiCall (IO NextStep)
-  | ApiEnd ApiCall (Maybe PrimArgument) (IO NextStep)
+  | ApiEnd ApiCall (Maybe PrimArgument)
 
   | Interrupt NextStep
 
@@ -156,7 +156,7 @@ dumpNextStep next =
     Resume r _      -> "resume " ++ show (prettyRef r)
     Yield _         -> "yield"
     ApiStart api _  -> "apistart " ++ apiCallMethod api
-    ApiEnd api _ _  -> "apiend " ++ apiCallMethod api
+    ApiEnd api _    -> "apiend " ++ apiCallMethod api
     Interrupt {}    -> "interrupt"
 
 
@@ -424,39 +424,19 @@ machResume t = Mach $ \_ k -> return (Resume t k)
 machYield :: Mach ()
 machYield = Mach $ \_ k -> return (Yield (k ()))
 
-machApiCall :: ApiCall -> Mach (Maybe PrimArgument) -> Mach ()
-machApiCall apiCall impl =
-  Mach $ \vm k -> return $ ApiStart apiCall $ runMach vm $
-     do res <- impl
-        abort (ApiEnd apiCall res (k ()))
+machApiCall :: VM -> ApiCall -> Mach (Maybe PrimArgument) -> NextStep
+machApiCall vm apiCall impl =
+  ApiStart apiCall $ unMach impl vm $ \res ->
+                     return (ApiEnd apiCall res)
+
+
 
 machVM :: Mach VM
 machVM = Mach $ \e k -> k e
 
-machGoto :: Int -> Mach a
-machGoto !n = abort (Goto n)
 
 machRefLoc :: Mach RefLoc
-machRefLoc =
-  do tref <- machCurrentThread
-     vm   <- machVM
-     liftIO $
-       do pc    <- getThreadField stPC tref
-          let eenv = vmCurExecEnv vm
-          stack <- getThreadField stStack tref
-          return RefLoc { refLocCaller = getCaller stack
-                        , refLocSite   = mkLoc eenv pc
-                        }
-  where
-  getCaller st = case Stack.pop st of
-                   Just (ErrorFrame, more)       -> getCaller more
-                   Just (CallFrame pc env _ _,_) -> mkLoc env pc
-                   Nothing -> MachSetup -- XXX: or can this happen?
-
-  mkLoc env pc = case funValueName (execFunction env) of
-                   CFID nm    -> InC nm
-                   LuaFID fid -> InLua fid pc
-
+machRefLoc = liftIO . machRefLoc' =<< machVM
 
 machRefLoc' :: VM -> IO RefLoc
 machRefLoc' vm =
@@ -499,8 +479,6 @@ machCallPrim p vs = machReturn =<< p vs
 machWaitForC :: Mach a
 machWaitForC = abort WaitForC
 
-machTailcall :: Reference Closure -> [Value] -> Mach a
-machTailcall f vs = abort (FunTailcall f vs)
 
 
 getsMachEnv :: (MachineEnv -> a) -> Mach a
@@ -558,8 +536,6 @@ newCPtr initialToken =
        (fail "lua_State allocation failed")
      newForeignPtr freeLuaState luastate
 
-runMach :: VM -> Mach Void -> IO NextStep
-runMach m (Mach f) = f m absurd
 
 setTypeMetatable :: ValueType -> Maybe (Reference Table) -> Mach ()
 setTypeMetatable typ mb =
@@ -594,27 +570,22 @@ machNewTable' vm aSz hSz =
 
 
 
-
 luaError :: String -> Mach b
-luaError str =
-  do s <- liftIO (fromByteString (packUtf8 str))
-     machThrow (String s)
+luaError str = abort =<< liftIO (luaError' str)
 
 machNewClosure ::
   FunctionValue -> IOVector (IORef Value) -> Mach (Reference Closure)
 machNewClosure fun upvals =
-  do aref <- machAllocRef
-     loc  <- machRefLoc
-     liftIO (newClosure aref loc fun upvals)
+  do vm <- machVM
+     liftIO (machNewClosure' vm fun upvals)
 
 machNewTable ::
   Int {- ^ array size -} ->
   Int {- ^ hashtable size -} ->
   Mach (Reference Table)
 machNewTable aSz hSz =
-  do aref <- machAllocRef
-     loc <- machRefLoc
-     liftIO (newTable aref loc aSz hSz)
+  do vm <- machVM
+     liftIO (machNewTable' vm aSz hSz)
 
 machNewUserData :: ForeignPtr () -> Int -> Mach (Reference UserData)
 machNewUserData fp n =
