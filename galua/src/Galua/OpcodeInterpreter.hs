@@ -71,22 +71,23 @@ execute !vm !pc =
          tgt =: m     = do a <- m
                            set eenv tgt a
                            advance
+         storeIn tgt v  = tgt =: return v
+         tabs = machMetatablesRef (vmMachineEnv vm)
 
          binOp f tgt src1 src2 =
            do x1 <- get eenv src1
               x2 <- get eenv src2
-              unMach (f x1 x2) vm (\y -> tgt =: return y)
+              f tabs (storeIn tgt) x1 x2
 
          unOp f tgt src1 =
            do x1 <- get eenv src1
-              unMach (f x1) vm (\y -> tgt =: return y)
+              f tabs (storeIn tgt) x1
 
          relOp f invert op1 op2 =
            do x1  <- get eenv op1
               x2  <- get eenv op2
               -- if ((RK(B) ? RK(C)) ~= A) then pc++
-              unMach (f x1 x2) vm $ \res ->
-                jump (if res /= invert then 1 else 0)
+              f tabs (\res -> jump (if res /= invert then 1 else 0)) x1 x2
 
 
      case instr of
@@ -116,13 +117,13 @@ execute !vm !pc =
          do t <- get eenv tgt
             k <- get eenv key
             v <- get eenv src
-            unMach (m__newindex t k v) vm $ \_ -> advance
+            m__newindex tabs advance t k v
 
        OP_SETTABLE tgt key src ->
          do t <- get eenv tgt
             k <- get eenv key
             v <- get eenv src
-            unMach (m__newindex t k v) vm $ \_ -> advance
+            m__newindex tabs advance t k v
 
        OP_NEWTABLE tgt arraySize hashSize ->
         tgt =: (Table <$> machNewTable' vm arraySize hashSize)
@@ -130,10 +131,11 @@ execute !vm !pc =
        OP_SELF tgt src key ->
          do t <- get eenv src
             k <- get eenv key
-            unMach (m__index t k) vm $ \v ->
-              do set eenv tgt v
-                 set eenv (succ tgt) t
-                 advance
+            let after v =  do set eenv tgt v
+                              set eenv (succ tgt) t
+                              advance
+            m__index tabs after t k
+
 
        OP_ADD  tgt op1 op2 -> binOp m__add  tgt op1 op2
        OP_SUB  tgt op1 op2 -> binOp m__sub  tgt op1 op2
@@ -156,7 +158,7 @@ execute !vm !pc =
 
        OP_CONCAT tgt start end ->
          do xs  <- traverse (get eenv) [start .. end]
-            unMach (m__concat xs) vm $ \v -> tgt =: return v
+            m__concat tabs (storeIn tgt) xs
 
        OP_JMP mbCloseReg jmp ->
          do traverse_ (closeStack eenv) mbCloseReg
@@ -180,15 +182,15 @@ execute !vm !pc =
        OP_CALL a b c ->
          do u      <- get eenv a
             args   <- getCallArguments eenv (succ a) b
-            unMach (m__call u args) vm $ \result ->
-              do setCallResults eenv a c result
-                 advance
+            let after result = do setCallResults eenv a c result
+                                  advance
+            m__call tabs after u args
 
        OP_TAILCALL a b _c ->
          do u       <- get eenv a
             args    <- getCallArguments eenv (succ a) b
-            unMach (resolveFunction u args) vm $ \(f,as) ->
-                                                  return (FunTailcall f as)
+            let after (f,as) = return (FunTailcall f as)
+            resolveFunction tabs after u args
 
        OP_RETURN a c -> FunReturn <$> getCallArguments eenv a c
 
@@ -226,10 +228,11 @@ execute !vm !pc =
          do f  <- get eenv a
             a1 <- get eenv (plusReg a 1)
             a2 <- get eenv (plusReg a 2)
-            unMach (m__call f [a1,a2]) vm $ \result ->
-              do let resultRegs = regRange (plusReg a 3) c
-                 zipWithM_ (set eenv) resultRegs (result ++ repeat Nil)
-                 advance
+            let after result =
+                 do let resultRegs = regRange (plusReg a 3) c
+                    zipWithM_ (set eenv) resultRegs (result ++ repeat Nil)
+                    advance
+            m__call tabs after f [a1,a2]
 
        OP_TFORLOOP a sBx ->
          do v <- get eenv (succ a)

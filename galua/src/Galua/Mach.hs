@@ -537,14 +537,6 @@ newCPtr initialToken =
      newForeignPtr freeLuaState luastate
 
 
-setTypeMetatable :: ValueType -> Maybe (Reference Table) -> Mach ()
-setTypeMetatable typ mb =
-  do metatableRef <- getsMachEnv machMetatablesRef
-     liftIO $ modifyIORef' metatableRef $
-       case mb of
-         Just metatable -> Map.insert typ metatable
-         Nothing        -> Map.delete typ
-
 luaError' :: String -> IO NextStep
 luaError' str =
   do s <- fromByteString (packUtf8 str)

@@ -1,4 +1,5 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving, OverloadedStrings #-}
+{-# LANGUAGE FlexibleInstances, TypeSynonymInstances #-}
 
 module Galua.Overloading
   ( -- * Overloaded methods
@@ -35,13 +36,12 @@ module Galua.Overloading
   , get_m__index
   , valueMetatable
   , setMetatable
+
+  , mach1, mach2, mach3, machD1, machD2
   ) where
 
-import           Control.Monad.IO.Class(MonadIO(liftIO))
-import           Control.Monad.Trans.Reader(ReaderT(..), ask)
 import qualified Data.ByteString as B
-import           Data.IORef (readIORef, writeIORef)
-import           Data.Map (Map)
+import           Data.IORef (IORef,readIORef, writeIORef, modifyIORef')
 import qualified Data.Map as Map
 import           Data.Bits((.&.),(.|.),xor,complement)
 
@@ -52,65 +52,104 @@ import           Galua.LuaString
 import           Galua.Util.Table (tableGetMeta)
 
 
+type Cont a = a -> IO NextStep
+type Meth1  = MetaTabRef -> Cont Value -> Value -> IO NextStep
+type Meth2  = MetaTabRef -> Cont Value -> Value -> Value -> IO NextStep
+type Rel    = MetaTabRef -> Cont Bool  -> Value -> Value -> IO NextStep
+
+{-# INLINE mach1 #-}
+mach1 :: (MetaTabRef -> Cont b -> a -> IO NextStep) ->
+         a -> Mach b
+mach1 f x =
+  Mach $ \vm cont -> f (machMetatablesRef (vmMachineEnv vm)) cont x
+
+{-# INLINE mach2 #-}
+mach2 :: (MetaTabRef -> Cont c -> a -> b -> IO NextStep) ->
+         a -> b -> Mach c
+mach2 f x y =
+  Mach $ \vm cont -> f (machMetatablesRef (vmMachineEnv vm)) cont x y
+
+
+{-# INLINE mach3 #-}
+mach3 :: (MetaTabRef -> IO NextStep -> a -> b -> c -> IO NextStep) ->
+         a -> b -> c -> Mach ()
+mach3 f x y z =
+  Mach $ \vm cont -> f (machMetatablesRef (vmMachineEnv vm)) (cont ()) x y z
+
+{-# INLINE machD1 #-}
+machD1 :: (IORef TypeMetatables -> a -> IO b) -> a -> Mach b
+machD1 f x =
+  Mach $ \vm cont -> cont =<< f (machMetatablesRef (vmMachineEnv vm)) x
+
+{-# INLINE machD2 #-}
+machD2 :: (IORef TypeMetatables -> a -> b -> IO c) -> a -> b -> Mach c
+machD2 f x y =
+  Mach $ \vm cont -> cont =<< f (machMetatablesRef (vmMachineEnv vm)) x y
+
 
 ------------------------------------------------------------------------
 -- Metamethod resolution
 ------------------------------------------------------------------------
+class Metas t where
+  metas :: t -> IO TypeMetatables
 
-class MonadIO m => MetatableMonad m where
-  getTypeMetatables :: m (Map ValueType (Reference Table))
+instance Metas TypeMetatables where
+  metas = return
+  {-# INLINE metas #-}
 
-instance MetatableMonad Mach where
-  getTypeMetatables = do ref <- getsMachEnv machMetatablesRef
-                         liftIO (readIORef ref)
 
-instance MonadIO m => MetatableMonad (WithMetatables m) where
-  getTypeMetatables = WithMetatables ask
+type MetaTabRef = IORef TypeMetatables
 
-newtype WithMetatables m a = WithMetatables
-  (ReaderT (Map ValueType (Reference Table)) m a)
-  deriving (Functor, Applicative, Monad, MonadIO)
+instance Metas MetaTabRef where
+  metas = readIORef
+  {-# INLINE metas #-}
 
-withMetatables ::
-  Map ValueType (Reference Table) ->
-  WithMetatables m a -> m a
-withMetatables x (WithMetatables (ReaderT f)) = f x
 
-getTypeMetatable ::
-  MetatableMonad m =>
-  ValueType -> m (Maybe (Reference Table))
-getTypeMetatable typ =
-  do metatables <- getTypeMetatables
-     return (Map.lookup typ metatables)
+-- | Get the metatebla for a particular type, using the given source.
+getTypeMetatable :: Metas t => t -> ValueType -> IO (Maybe (Reference Table))
+getTypeMetatable tabs typ =
+  do metatables <- metas tabs
+     return $! Map.lookup typ metatables
 
 
 -- | Look up the metatable for a value
-{-# SPECIALIZE valueMetatable :: Value -> Mach (Maybe (Reference Table)) #-}
-valueMetatable :: MetatableMonad m => Value -> m (Maybe (Reference Table))
-valueMetatable v =
+valueMetatable :: Metas t => t -> Value -> IO (Maybe (Reference Table))
+valueMetatable tabs v =
   case v of
-    Table    t -> liftIO (getTableMeta t)
-    UserData u -> liftIO (readIORef (userDataMeta (referenceVal u)))
-    _          -> getTypeMetatable (valueType v)
+    Table    t -> getTableMeta t
+    UserData u -> readIORef (userDataMeta (referenceVal u))
+    _          -> getTypeMetatable tabs (valueType v)
+
+setTypeMetatable ::
+  IORef TypeMetatables -> ValueType -> Maybe (Reference Table) -> IO ()
+setTypeMetatable tabs typ mb =
+  modifyIORef' tabs $
+    case mb of
+      Just metatable -> Map.insert typ metatable
+      Nothing        -> Map.delete typ
 
 -- | Set the metatable for a value. If the value is not a userdata
 -- or table then the metatable is set for the whole type.
-setMetatable :: Maybe (Reference Table) -> Value -> Mach ()
-setMetatable mt v =
+setMetatable ::
+  IORef TypeMetatables -> Maybe (Reference Table) -> Value -> IO ()
+setMetatable tabs mt v =
   case v of
     Table    tref -> setTableMeta tref mt
-    UserData uref -> liftIO $ writeIORef (userDataMeta (referenceVal uref)) mt
-    _             -> setTypeMetatable (valueType v) mt
+    UserData uref -> writeIORef (userDataMeta (referenceVal uref)) mt
+    _             -> setTypeMetatable tabs (valueType v) mt
+
+
 
 -- | Look up the metamethod for a value
 valueMetamethod ::
-  MetatableMonad m =>
+  Metas t =>
+  t ->
   Value ->
   MetaMethodName {- ^ metamethod name -} ->
-  m Value
-valueMetamethod v (MMN event) =
-  do mbMetatable <- valueMetatable v
-     liftIO $ case mbMetatable of
+  IO Value
+valueMetamethod tabs v (MMN event) =
+  do mbMetatable <- valueMetatable tabs v
+     case mbMetatable of
        Nothing        -> return Nil
        Just metatable ->
          tableGetMeta (referenceVal metatable) event allMetaMethods
@@ -118,27 +157,29 @@ valueMetamethod v (MMN event) =
 -- | Look up a metamethod on the first value if it is set falling back to
 -- the second value.
 valueMetamethod2 ::
-  MetatableMonad m =>
+  IORef TypeMetatables ->
   Value ->
   Value ->
   MetaMethodName {- ^ metamethod name -} ->
-  m Value
-valueMetamethod2 x y event =
-  do m1 <- valueMetamethod x event
+  IO Value
+valueMetamethod2 tabs x y event =
+  do m1 <- valueMetamethod tabs x event
      case m1 of
-       Nil -> valueMetamethod y event
+       Nil -> valueMetamethod tabs y event
        _   -> return m1
+
+
 
 --------------------------------------------------------------------------------
 -- GC
 
 
-m__gc :: Value -> Mach ()
-m__gc val =
-  do metamethod <- valueMetamethod val str__gc
+m__gc :: MetaTabRef -> IO NextStep -> Value -> IO NextStep
+m__gc tabs next val =
+  do metamethod <- valueMetamethod tabs val str__gc
      case metamethod of
-        Nil -> return ()
-        _   -> () <$ m__call metamethod [val]
+        Nil -> next
+        _   -> m__call tabs (const next) metamethod [val]
 
 
 
@@ -150,16 +191,18 @@ m__gc val =
 -- | Figure out what function we are actually calling (and with what arguments)
 -- when calling a value.
 resolveFunction ::
+  MetaTabRef ->
+  Cont (Reference Closure, [Value]) {- ^ actual function, and arugments -} ->
   Value   {- ^ function-like value -} ->
   [Value] {- ^ arguments -} ->
-  Mach (Reference Closure, [Value]) -- ^ actual function, and arugments
-resolveFunction (Closure c) args = return (c, args)
-resolveFunction x args =
-  do metamethod <- valueMetamethod x str__call
+  IO NextStep
+resolveFunction _ next (Closure c) args = next (c, args)
+resolveFunction tabs next x args =
+  do metamethod <- valueMetamethod tabs x str__call
      case metamethod of
-       Nil -> luaError ("attempt to call a " ++
+       Nil -> luaError' ("attempt to call a " ++
                                   prettyValueType (valueType x) ++ " value")
-       _   -> resolveFunction metamethod (x:args)
+       _   -> resolveFunction tabs next metamethod (x:args)
 
 
 
@@ -167,20 +210,23 @@ resolveFunction x args =
 -- This is more general than 'runClosure' because it can use
 -- metamethods to resolve the call on non-closures.
 m__call ::
+  MetaTabRef ->
+  Cont [Value] ->
   Value     {- ^ function -} ->
   [Value]   {- ^ arguments -} ->
-  Mach [Value] {- ^ results -}
-m__call x args =
-  do (f,newArgs) <- resolveFunction x args
-     machCall f newArgs
+  IO NextStep
+m__call tabs cont x args = resolveFunction tabs after x args
+  where
+  after (f,vs) = return (FunCall f vs Nothing cont)
+{-# INLINE m__call #-}
 
 
 --------------------------------------------------------------------------------
 -- Table overloading
 
-badIndex :: Value -> Mach a
+badIndex :: Value -> IO NextStep
 badIndex x =
-  luaError ("attempt to index a " ++ prettyValueType (valueType x) ++ " value")
+  luaError' ("attempt to index a " ++ prettyValueType (valueType x) ++ " value")
 
 
 
@@ -191,32 +237,34 @@ badIndex x =
 -- table[key]=value
 -- @
 m__newindex ::
+  MetaTabRef ->
+  IO NextStep ->
   Value {- ^ table -} ->
   Value {- ^ key   -} ->
   Value {- ^ value -} ->
-  Mach ()
-m__newindex t k v =
+  IO NextStep
+m__newindex tabs cont t k v =
   case t of
     Table table ->
-        do let next = keyCheck k >> setTableRaw table k v
+        do let next = keyCheck k (setTableRaw table k v >> cont)
            oldv <- getTableRaw table k
            case oldv of
              Nil -> metaCase next
-             _ -> next
+             _   -> next
 
     _ -> metaCase (badIndex t)
   where
   metaCase onFailure =
-    do metamethod <- valueMetamethod t str__newindex
+    do metamethod <- valueMetamethod tabs t str__newindex
        case metamethod of
-         Closure c -> () <$ machCall c [t,k,v]
+         Closure c -> return (FunCall c [t,k,v] Nothing (const cont))
          Nil       -> onFailure
-         _         -> m__newindex metamethod k v
+         _         -> m__newindex tabs cont metamethod k v
 
-keyCheck :: Value -> Mach ()
-keyCheck (Number (Double nan)) | isNaN nan = luaError "table index is NaN"
-keyCheck Nil = luaError "table index is nil"
-keyCheck _ = return ()
+keyCheck :: Value -> IO NextStep -> IO NextStep
+keyCheck (Number (Double nan)) _ | isNaN nan = luaError' "table index is NaN"
+keyCheck Nil _ = luaError' "table index is nil"
+keyCheck _ k = k
 
 
 -- | Index a value by another value. This operation can be overloaded
@@ -225,259 +273,246 @@ keyCheck _ = return ()
 -- @
 -- table[key]
 -- @
-m__index :: Value {- ^ table -} -> Value {- ^ key -} -> Mach Value
-m__index m key =
+m__index :: MetaTabRef -> Cont Value ->
+              Value {- ^ table -} -> Value {- ^ key -} -> IO NextStep
+m__index tabs cont m key =
   case m of
     Table table ->
          do v <- getTableRaw table key
             case v of
-              Nil -> metaCase (return Nil)
-              _   -> return v
+              Nil -> metaCase (cont Nil)
+              _   -> cont v
 
     _ -> metaCase (badIndex m)
   where
   metaCase onFailure =
-    do metamethod <- valueMetamethod m str__index
+    do metamethod <- valueMetamethod tabs m str__index
        case metamethod of
-         Closure c -> trimResult1 <$> machCall c [m,key]
+         Closure c -> return (FunCall c [m,key] Nothing (cont . trimResult1))
          Nil       -> onFailure
-         _         -> m__index metamethod key
+         _         -> m__index tabs cont metamethod key
 
 
 
 -- | The the indexing meta-method.  This is a separate function,
 -- because when we resolve names, we resolve the index lookup slightly
 -- differently (no function calls)
-get_m__index :: Map ValueType (Reference Table) -> Value -> IO Value
-get_m__index tabs m = withMetatables tabs (valueMetamethod m str__index)
+get_m__index :: TypeMetatables -> Value -> IO Value
+get_m__index tabs m = valueMetamethod tabs m str__index
 
 
 
 --------------------------------------------------------------------------------
 -- Relational overloading
 
-badCompare :: Value -> Value -> Mach a
+badCompare :: Value -> Value -> IO NextStep
 badCompare x y =
   let p = prettyValueType . valueType in
-  luaError ("attempt to compare " ++ p x ++ " with " ++ p y)
+  luaError' ("attempt to compare " ++ p x ++ " with " ++ p y)
 
 
 -- | Return 'True' when two values are "equal". This operation
 -- can be overloaded using the `__eq` metamethod.
-m__eq :: Value -> Value -> Mach Bool
-m__eq x y =
+m__eq :: Rel
+m__eq tabs cont x y =
   case (x, y) of
-    _ | x == y               -> return True
+    _ | x == y               -> cont True
     (Table   {}, Table   {}) -> metaEq
     (UserData{}, UserData{}) -> metaEq
-    _                        -> return False
+    _                        -> cont False
 
   where
   metaEq =
-    do metamethod <- valueMetamethod2 x y str__eq
+    do metamethod <- valueMetamethod2 tabs x y str__eq
        case metamethod of
-         Nil -> return False
-         _   ->
-            do rs <- m__call metamethod [x,y]
-               case rs of
-                 [] -> return False
-                 r:_ -> return (valueBool r)
+         Nil -> cont False
+         _   -> m__call tabs after metamethod [x,y]
+           where after []    = cont False
+                 after (r:_) = cont $! valueBool r
 
 -- | Return 'True' the first value is "less-than" than the second.
 -- This operation can be overloaded using the `__lt` metamethod.
-m__lt :: Value -> Value -> Mach Bool
-m__lt (Number x) (Number y) = return (x < y)
-m__lt (String x) (String y) = return (x < y)
-m__lt x y =
-  do metamethod <- valueMetamethod2 x y str__lt
+m__lt :: Rel
+m__lt _ cont (Number x) (Number y) = cont $! x < y
+m__lt _ cont (String x) (String y) = cont $! x < y
+m__lt tabs cont x y =
+  do metamethod <- valueMetamethod2 tabs x y str__lt
      case metamethod of
        Nil -> badCompare x y
-       _   ->
-         do rs <- m__call metamethod [x,y]
-            case rs of
-              [] -> return False
-              r:_ -> return (valueBool r)
+       _   -> m__call tabs after metamethod [x,y]
+          where after [] = cont False
+                after (r : _) = cont $! valueBool r
 
 -- | Return 'True' the first value is "less-then-or-equal-to" than the second.
 -- This operation can be overloaded using the `__le` metamethod.
-m__le :: Value -> Value -> Mach Bool
-m__le (Number x) (Number y) = return (x <= y)
-m__le (String x) (String y) = return (x <= y)
-m__le x y =
-  do metamethod <- valueMetamethod2 x y str__le
+m__le :: Rel
+m__le _ cont (Number x) (Number y) = cont $! x <= y
+m__le _ cont (String x) (String y) = cont $! x <= y
+m__le tabs cont x y =
+  do metamethod <- valueMetamethod2 tabs x y str__le
      case metamethod of
-       Nil -> not <$> m__lt y x
-       _   ->
-         do rs <- m__call metamethod [x,y]
-            case rs of
-              [] -> return False
-              r:_ -> return (valueBool r)
+       Nil -> m__lt tabs (cont . not) y x
+       _   -> m__call tabs after metamethod [x,y]
+        where after []      = cont False
+              after (r : _) = cont $! valueBool r
 
 
 
 --------------------------------------------------------------------------------
 -- Arithmetic/Logic operators
 
-badInt :: Mach a
-badInt = luaError "number has no integer representation"
+badInt :: IO NextStep
+badInt = luaError' "number has no integer representation"
 
-badArithmetic :: Value -> Mach a
-badArithmetic x = luaError ("attempt to perform arithmetic on a " ++
+badArithmetic :: Value -> IO NextStep
+badArithmetic x = luaError' ("attempt to perform arithmetic on a " ++
                                     prettyValueType (valueType x) ++ " value")
 
 
-valueArith1 :: MetaMethodName -> (Number -> Number) -> Value -> Mach Value
-valueArith1 event f x =
+{-# INLINE valueArith1 #-}
+valueArith1 ::
+  MetaMethodName -> (Number -> Number) ->
+  MetaTabRef -> Cont Value ->
+  Value -> IO NextStep
+valueArith1 event f = \tabs cont x ->
   case valueNumber x of
-    Just n  -> return (Number (f n))
-    Nothing -> do metamethod <- valueMetamethod x event
+    Just n  -> cont $! Number (f n)
+    Nothing -> do metamethod <- valueMetamethod tabs x event
                   case metamethod of
                     Nil -> badArithmetic x
-                    _   -> trimResult1 <$> m__call metamethod [x]
+                    _   -> m__call tabs (cont . trimResult1) metamethod [x]
 
 
-valueInt1 :: MetaMethodName -> (Int -> Int) -> Value -> Mach Value
-valueInt1 event f x1 =
+{-# INLINE valueInt1 #-}
+valueInt1 ::
+  MetaMethodName -> (Int -> Int) ->
+  MetaTabRef -> Cont Value ->
+  Value -> IO NextStep
+valueInt1 event f = \tabs cont x1 ->
   case valueInt x1 of
-    Just i  -> return (Number (Int (f i)))
-    Nothing -> do metamethod <- valueMetamethod x1 event
+    Just i  -> cont $! Number (Int (f i))
+    Nothing -> do metamethod <- valueMetamethod tabs x1 event
                   case metamethod of
                      Nil -> badInt
-                     _   -> trimResult1 <$> m__call metamethod [x1]
+                     _   -> m__call tabs (cont . trimResult1) metamethod [x1]
 
 
 {-# INLINE valueArith2 #-}
 valueArith2 ::
-  MetaMethodName -> (Number -> Number -> Number) -> Value -> Value -> Mach Value
-valueArith2 event f x y =
-  case valueNumber x of
-    Nothing -> overload x
-    Just l ->
-      case valueNumber y of
-        Nothing -> overload y
-        Just r -> return $! Number (f l r)
-
-  where
-  overload bad =
-    do metamethod <- valueMetamethod2 x y event
-       case metamethod of
-         Nil -> badArithmetic bad
-         _   -> trimResult1 <$> m__call metamethod [x,y]
-
+  MetaMethodName -> (Number -> Number -> Number) ->
+  MetaTabRef -> Cont Value ->
+  Value -> Value -> IO NextStep
+valueArith2 event f = \tabs cont x y ->
+  let overload bad =
+        do metamethod <- valueMetamethod2 tabs x y event
+           case metamethod of
+             Nil -> badArithmetic bad
+             _   -> m__call tabs (cont . trimResult1) metamethod [x,y]
+  in case valueNumber x of
+       Nothing -> overload x
+       Just l ->
+         case valueNumber y of
+           Nothing -> overload y
+           Just r  -> cont $! Number (f l r)
 
 {-# INLINE valueInt2 #-}
 valueInt2 ::
-  MetaMethodName -> (Int -> Int -> Int) -> Value -> Value -> Mach Value
-valueInt2 event f x1 x2 =
-  case valueInt x1 of
-    Nothing -> overload
-    Just l ->
-      case valueInt x2 of
-        Just r -> return $! Number (Int (f l r))
-        Nothing -> overload
-  where
-  overload =
-    do metamethod <- valueMetamethod2 x1 x2 event
-       case metamethod of
-         Nil -> badInt
-         _   -> trimResult1 <$> m__call metamethod [x1,x2]
+  MetaMethodName -> (Int -> Int -> Int) ->
+  MetaTabRef -> Cont Value ->
+  Value -> Value -> IO NextStep
+valueInt2 event f = \tabs cont x1 x2 ->
+  let overload =
+        do metamethod <- valueMetamethod2 tabs x1 x2 event
+           case metamethod of
+             Nil -> badInt
+             _   -> m__call tabs (cont . trimResult1) metamethod [x1,x2]
+
+  in case valueInt x1 of
+       Nothing -> overload
+       Just l ->
+         case valueInt x2 of
+           Just r  -> cont $! Number (Int (f l r))
+           Nothing -> overload
 
 
 
+m__add :: Meth2
+m__add = valueArith2 str__add (+)
 
-m__add :: Value -> Value -> Mach Value
-m__add x y = valueArith2 str__add (+) x y
+m__sub :: Meth2
+m__sub = valueArith2 str__sub (-)
 
-m__sub :: Value -> Value -> Mach Value
-m__sub x y = valueArith2 str__sub (-) x y
+m__mul :: Meth2
+m__mul = valueArith2 str__mul (*)
 
-m__mul :: Value -> Value -> Mach Value
-m__mul x y = valueArith2 str__mul (*) x y
+m__div :: Meth2
+m__div = valueArith2 str__div numberDiv
 
-m__div :: Value -> Value -> Mach Value
-m__div x y = valueArith2 str__div numberDiv x y
-
-m__idiv :: Value -> Value -> Mach Value
-m__idiv x y =
+m__idiv :: Meth2
+m__idiv tabs cont x y =
   case (x,y) of
-    (Number (Int _), Number (Int 0)) -> luaError "atempt to divide by zero"
-    _ -> valueArith2 str__idiv numberIDiv x y
+    (Number (Int _), Number (Int 0)) -> luaError' "atempt to divide by zero"
+    _ -> valueArith2 str__idiv numberIDiv tabs cont x y
 
-m__mod :: Value -> Value -> Mach Value
-m__mod x y =
+m__mod :: Meth2
+m__mod tabs cont x y =
   case (x,y) of
-    (Number (Int _), Number (Int 0)) -> luaError "atempt to perform 'n%0'"
-    _ -> valueArith2 str__mod numberMod x y
+    (Number (Int _), Number (Int 0)) -> luaError' "atempt to perform 'n%0'"
+    _ -> valueArith2 str__mod numberMod tabs cont x y
 
-m__pow :: Value -> Value -> Mach Value
-m__pow x y = valueArith2 str__pow numberPow x y
+m__pow :: Meth2
+m__pow = valueArith2 str__pow numberPow
 
-m__unm :: Value -> Mach Value
-m__unm x = valueArith1 str__unm negate x
+m__unm :: Meth1
+m__unm = valueArith1 str__unm negate
 
-m__band :: Value -> Value -> Mach Value
-m__band x y = valueInt2 str__band (.&.) x y
+m__band :: Meth2
+m__band = valueInt2 str__band (.&.)
 
-m__bor :: Value -> Value -> Mach Value
-m__bor x y = valueInt2 str__bor (.|.) x y
+m__bor :: Meth2
+m__bor = valueInt2 str__bor (.|.)
 
-m__bxor :: Value -> Value -> Mach Value
-m__bxor x y = valueInt2 str__bxor xor x y
+m__bxor :: Meth2
+m__bxor = valueInt2 str__bxor xor
 
-m__shl :: Value -> Value -> Mach Value
-m__shl x y = valueInt2 str__shl wordshiftL x y
+m__shl :: Meth2
+m__shl = valueInt2 str__shl wordshiftL
 
-m__shr :: Value -> Value -> Mach Value
-m__shr x y = valueInt2 str__shr wordshiftR x y
+m__shr :: Meth2
+m__shr = valueInt2 str__shr wordshiftR
 
-m__bnot :: Value -> Mach Value
-m__bnot x = valueInt1 str__bnot complement x
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+m__bnot :: Meth1
+m__bnot = valueInt1 str__bnot complement
 
 
 
 --------------------------------------------------------------------------------
 -- Length of tables and strings
 
-badLength :: Value -> Mach a
-badLength x = luaError ("attempt to get length of a " ++
+badLength :: Value -> IO NextStep
+badLength x = luaError' ("attempt to get length of a " ++
                                     prettyValueType (valueType x) ++ " value")
 
-m__len :: Value -> Mach Value
-m__len v =
+m__len :: Meth1
+m__len tabs cont v =
   case v of
-    String x -> return (Number (fromIntegral (B.length (toByteString x))))
-    _ -> do metamethod <- valueMetamethod v str__len
+    String x -> cont $! Number (fromIntegral (B.length (toByteString x)))
+    _ -> do metamethod <- valueMetamethod tabs v str__len
             case (metamethod,v) of
-              (Nil,Table t) -> Number . Int <$> liftIO (tableLen t)
+              (Nil,Table t) -> cont . Number . Int =<< tableLen t
               (Nil,_      ) -> badLength v
-              _             -> trimResult1 <$> m__call metamethod [v]
+              _             -> m__call tabs (cont . trimResult1) metamethod [v]
 
 
 
-m__concat :: [Value] -> Mach Value
-m__concat = concat2 . reverse
+m__concat :: MetaTabRef -> Cont Value -> [Value] -> IO NextStep
+m__concat tabs cont = concat2 tabs cont . reverse
 
 -- Take the arguments in REVERSE order
-concat2 :: [Value] -> Mach Value
-concat2 [] = liftIO (String <$> fromByteString "")
-concat2 [x] = return x
-concat2 (x:y:z) =
+concat2 :: MetaTabRef -> Cont Value -> [Value] -> IO NextStep
+concat2 _ cont [] = cont . String =<< fromByteString ""
+concat2 _ cont [x] = cont x
+concat2 tabs cont (x:y:z) =
   case (valueString x, valueString y) of
 
     -- If there are at least two convertable strings on the head
@@ -485,23 +520,23 @@ concat2 (x:y:z) =
     -- and concatenate them into one string.
     (Just x', Just y') ->
          let (strs,z') = takeMaybe valueString z
-         in do s <- liftIO $ fromByteString $ B.concat $ reverse $ x':y':strs
-               concat2 (String s:z')
+         in do s <- fromByteString $ B.concat $ reverse $ x':y':strs
+               concat2 tabs cont (String s:z')
 
     -- Otherwise we use the __concat metamethod to collapse the
     -- top two arguments of the stack and try again.
-    _ -> do metamethod <- valueMetamethod2 y x str__concat
+    _ -> do metamethod <- valueMetamethod2 tabs y x str__concat
             case metamethod of
               Nil -> badConcat y x
-              _   ->
-                do r <- trimResult1 <$> m__call metamethod [y,x]
-                   concat2 (r:z)            -- the list of arguments is reverse
-                                            -- so we pass y before x here
+              _   -> m__call tabs after metamethod [y,x]
+                where after rs = concat2 tabs cont (trimResult1 rs : z)
+                      -- the list of arguments is reverse
+                      -- so we pass y before x here
 
-badConcat :: Value -> Value -> Mach a
+badConcat :: Value -> Value -> IO NextStep
 badConcat x y =
-   luaError ("attempt to concatenate a " ++ prettyValueType (valueType x) ++
-             " with a "                  ++ prettyValueType (valueType y))
+   luaError' ("attempt to concatenate a " ++ prettyValueType (valueType x) ++
+              " with a "                  ++ prettyValueType (valueType y))
 
 -- | Take elements from the front of a list as long
 -- as the applied function continues to produce 'Just' values.

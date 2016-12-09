@@ -425,7 +425,7 @@ lua_settable_hs l r ix =
   do t <- valueArgument (fromIntegral ix) args
      kv <- liftIO (popN args 2)
      case kv of
-       [k,v] -> Nothing <$ m__newindex t k v
+       [k,v] -> Nothing <$ mach3 m__newindex t k v
        _ -> luaError "lua_settable: bad arguments"
 
 --------------------------------------------------------------------------------
@@ -613,7 +613,7 @@ lua_getfield_hs l r ix k out =
   reentry "lua_getfield" [cArg ix, cstringArg0 k] l r $ \args ->
   do t <- valueArgument (fromIntegral ix) args
      key <- liftIO (peekLuaString0 k)
-     v <- m__index t (String key)
+     v <- mach2 m__index t (String key)
      liftIO $
        do push args v
           result out (lua_type_int v)
@@ -628,7 +628,7 @@ lua_setfield_hs l r ix k =
   do t <- valueArgument (fromIntegral ix) args
      v <- pop args
      key <- liftIO (peekLuaString0 k)
-     m__newindex t (String key) v
+     mach3 m__newindex t (String key) v
      return Nothing
 
 foreign export ccall lua_createtable_hs :: EntryPoint (CInt -> CInt -> IO CInt)
@@ -685,7 +685,7 @@ lua_geti_hs :: EntryPoint (CInt -> Lua_Integer -> Ptr CInt -> IO CInt)
 lua_geti_hs l r ix n out =
   reentry "lua_geti" [cArg ix, cArg n] l r $ \args ->
   do t <- valueArgument (fromIntegral ix) args
-     v <- m__index t (Number (fromIntegral n))
+     v <- mach2 m__index t (Number (fromIntegral n))
      liftIO $
        do push args v
           result out (lua_type_int v)
@@ -698,7 +698,7 @@ lua_gettable_hs l r ix out =
   reentry "lua_gettable" [cArg ix] l r $ \args ->
   do t <- valueArgument (fromIntegral ix) args
      k <- pop args
-     v <- m__index t k
+     v <- mach2 m__index t k
      liftIO $
        do push args v
           result out (lua_type_int v)
@@ -725,7 +725,7 @@ lua_seti_hs l r ix n =
   reentry "lua_seti" [cArg ix, cArg n] l r $ \args ->
   do t <- valueArgument (fromIntegral ix) args
      v <- pop args
-     m__newindex t (Number (fromIntegral n)) v
+     mach3 m__newindex t (Number (fromIntegral n)) v
      return Nothing
 
 foreign export ccall lua_rawseti_hs
@@ -780,9 +780,9 @@ lua_compare_hs l r ix1 ix2 op out =
      case (mbx,mby) of
        (Just x, Just y) ->
          do f <- case op of
-                   #{const LUA_OPEQ} -> return m__eq
-                   #{const LUA_OPLT} -> return m__lt
-                   #{const LUA_OPLE} -> return m__le
+                   #{const LUA_OPEQ} -> return $ mach2 m__eq
+                   #{const LUA_OPLT} -> return $ mach2 m__lt
+                   #{const LUA_OPLE} -> return $ mach2 m__le
                    _                 -> luaError "lua_compare: bad operator"
             res <- f x y
             result out (if res then 1 else 0)
@@ -815,11 +815,11 @@ lua_arith_hs l r opNum =
       _                   -> \_ -> luaError "lua_arith: bad operator"
   where
   op1 f args = do x <- pop args
-                  push args =<< f x
+                  push args =<< mach1 f x
 
   op2 f args = do y <- pop args
                   x <- pop args
-                  push args =<< f x y
+                  push args =<< mach2 f x y
 
 
 foreign export ccall lua_getmetatable_hs
@@ -829,7 +829,7 @@ lua_getmetatable_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
 lua_getmetatable_hs l r ix out =
   reentry "lua_getmetatable" [cArg ix] l r $ \args ->
   do v <- valueArgument (fromIntegral ix) args
-     mt <- valueMetatable v
+     mt <- machD1 valueMetatable v
      case mt of
        Nothing -> do result out 0
        Just m  -> do push args (Table m)
@@ -896,7 +896,7 @@ lua_callk_hs l r narg nresult ctx k =
   do fxs <- popN args (fromIntegral narg + 1)
      case fxs of
        f:xs ->
-         do rs <- m__call f xs
+         do rs <- mach2 m__call f xs
             traverse_ (push args)
                 $ if nresult == lua_multret
                     then rs
@@ -918,7 +918,7 @@ lua_pcallk_hs l r narg nresult msgh out =
      fxs <- popN args (fromIntegral narg + 1)
      case fxs of
        f:xs ->
-         do (f',xs') <- resolveFunction f xs
+         do (f',xs') <- mach2 resolveFunction f xs
             res <- machTry h f' xs'
             case res of
               Left e ->
@@ -943,8 +943,8 @@ lua_setmetatable_hs l r idx =
   do v <- valueArgument (fromIntegral idx) args
      m <- pop args
      case m of -- must be non-empty becuase previous line worked
-       Nil     -> setMetatable Nothing v
-       Table t -> setMetatable (Just t) v
+       Nil     -> machD2 setMetatable Nothing v
+       Table t -> machD2 setMetatable (Just t) v
        _       -> luaError "lua_setmetatable expected table argument"
      return Nothing
 
@@ -957,7 +957,7 @@ lua_len_hs :: EntryPoint (CInt -> IO CInt)
 lua_len_hs l r idx =
   reentry "lua_len" [cArg idx] l r $ \args ->
   do v <- valueArgument (fromIntegral idx) args
-     len <- m__len v
+     len <- mach1 m__len v
      liftIO (push args len)
      return Nothing
 
@@ -1037,7 +1037,7 @@ lua_concat_hs :: EntryPoint (CInt -> IO CInt)
 lua_concat_hs l r n =
   reentry "lua_concat" [cArg n] l r $ \args ->
   do xs <- popN args (fromIntegral n)
-     res <- m__concat xs
+     res <- mach1 m__concat xs
      push args res
      return Nothing
 

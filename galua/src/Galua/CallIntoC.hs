@@ -27,10 +27,12 @@ handleCCallState !vm cResult =
 
 handleGC :: VM -> NextStep -> IO NextStep
 handleGC vm next =
-  do let garbageRef = machGarbage (vmMachineEnv vm)
+  do let menv       = vmMachineEnv vm
+         garbageRef = machGarbage menv
+         tabsRef    = machMetatablesRef menv
      garbage    <- atomicModifyIORef garbageRef (\xs -> ([], xs))
      let collect []       = return next
-         collect (v : vs) = unMach (m__gc v) vm $ \_ -> collect vs
+         collect (v : vs) = m__gc tabsRef (collect vs) v
      collect garbage
 
 
