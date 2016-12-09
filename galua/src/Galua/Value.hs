@@ -4,6 +4,8 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module Galua.Value
   ( -- * Values
@@ -52,15 +54,22 @@ module Galua.Value
   -- * Lua Function Environment
   , prettyValue
   , prettyValueType
+
+  -- * References
+  , Reference
+  , RefLoc(..)
+  , CodeLoc(..)
+  , ReferenceType(..)
   ) where
 
 import           Control.Monad.IO.Class
 import           Data.ByteString (ByteString)
+import           Data.Function(on)
 import           Data.IORef
 import qualified Data.Text as Text
 import           Data.Text.Encoding (decodeUtf8With,encodeUtf8)
 import           Data.Text.Encoding.Error (lenientDecode)
-import           Data.Vector (Vector)
+import           Data.Vector.Mutable (IOVector)
 import           GHC.Generics (Generic)
 import           Foreign.Ptr (FunPtr, Ptr,ptrToIntPtr)
 import           Foreign.ForeignPtr (ForeignPtr)
@@ -77,6 +86,7 @@ import Galua.FunValue
 import Galua.ValueType
 import Galua.Reference
 import Galua.LuaString
+import Galua.Util.Weak (MakeWeak(..), mkWeakIORef', mkWeakMVector')
 
 data Value
   = Bool     !Bool
@@ -114,7 +124,8 @@ instance Hashable Value where
       LightUserData p -> con 8 (toInteger (ptrToIntPtr p))
       Thread r        -> con 9 (referenceId r)
     where
-    con n x = hashWithSalt (hashWithSalt s (n::Int)) x
+    con :: Hashable a => Int -> a -> Int
+    con n x = hashWithSalt (hashWithSalt s n) x
 
 
 ------------------------------------------------------------------------
@@ -127,17 +138,18 @@ instance Hashable Value where
 ------------------------------------------------------------------------
 
 data UserData = MkUserData
-  { userDataPtr   :: ForeignPtr ()
-  , userDataSize  :: Int
-  , userDataValue :: IORef Value
-  , userDataMeta  :: Maybe (Reference Table)
+  { userDataPtr   :: {-# UNPACK #-} !(ForeignPtr ())
+  , userDataSize  :: {-# UNPACK #-} !Int
+  , userDataValue :: {-# UNPACK #-} !(IORef Value)
+  , userDataMeta  :: {-# UNPACK #-} !(IORef (Maybe (Reference Table)))
   }
 
 newUserData ::
-  NameM m => RefLoc -> ForeignPtr () -> Int -> m (Reference UserData)
-newUserData refLoc x n =
+  AllocRef -> RefLoc -> ForeignPtr () -> Int -> IO (Reference UserData)
+newUserData aref refLoc x n =
   do uval <- liftIO (newIORef Nil)
-     newRef refLoc (MkUserData x n uval Nothing)
+     mtref <- liftIO (newIORef Nothing)
+     newRef aref refLoc (MkUserData x n uval mtref)
 
 ------------------------------------------------------------------------
 -- Tables
@@ -146,43 +158,38 @@ newUserData refLoc x n =
 type Table = Tab.Table Value
 
 newTable ::
-  NameM m =>
+  AllocRef ->
   RefLoc ->
   Int {- ^ array size -} ->
   Int {- ^ hashtable size -} ->
-  m (Reference Table)
-newTable refLoc arraySize hashSize =
-  newRef refLoc =<< liftIO (Tab.newTable arraySize hashSize)
+  IO (Reference Table)
+newTable aref refLoc arraySize hashSize =
+  newRef aref refLoc =<< Tab.newTable arraySize hashSize
 
 setTableMeta :: MonadIO m => Reference Table -> Maybe (Reference Table) -> m ()
-setTableMeta tr mt = liftIO $ do t <- readRef tr
-                                 Tab.setTableMeta t $ maybe Nil Table mt
+setTableMeta tr mt = liftIO $ Tab.setTableMeta (referenceVal tr)
+                            $ maybe Nil Table mt
 
 getTableMeta :: MonadIO m => Reference Table -> m (Maybe (Reference Table))
-getTableMeta ref = liftIO $ do t <- readRef ref
-                               v <- Tab.getTableMeta t
+getTableMeta ref = liftIO $ do v <- Tab.getTableMeta (referenceVal ref)
                                case v of
                                  Table t' -> return (Just t')
                                  _        -> return Nothing
 
 getTableRaw :: MonadIO io => Reference Table -> Value {- ^ key -} -> io Value
-getTableRaw ref key = liftIO $ do t <- readRef ref
-                                  Tab.getTableRaw t key
+getTableRaw ref key = liftIO $ Tab.getTableRaw (referenceVal ref) key
 
 setTableRaw :: MonadIO m => Reference Table -> Value -> Value -> m ()
-setTableRaw ref key !val = liftIO $ do t <- readRef ref
-                                       Tab.setTableRaw t key val
+setTableRaw ref key !val = liftIO $ Tab.setTableRaw (referenceVal ref) key val
 
 tableLen :: MonadIO io => Reference Table -> io Int
-tableLen ref = liftIO (Tab.tableLen =<< readRef ref)
+tableLen ref = liftIO (Tab.tableLen (referenceVal ref))
 
-tableFirst :: NameM m => Reference Table -> m (Maybe (Value,Value))
-tableFirst ref = liftIO (Tab.tableFirst =<< readRef ref)
-
+tableFirst :: MonadIO m => Reference Table -> m (Maybe (Value,Value))
+tableFirst ref = liftIO (Tab.tableFirst (referenceVal ref))
 
 tableNext :: MonadIO m => Reference Table -> Value -> m (Maybe (Value,Value))
-tableNext ref key = liftIO $ do t <- readRef ref
-                                Tab.tableNext t key
+tableNext ref key = liftIO (Tab.tableNext (referenceVal ref) key)
 
 ------------------------------------------------------------------------
 -- Value types
@@ -209,7 +216,7 @@ valueType v =
 
 data Closure = MkClosure
   { cloFun      :: FunctionValue
-  , cloUpvalues :: Vector (IORef Value)
+  , cloUpvalues :: IOVector (IORef Value)
   }
 
 type Prim = [Value] -> Mach [Value]
@@ -225,9 +232,10 @@ data PrimArgument
   | PrimFunPtrArg (FunPtr ())
 
 newClosure ::
-  NameM m =>
-  RefLoc -> FunctionValue -> Vector (IORef Value) -> m (Reference Closure)
-newClosure refLoc f us = newRef refLoc MkClosure { cloFun = f, cloUpvalues = us }
+  AllocRef ->
+  RefLoc -> FunctionValue -> IOVector (IORef Value) -> IO (Reference Closure)
+newClosure aref refLoc f us =
+  newRef aref refLoc MkClosure { cloFun = f, cloUpvalues = us }
 
 
 ------------------------------------------------------------------------
@@ -300,5 +308,77 @@ trimResult1 (x:_) = x
 
 --------------------------------------------------------------------------------
 
+instance MakeWeak UserData where
+  makeWeak ud = mkWeakIORef' (userDataMeta ud) ud
 
+instance MakeWeak Closure where
+  makeWeak cl = mkWeakMVector' (cloUpvalues cl) cl
+
+data family Reference a
+
+data instance Reference Table = TableRef
+  { tableReferenceId  :: {-# UNPACK #-} !Int
+  , tableReferenceLoc :: {-# UNPACK #-} !RefLoc
+  , tableReferenceVal :: {-# UNPACK #-} !Table
+  }
+
+data instance Reference UserData = UserDataRef
+  { userDataReferenceId  :: {-# UNPACK #-} !Int
+  , userDataReferenceLoc :: {-# UNPACK #-} !RefLoc
+  , userDataReferenceVal :: {-# UNPACK #-} !UserData
+  }
+
+data instance Reference Closure = ClosureRef
+  { closureReferenceId  :: {-# UNPACK #-} !Int
+  , closureReferenceLoc :: {-# UNPACK #-} !RefLoc
+  , closureReferenceVal :: {-# UNPACK #-} !Closure
+  }
+
+class ReferenceType a where
+  constructReference :: Int -> RefLoc -> a -> Reference a
+  referenceLoc     :: Reference a -> RefLoc
+  referenceId      :: Reference a -> Int
+  referenceVal     :: Reference a -> a
+
+
+instance ReferenceType UserData where
+  constructReference = UserDataRef
+  referenceId = userDataReferenceId
+  referenceLoc = userDataReferenceLoc
+  referenceVal = userDataReferenceVal
+
+instance ReferenceType Closure where
+  constructReference = ClosureRef
+  referenceId = closureReferenceId
+  referenceLoc = closureReferenceLoc
+  referenceVal = closureReferenceVal
+
+instance ReferenceType Table where
+  constructReference = TableRef
+  referenceId = tableReferenceId
+  referenceVal = tableReferenceVal
+  referenceLoc = tableReferenceLoc
+
+-- | The location in the source code that allocated this reference.
+data RefLoc  = RefLoc { refLocCaller :: !CodeLoc, refLocSite :: !CodeLoc }
+               deriving (Eq,Ord)
+
+data CodeLoc = MachSetup
+             | InC !CFunName
+             | InLua !FunId !Int  -- ^ Function, program counter
+               deriving (Eq,Ord)
+
+instance ReferenceType a => Show (Reference a) where
+  show = prettyRef
+
+instance ReferenceType a => Eq (Reference a) where
+  (==) = (==) `on` referenceId
+  (/=) = (/=) `on` referenceId
+
+instance ReferenceType a => Ord (Reference a) where
+  compare = compare `on` referenceId
+  (<=) = (<=) `on` referenceId
+  (<)  = (<)  `on` referenceId
+  (>)  = (>)  `on` referenceId
+  (>=) = (>=) `on` referenceId
 

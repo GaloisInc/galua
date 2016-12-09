@@ -503,7 +503,7 @@ function drawFunParts(f, nameHere, typeHere, pcHere, argsHere) {
 
       argsHere.append('- ')
               .append(methBox)
-              .append(' (')
+              .append(' ( ')
       if (f.args !== undefined) {
         var leader = ''
         jQuery.each(f.args, function(ix,a) {
@@ -517,6 +517,11 @@ function drawFunParts(f, nameHere, typeHere, pcHere, argsHere) {
       if (f.phase !== undefined) {
           argsHere.append(' - ' + f.phase)
       }
+      if (f.cresult) {
+          argsHere.append(' = ')
+                  .append(drawPrimArg(f.cresult))
+      }
+
   }
 
   nameHere.addClass('tooltipped')

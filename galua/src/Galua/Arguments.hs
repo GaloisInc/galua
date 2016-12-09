@@ -3,14 +3,13 @@ module Galua.Arguments where
 import           Control.Monad.IO.Class
 import           Data.IORef
 import           Data.Foldable (for_)
-import qualified Data.Vector as Vector
 
 import           Galua.Mach
 import           Galua.Number
-import           Galua.Reference (Reference)
 import           Galua.Value
 import           Galua.LuaString
 import qualified Galua.Util.SizedVector as SV
+import qualified Galua.Util.IOVector as IOVector
 
 maxstack :: Int
 maxstack = 1000000
@@ -27,8 +26,10 @@ assign i x stack
 
   | i <  registryIndex = do v <- getsExecEnv execUpvals
                             let i' = registryIndex - i - 1
-                            for_ (v Vector.!? i') $ \ref ->
-                              liftIO (writeIORef ref x)
+                            liftIO $
+                              do mb <- IOVector.readMaybe v i'
+                                 for_ mb $ \ref ->
+                                   writeIORef ref x
 
   | otherwise = liftIO $
       case compare i 0 of
@@ -46,7 +47,8 @@ select i stack
 
   | i <  registryIndex = do v <- getsExecEnv execUpvals
                             let i' = registryIndex - i - 1
-                            traverse (liftIO . readIORef) (v Vector.!? i')
+                            liftIO $ do mbRef <- IOVector.readMaybe v i'
+                                        traverse readIORef mbRef
 
   | otherwise = liftIO $
       case compare i 0 of

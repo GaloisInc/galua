@@ -11,17 +11,16 @@ import           Data.Map (Map)
 import qualified Data.Map as Map
 import           Data.Bits(complement,(.&.),(.|.),xor)
 import qualified Data.ByteString as BS
-import           Control.Monad.IO.Class(MonadIO,liftIO)
 import           Control.Monad(zipWithM_,(<=<))
 
 import qualified Language.Lua.Bytecode as OP
 import           Language.Lua.Bytecode.FunId
 
-import           Galua.Reference(Reference,NameM,readRef,RefLoc(..),CodeLoc(..))
 import           Galua.Value
 import           Galua.FunValue
 import           Galua.Number(Number(..),wordshiftL,wordshiftR,nummod,
                               numberPow,numberDiv)
+import           Galua.Reference(AllocRef)
 import           Galua.LuaString
                    (LuaString,toByteString,fromByteString,luaStringLen)
 import           Galua.Micro.AST
@@ -91,14 +90,13 @@ instance IsValue (Reference UserData) where
   toValue = toValue . UserData
 
 -- setListReg :: MonadIO m => Frame -> [Value] -> m ()
--- setListReg Frame{..} = liftIO . writeIORef listRegRef
+-- setListReg Frame{..} = writeIORef listRegRef
 
-getListReg :: MonadIO m => Frame -> m [Value]
-getListReg Frame{..} = liftIO (readIORef listRegRef)
+getListReg :: Frame -> IO [Value]
+getListReg Frame{..} = readIORef listRegRef
 
-setReg :: (IsValue v, MonadIO m) => Frame -> Reg -> v -> m ()
+setReg :: IsValue v => Frame -> Reg -> v -> IO ()
 setReg Frame { .. } reg v0 =
-  liftIO $
   case reg of
     Reg (OP.Reg r) -> IOVector.write regs r val
     TMP a b        -> case toValue v0 of
@@ -109,9 +107,8 @@ setReg Frame { .. } reg v0 =
   val = toValue v0
 
 
-getReg :: MonadIO m => Frame -> Reg -> m V
+getReg :: Frame -> Reg -> IO V
 getReg Frame { .. } reg =
-  liftIO $
   case reg of
     Reg (OP.Reg r) -> IOVector.read regs r
     TMP a b -> do m <- readIORef regsTMP
@@ -120,7 +117,7 @@ getReg Frame { .. } reg =
                     Nothing -> crash ("Read from bad reg: " ++ show (pp' reg))
 
 
-getExpr :: MonadIO m => Frame -> Expr -> m V
+getExpr :: Frame -> Expr -> IO V
 getExpr f expr =
   case expr of
     EReg r -> getReg f r
@@ -134,10 +131,10 @@ getExpr f expr =
         KBool b        -> return (VVal (Bool b))
         KNum d         -> return (VVal (Number (Double d)))
         KInt n         -> return (VVal (Number (Int n)))
-        KString bs     -> liftIO $ (VVal . String) <$> fromByteString bs
-        KLongString bs -> liftIO $ (VVal . String) <$> fromByteString bs
+        KString bs     -> (VVal . String) <$> fromByteString bs
+        KLongString bs -> (VVal . String) <$> fromByteString bs
 
-getProp :: MonadIO m => Frame -> Prop -> m Bool
+getProp :: Frame -> Prop -> IO Bool
 getProp f (Prop pre es) =
   do vs <- mapM (getExpr f) es
      let unary cvt f' = case vs of
@@ -171,20 +168,20 @@ getProp f (Prop pre es) =
 
 
 
-typeError :: MonadIO m => String -> m a
+typeError :: String -> IO a
 typeError what = crash ("Type error: expected a " ++ what ++ ".")
 
-crash :: MonadIO m => String -> m a
-crash msg = liftIO (fail msg)
+crash :: String -> IO a
+crash msg = fail msg
 
 
-isTable :: MonadIO m => V -> m (Reference Table)
+isTable :: V -> IO (Reference Table)
 isTable val =
   case val of
     VVal (Table t) -> return t
     _              -> typeError "table"
 
-isFunction :: MonadIO m => V -> m (Reference Closure)
+isFunction :: V -> IO (Reference Closure)
 isFunction val =
   case val of
     VVal (Closure c) -> return c
@@ -192,44 +189,44 @@ isFunction val =
 
 
 
-isValue :: MonadIO m => V -> m Value
+isValue :: V -> IO Value
 isValue val =
   case val of
     VVal v -> return v
     _      -> typeError "Lua value"
 
-isReference :: MonadIO m => V -> m (IORef Value)
+isReference :: V -> IO (IORef Value)
 isReference val =
     case val of
       VRef r -> return r
       _      -> typeError "reference"
 
 
-isNumber :: MonadIO m => V -> m Number
+isNumber :: V -> IO Number
 isNumber val =
   case val of
     VVal (Number n) -> return n
     _ -> typeError "number"
 
-isInt :: MonadIO m => V -> m Int
+isInt :: V -> IO Int
 isInt val =
   case val of
     VVal (Number (Int n)) -> return n
     _ -> typeError "integer"
 
-isDouble :: MonadIO m => V -> m Double
+isDouble :: V -> IO Double
 isDouble val =
   case val of
     VVal (Number (Double d)) -> return d
     _ -> typeError "double"
 
-isString :: MonadIO m => V -> m LuaString
+isString :: V -> IO LuaString
 isString val =
   case val of
     VVal (String s) -> return s
     _ -> typeError "string"
 
-isBool :: MonadIO m => V -> m Bool
+isBool :: V -> IO Bool
 isBool val =
   case val of
     VVal (Bool b) -> return b
@@ -237,10 +234,10 @@ isBool val =
 
 
 
-runStmt :: NameM m => Frame -> Int -> BlockStmt -> m Next
-runStmt f@Frame { .. } pc stmt =
+runStmt :: AllocRef -> Frame -> Int -> BlockStmt -> IO Next
+runStmt aref f@Frame { .. } pc stmt =
   case stmtCode stmt of
-    Assign r e    -> do liftIO (setReg f r =<< getExpr f e)
+    Assign r e    -> do setReg f r =<< getExpr f e
                         return Continue
 
     SetUpVal _ _  -> crash "SetUpVal in phase 2"
@@ -251,7 +248,7 @@ runStmt f@Frame { .. } pc stmt =
       do let refLoc = RefLoc { refLocSite   = InLua ourFID pc
                              , refLocCaller = ourCaller
                              }
-         (liftIO . setReg f r) =<< newTable refLoc 0 0
+         setReg f r =<< newTable aref refLoc 0 0
          return Continue
 
     LookupTable res tab ix ->
@@ -279,13 +276,13 @@ runStmt f@Frame { .. } pc stmt =
                              Nothing -> setReg f r ()
                              Just t  -> setReg f r t
                            return Continue
-         tabs <- liftIO (readIORef metaTables)
+         tabs <- readIORef metaTables
          let tyMeta t = setMb (Map.lookup t tabs)
 
          case v of
 
            Table tr         -> setMb =<< getTableMeta tr
-           UserData ur      -> setMb . userDataMeta =<< readRef ur
+           UserData ur      -> setMb =<< readIORef (userDataMeta (referenceVal ur))
            _                -> tyMeta (valueType v)
 
     Raise e ->
@@ -331,17 +328,17 @@ runStmt f@Frame { .. } pc stmt =
          let refLoc = RefLoc { refLocSite   = InLua ourFID pc
                              , refLocCaller = ourCaller
                              }
-         clo <- newClosure refLoc fun (Vector.fromList rs)
+         clo <- newClosure aref refLoc fun =<< Vector.thaw (Vector.fromList rs)
          setReg f res clo
          return Continue
 
 
     Drop ArgReg n ->
-      do liftIO (modifyIORef' argRegRef (drop n))
+      do modifyIORef' argRegRef (drop n)
          return Continue
 
     Drop ListReg n ->
-      do liftIO (modifyIORef' listRegRef (drop n))
+      do modifyIORef' listRegRef (drop n)
          return Continue
 
     SetList res es ->
@@ -349,7 +346,7 @@ runStmt f@Frame { .. } pc stmt =
          let ref = case res of
                      ArgReg -> argRegRef
                      ListReg -> listRegRef
-         liftIO (writeIORef ref vs)
+         writeIORef ref vs
          return Continue
 
     Append res es ->
@@ -357,31 +354,31 @@ runStmt f@Frame { .. } pc stmt =
          let ref = case res of
                      ArgReg -> argRegRef
                      ListReg -> listRegRef
-         liftIO (modifyIORef ref (vs ++))
+         modifyIORef ref (vs ++)
          return Continue
 
     IndexList res lst ix ->
-      do vs <- liftIO $ readIORef $ case lst of
-                 ArgReg  -> argRegRef
-                 ListReg -> listRegRef
+      do vs <- readIORef $ case lst of
+                             ArgReg  -> argRegRef
+                             ListReg -> listRegRef
          case splitAt ix vs of
            (_,b:_) -> setReg f res b
            _       -> setReg f res ()
          return Continue
 
     NewRef res val ->
-      do setReg f res =<< liftIO . newIORef =<< isValue =<< getExpr f val
+      do setReg f res =<< newIORef =<< isValue =<< getExpr f val
          return Continue
 
     ReadRef res ref ->
       do r <- isReference =<< getExpr f ref
-         setReg f res =<< liftIO (readIORef r)
+         setReg f res =<< readIORef r
          return Continue
 
     WriteRef ref val ->
       do r <- isReference =<< getExpr f ref
          v <- isValue =<< getExpr f val
-         liftIO (writeIORef r v)
+         writeIORef r v
          return Continue
 
     Arith1 res op e ->
@@ -407,13 +404,13 @@ runStmt f@Frame { .. } pc stmt =
            ToString ->
              do n <- isValue vv
                 case valueString n of
-                  Just s  -> setReg f res =<< liftIO (fromByteString s)
+                  Just s  -> setReg f res =<< fromByteString s
                   Nothing -> setReg f res ()
 
            ToBoolean ->
              do n <- isValue vv
                 case valueString n of
-                  Just s  -> setReg f res =<< liftIO (fromByteString s)
+                  Just s  -> setReg f res =<< fromByteString s
                   Nothing -> setReg f res ()
 
            StringLen   -> setReg f res . luaStringLen =<< isString vv
@@ -470,7 +467,7 @@ runStmt f@Frame { .. } pc stmt =
                     y = toByteString s2
                 z <- if | BS.null x -> return s1
                         | BS.null y -> return s2
-                        | otherwise -> liftIO (fromByteString (BS.append x y))
+                        | otherwise -> fromByteString (BS.append x y)
                 setReg f res (String z)
 
          return Continue
@@ -479,10 +476,10 @@ runStmt f@Frame { .. } pc stmt =
     Comment _    -> return Continue
 
 
-runStmtAt :: NameM m => Frame -> Vector BlockStmt -> Int -> m Next
-runStmtAt f curBlock pc =
+runStmtAt :: AllocRef -> Frame -> Vector BlockStmt -> Int -> IO Next
+runStmtAt aref f curBlock pc =
   case curBlock Vector.!? pc of
-    Just stmt -> runStmt f pc stmt
+    Just stmt -> runStmt aref f pc stmt
     Nothing   -> crash ("Invalid PC: " ++ show pc)
 
 

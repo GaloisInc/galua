@@ -76,7 +76,8 @@ import           HexFloatFormat (doubleToHex)
 tableChunk :: Int
 tableChunk = 20
 
-newtype ExportM a = ExportM (ReaderT AllocRef (StateT ExportableState IO) a)
+newtype ExportM a = ExportM (ReaderT (Maybe AllocRef)
+                            (StateT ExportableState IO) a)
                     deriving (Functor,Applicative,Monad)
 
 io :: IO a -> ExportM a
@@ -84,9 +85,15 @@ io = ExportM . inBase
 
 -- | Assumes that we are holding the lock
 runExportM :: Debugger -> ExportM a -> IO a
-runExportM Debugger { dbgNames, dbgExportable } (ExportM m) =
+runExportM Debugger { dbgStateVM, dbgExportable } (ExportM m) =
   do s      <- readIORef dbgExportable
-     (a,s1) <- runStateT s $ runReaderT dbgNames m
+     mms    <- readIORef dbgStateVM
+     let vm = case mms of
+                Running vm' _  -> Just vm'
+                RunningInC vm' -> Just vm'
+                _              -> Nothing
+
+     (a,s1) <- runStateT s $ runReaderT (vmAllocRef <$> vm) m
      writeIORef dbgExportable s1
      return a
 
@@ -108,17 +115,23 @@ setExpandedThread r = ExportM $ sets_ $ \rw ->
 
 getLiveExpandedThreads :: ExportM [Reference Thread]
 getLiveExpandedThreads = ExportM $
-  do n   <- ask
-     ids <- openThreads <$> get
-     let lkp x = do mb <- lookupRef x
-                    return (case mb of
-                              Nothing -> Left x
-                              Just a  -> Right a)
-     eiths <- inBase (runAllocWith n (mapM lkp (Set.toList ids)))
-     let (bad,good) = partitionEithers eiths
-     unless (null bad) $
-       sets_ $ \rw -> rw { openThreads = Set.difference ids (Set.fromList bad) }
-     return good
+  do mb <- ask
+     case mb of
+       Nothing ->
+         sets $ \rw -> ([], rw { openThreads = Set.empty })
+
+       Just aref ->
+         do ids <- openThreads <$> get
+            let lkp x = do mbA <- lookupRef aref x
+                           return (case mbA of
+                                     Nothing -> Left x
+                                     Just a  -> Right a)
+            eiths <- inBase (mapM lkp (Set.toList ids))
+            let (bad,good) = partitionEithers eiths
+            unless (null bad) $
+              sets_ $ \rw -> rw { openThreads = Set.difference ids
+                                                  (Set.fromList bad) }
+            return good
 
 --------------------------------------------------------------------------------
 
@@ -326,8 +339,7 @@ expandSubtable dbg n from =
             Just thing ->
               case thing of
                 ExportableValue p (Table r) ->
-                 do t <- io (readRef r)
-                    Just <$> exportTable funs (fromInteger from) tableChunk p t
+                 Just <$> exportTable funs (fromInteger from) tableChunk p (referenceVal r)
 
                 _ -> return Nothing
 
@@ -416,25 +428,24 @@ exportValue funs path val =
     Table r    -> ref r [ tag "table", "text" .= prettyRef r ]
 
     Closure r  ->
-      do MkClosure { cloFun } <- io (readRef r)
-         let fs = exportFunctionValue funs (-1) cloFun
+      do let fs = exportFunctionValue funs (-1) (cloFun (referenceVal r))
          ref r (fs ++ [ tag "closure"
                       , "text" .= prettyRef r
                       , "id"   .= show (referenceId r)
                       ])
 
     UserData r ->
-      do mbName <- io $ do MkUserData{ userDataMeta } <- readRef r
-                           maybe (return Nothing) lookupMetaName userDataMeta
+      do mbName <- io $ do mb <- readIORef (userDataMeta (referenceVal r))
+                           maybe (return Nothing) lookupMetaName mb
          ref r [ tag "user_data", "text" .= prettyRef r, "name" .= mbName ]
     Thread r ->
-      do thread <- io (readRef r)
+      do stat <- io (getThreadField threadStatus r)
          ref r [ tag "thread"
                , "text"   .= prettyRef r
-               , "status" .= exportThreadStatus (threadStatus thread) ]
+               , "status" .= exportThreadStatus stat ]
   where
   str x     = x :: String
-  origin r  = Just (exportRefLoc funs (getRefLoc r))
+  origin r  = Just (exportRefLoc funs (referenceLoc r))
   simple a  = struct (Nothing :: Maybe ()) a
 
   ref r     = struct (origin r)
@@ -462,24 +473,30 @@ expandValue funs path val =
                      exportThread funs Nothing r
     _          -> exportValue funs path val
 
-  where exportRef r how = how path =<< io (readRef r)
+  where exportRef r how = how path (referenceVal r)
 
 
 exportThread :: Chunks -> Maybe NextStep -> Reference Thread -> ExportM JS.Value
-exportThread funs mbNext tRef =
-  do MkThread { stPC, stStack , stExecEnv, stHandlers,
-                    threadStatus } <- io (readRef tRef)
-     let eid = ThreadExecEnv (referenceId tRef)
-     env   <- exportExecEnv funs stPC eid stExecEnv
-     stack <- mapM (exportStackFrameShort funs) (toList stStack)
-     hs    <- mapM (exportHandler funs) stHandlers
-     cur   <- exportCallStackFrameShort funs stPC stExecEnv mbNext
+exportThread funs mbNext th =
+  do let eid = ThreadExecEnv (referenceId th)
+     eenv  <- io $ getThreadField stExecEnv th
+     stat  <- io $ getThreadField threadStatus th
+     pc    <- case mbNext of
+                Just (Goto pc) -> return pc
+                _              -> io $ getThreadField stPC th
+     hdlrs <- io $ getThreadField stHandlers th
+     stack <- io $ getThreadField stStack th
+
+     env   <- exportExecEnv funs pc eid eenv
+     stackOut <- mapM (exportStackFrameShort funs) (toList stack)
+     hs    <- mapM (exportHandler funs) hdlrs
+     cur   <- exportCallStackFrameShort funs pc eenv mbNext
      return $ JS.object
                 [ tag "thread"
-                , "name"     .= prettyRef tRef
-                , "status"   .= exportThreadStatus threadStatus
-                , "pc"       .= stPC
-                , "stack"    .= (cur : stack)
+                , "name"     .= prettyRef th
+                , "status"   .= exportThreadStatus stat
+                , "pc"       .= pc
+                , "stack"    .= (cur : stackOut)
                 , "handlers" .= hs
                 , "env"      .= env
                 ]
@@ -525,7 +542,8 @@ exportTable funs from len path t =
 
 exportUserData :: ValuePath -> UserData -> ExportM JS.Value
 exportUserData path MkUserData { userDataMeta } =
-  do ref <- case userDataMeta of
+  do mb <- io (readIORef userDataMeta)
+     ref <- case mb of
               Nothing -> return []
               Just r  -> do i <- newThing (ExportableValue (VP_MetaTable path) (Table r))
                             return [ "text" .= prettyRef r, "ref" .= i ]
@@ -547,8 +565,8 @@ exportClosure funs path MkClosure { cloFun, cloUpvalues } =
              return (JS.object [ "name" .= fmap unpackUtf8 (uNames Vector.!? n)
                                , "val"  .= j ])
 
-     vs <- io $ mapM readIORef cloUpvalues
-     js <- zipWithM exportU [ 0 .. ] (Vector.toList vs)
+     vs <- io $ fmap Vector.toList $ mapM readIORef =<< Vector.freeze cloUpvalues
+     js <- zipWithM exportU [ 0 .. ] vs
      return $ JS.object $ ("upvalues" .= js) : fs
 
 
@@ -614,8 +632,8 @@ exportCallStackFrameShort funs pc env mbnext =
   do ref <- newThing (ExportableStackFrame pc env)
      st  <- io (readIORef (execApiCall env))
      apiInfo <- case mbnext of
-                  Just (ApiStart api _)   -> exportApiCall api ApiCallStarting
-                  Just (ApiEnd   api _ _) -> exportApiCall api ApiCallEnding
+                  Just (ApiStart api _) -> exportApiCall api ApiCallStarting
+                  Just (ApiEnd api res) -> exportApiCall api (ApiCallEnding res)
                   _ -> case st of
                          NoApiCall -> pure []
                          ApiCallAborted api  -> exportApiCall api ApiCallRunning
@@ -625,17 +643,21 @@ exportCallStackFrameShort funs pc env mbnext =
                        : "ref"    .= ref
                        : exportFunctionValue funs pc (execFunction env)))
 
-data ApiCallPhase = ApiCallStarting | ApiCallRunning | ApiCallEnding
+data ApiCallPhase = ApiCallStarting | ApiCallRunning | ApiCallEnding (Maybe PrimArgument)
 
 exportApiCall :: ApiCall -> ApiCallPhase -> ExportM [ JS.Pair ]
 exportApiCall api phase =
   do args <- traverse exportPrimArg (apiCallArgs api)
+     cresult <- case phase of
+                  ApiCallEnding mb -> traverse exportPrimArg mb
+                  _                -> return Nothing
      pure [ "method" .= apiCallMethod api
           , "args"   .= args
           , "phase"  .= case phase of
                           ApiCallStarting -> "starting" :: Text
                           ApiCallRunning  -> "running"
-                          ApiCallEnding   -> "ending"
+                          ApiCallEnding _ -> "ending"
+          , "cresult" .= cresult
           , "return" .= JS.object (exportCObjInfo (apiCallReturn api))
           ]
 
@@ -812,17 +834,16 @@ exportExecEnv funs pc eid
      regVs <- zipWithM (exportNamed (VP_Register env) locNames)
                        [ 0 .. ] vs
      uVs   <- zipWithM (exportNamed (VP_Upvalue env) upNames)
-                       [ 0 .. ] (Vector.toList execUpvals)
+                       [ 0 .. ]
+          =<< io (Vector.toList <$> Vector.freeze execUpvals)
 
      vAs <- zipWithM (\n -> named (VP_Varargs env n) Nothing) [0..] =<<
                                                     io (readIORef execVarargs)
 
-     cRes <- traverse exportPrimArg =<< io (readIORef (execLastResult env))
      return $ JS.object $ [ "registers" .= regVs
                           , "upvalues"  .= uVs
                           , "varargs"   .= vAs
                           , "code"      .= code
-                          , "result"    .= cRes
                           ] ++ exportFunctionValue funs pc execFunction
 
   where

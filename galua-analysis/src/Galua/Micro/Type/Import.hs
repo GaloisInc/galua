@@ -16,7 +16,6 @@ import           Language.Lua.Bytecode(UpIx(..))
 
 import qualified Galua.Mach             as C -- concrete
 import qualified Galua.Value            as C hiding (getTableMeta)
-import qualified Galua.Reference        as C
 import           Galua.LuaString(toByteString)
 import qualified Galua.Micro.Type.Value as A -- abstract
 
@@ -147,7 +146,7 @@ importTableRef r =
         do i <- importNewRef A.TableId r
            M $ sets_ $ \RW { .. } ->
                         RW { importedTables = Map.insert r i importedTables,.. }
-           t <- importTable =<< C.readRef r
+           t <- importTable (C.referenceVal r)
            M $ sets_ $
              \RW { globs = A.GlobalState { .. }, .. } ->
               RW { globs = A.GlobalState { tables = Map.insert i t tables, .. }
@@ -165,7 +164,7 @@ importFunRef r =
            M $ sets_ $ \rw -> rw
                         { importedClosures = Map.insert r i
                                                    (importedClosures rw) }
-           f <- importFunction =<< C.readRef r
+           f <- importFunction (C.referenceVal r)
            M $ sets_ $
              \RW { globs = A.GlobalState { .. }, .. } ->
               RW { globs = A.GlobalState
@@ -190,7 +189,7 @@ importTable t =
 
 importFunction :: C.Closure -> M A.FunV
 importFunction C.MkClosure { .. } =
-  do rs <- mapM importUpVal (Vector.toList cloUpvalues)
+  do rs <- fmap Vector.toList (mapM importUpVal =<< liftIO (Vector.freeze cloUpvalues))
      let nm = case C.funValueName cloFun of
                 C.LuaFID fid -> A.OneValue (A.LuaFunImpl fid)
                 C.CFID ptr   -> A.OneValue (A.CFunImpl (C.cfunAddr ptr))

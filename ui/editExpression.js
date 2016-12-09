@@ -1,5 +1,5 @@
 function textExpressionBoxKeyPressed(ev) {
-  if (ev.key === 'Enter' && !ev.shift) {
+  if (ev.keyCode === 13 && !ev.shift) {
     $('#text-expression-text').data('galua-new-text-expression')()
     return false // stop propagation, we handled it
   }

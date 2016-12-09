@@ -21,6 +21,7 @@ import           Data.IORef(IORef,newIORef,writeIORef,readIORef)
 import qualified Galua.Util.SizedVector as SV
 import qualified Data.Vector as Vector
 import           Data.Vector (Vector)
+import           Galua.Util.Weak
 
 -- Desired goals (not necessarily implemented)
 -- 1. Indexable by all values
@@ -35,6 +36,9 @@ data Table v = Table
   , tableMeta  :: {-# UNPACK #-} !(IORef v) -- ^ Either "Table" or "Nil"
   , tableMCache:: {-# UNPACK #-} !(IORef (Vector v))
   }
+
+instance MakeWeak (Table v) where
+  makeWeak t = mkWeakIORef' (tableMeta t) t
 
 class (Eq v, Hashable v) => TableValue v where
   nilTableValue     :: v
@@ -132,7 +136,7 @@ tableFirstArray Table { .. } start =
      go n start
   where
   go n i
-    | i >= n    = tableFirstHash tableHash
+    | i >= n    = tableNextHash tableHash (tableValueFromInt i)
     | otherwise = do x <- SV.get tableArray i
                      if isNilTableValue x
                        then go n (i+1)
@@ -150,17 +154,23 @@ tableNext :: TableValue v => Table v -> v -> IO (Maybe (v,v))
 tableNext t key
   | isNilTableValue key = tableFirst t
 
-  | Just i <- tableValueToInt key
-  , 0 <= i = tableFirstArray t i
-      -- start at 'i-1' + 1, next element counteracts
-      -- the vector indexes being one less
+  | Just i <- tableValueToInt key =
+      if 0 <= i
+        then tableFirstArray t i
+                  -- start at 'i-1' + 1, next element counteracts
+                  -- the vector indexes being one less
+        else tableNextHash (tableHash t) (tableValueFromInt i)
 
-  | otherwise = do res <- lookupIndex (tableHash t) key
-                   case res of
-                     Nothing -> return Nothing -- XXX: raise error
-                     Just ix -> do mb <- nextByIndex (tableHash t) (ix+1)
-                                   return $! do (_,k,v) <- mb
-                                                return (k,v)
+  | otherwise = tableNextHash (tableHash t) key
+
+tableNextHash :: TableValue v => Hash v -> v -> IO (Maybe (v,v))
+tableNextHash h key =
+  do res <- lookupIndex h key
+     case res of
+       Nothing -> tableFirstHash h
+       Just ix -> do mb <- nextByIndex h (ix+1)
+                     return $! do (_,k,v) <- mb
+                                  return (k,v)
 
 tableToList :: TableValue v => Table v -> IO [(v,v)]
 tableToList Table { .. } =

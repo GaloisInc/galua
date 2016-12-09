@@ -21,9 +21,8 @@ import qualified Data.Text as Text
 import           Data.Bits(complement)
 import           Control.Exception(Exception,throwIO)
 
-import Galua.Value(Value(..),valueBool)
+import Galua.Value(Reference, referenceVal, Value(..),valueBool)
 import Galua.Overloading(get_m__index)
-import Galua.Reference(Reference,readRef)
 import Galua.Util.Table(Table,getTableRaw,tableLen)
 import Galua.Util.SizedVector(SizedVector,getMaybe)
 import Galua.LuaString(toByteString,
@@ -127,8 +126,7 @@ exprToValue eenv pc expr =
            Len  ->
              case v of
                String s -> return $ Number $ Int $ luaStringLen s
-               Table r  -> do t <- readRef r
-                              (Number . Int) <$> tableLen t
+               Table r  -> Number . Int <$> tableLen (referenceVal r)
                   -- XXX: Check that the `length` is not overwritten!
                _ -> bad "Length of a value which is not a string or a table."
            Not  -> return $ Bool $ not $ valueBool v
@@ -198,8 +196,7 @@ getGlobalEnv eenv =
 
 lookupInTable :: NameResolveEnv -> Value -> Reference (Table Value) -> IO Value
 lookupInTable eenv key ref =
-  do tab <- readRef ref
-     res <- getTableRaw tab key
+  do res <- getTableRaw (referenceVal ref) key
      case res of
        Nil -> indexFromMetaTable eenv False (Table ref) key
        v   -> return v

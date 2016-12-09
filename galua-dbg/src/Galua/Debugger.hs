@@ -94,14 +94,15 @@ import           Data.Ord(comparing)
 import           Data.List(unfoldr,minimumBy)
 import           Data.Vector (Vector)
 import qualified Data.Vector as Vector
+import qualified Data.Vector.Mutable as IOVector
 import           Data.IORef(IORef,readIORef,writeIORef,
                             modifyIORef,modifyIORef',newIORef,
                             atomicModifyIORef')
 
-import           Control.Concurrent.Async (cancel, Async)
 import            Control.Concurrent
                     ( MVar, newEmptyMVar, putMVar, takeMVar, forkIO )
 import           Control.Applicative ((<|>))
+import           Control.Concurrent (killThread, ThreadId)
 import           Control.Concurrent.STM (STM, atomically, takeTMVar)
 import           Control.Concurrent.STM.TQueue (TQueue, newTQueue, writeTQueue, readTQueue, isEmptyTQueue)
 import           Control.Monad.IO.Class(liftIO)
@@ -114,15 +115,12 @@ import           System.Timeout(timeout)
 {- The fields in this are mutable, so that the interpreter can modify them
 easily, without having to pass the state aroud.  For example, when we
 load a new module, the interpreter uses an IO action, which modifies 
-dbgSource.  Similarly, `dbgNames` is updated when we allocate new
-values. -}
+dbgSource. -}
 data Debugger = Debugger
   { dbgSources   :: !(IORef Chunks)
     {- ^ Source code for chunks and corresponding parsed functions.
           The functions are also in the VM state, but that's only available
           while the machine is running. -}
-
-  , dbgNames     :: !AllocRef                  -- ^ Object identities
 
 
   , dbgCommand   :: !(TQueue (DebuggerCommand,Bool))
@@ -184,6 +182,8 @@ data BreakCondition = BreakCondition
     -- ^ Use this to evaluate the condition
   , brkText :: Text
     -- ^ Use this to display the condition
+  , brkActive :: IORef (Maybe Bool)
+    -- ^ Did we alerady check this condition.
   }
 
 
@@ -293,10 +293,10 @@ getValue vp0 = do res <- runExceptionT (getVal vp0)
         do val <- getVal vp'
            case val of
              Closure ref ->
-                do clo <- lift (readRef ref)
-                   case cloUpvalues clo Vector.!? n of
-                     Just r  -> lift (readIORef r)
-                     Nothing -> raise ()
+                do let ups = cloUpvalues (referenceVal ref)
+                   if 0 <= n && n < IOVector.length ups
+                     then lift (readIORef =<< IOVector.read ups n)
+                     else raise ()
              _ -> raise ()
 
       VP_MetaTable vp' ->
@@ -306,10 +306,11 @@ getValue vp0 = do res <- runExceptionT (getVal vp0)
                            case mb of
                              Just tr -> return (Table tr)
                              Nothing -> raise ()
-             UserData r -> do u <- lift (readRef r)
-                              case userDataMeta u of
-                                Just tr -> return (Table tr)
-                                Nothing -> raise ()
+             UserData r ->
+               do mb <- lift (readIORef (userDataMeta (referenceVal r)))
+                  case mb of
+                    Just tr -> return (Table tr)
+                    Nothing -> raise ()
              _ -> raise () -- XXX: Does anything else have a metatable?
 
       VP_Register ExecEnv { execStack } n ->
@@ -319,9 +320,9 @@ getValue vp0 = do res <- runExceptionT (getVal vp0)
              Nothing -> raise ()
 
       VP_Upvalue ExecEnv { execUpvals } n ->
-        case execUpvals Vector.!? n of
-          Just r  -> lift (readIORef r)
-          Nothing -> raise ()
+        if 0 <= n && n < IOVector.length execUpvals
+          then lift (readIORef =<< IOVector.read execUpvals n)
+          else raise ()
 
       VP_Varargs ExecEnv { execVarargs } n ->
         do varargs <- lift (readIORef execVarargs)
@@ -376,10 +377,10 @@ setValue vp v =
   setCUpval n val =
     case val of
       Closure ref ->
-        do clo <- readRef ref
-           case cloUpvalues clo Vector.!? n of
-             Nothing -> return ()
-             Just r  -> writeIORef r v
+        do let ups = cloUpvalues (referenceVal ref)
+           when (0 <= n && n < IOVector.length ups) $
+              do r <- IOVector.read ups n
+                 writeIORef r v
 
       _ -> return ()
 
@@ -392,7 +393,7 @@ setValue vp v =
   doSetMeta val mb1 =
     case val of
       Table ref    -> setTableMeta ref mb1
-      UserData ref -> modifyRef ref (\u -> u { userDataMeta = mb1 })
+      UserData ref -> writeIORef (userDataMeta (referenceVal ref)) mb1
       _            -> return ()
 
   setReg n ExecEnv { execStack } =
@@ -402,9 +403,9 @@ setValue vp v =
          Nothing -> return ()
 
   setUVal n ExecEnv { execUpvals } =
-    case execUpvals Vector.!? n of
-      Just r  -> writeIORef r v
-      Nothing -> return ()
+    when (0 <= n && n < IOVector.length execUpvals) $
+      do r <- IOVector.read execUpvals n
+         writeIORef r v
 
   setVArg n ExecEnv { execVarargs } =
     do modifyIORef' execVarargs $ \varargs ->
@@ -461,22 +462,20 @@ findNameResolveEnv dbg vm eid =
               _ -> nameResolveException ("Invalid stack frame: " ++ show sid)
 
        ThreadExecEnv tid ->
-         runAllocWith (dbgNames dbg) $
-           do mb <- lookupRef tid
-              case mb of
-                Nothing  -> liftIO $ nameResolveException "Invalid thread."
-                Just ref ->
-                  do eenv <- stExecEnv <$> readRef ref
-                     liftIO $ execEnvToNameResolveEnv metaTabs eenv
+         do mb <- lookupRef (vmAllocRef vm) tid
+            case mb of
+              Nothing  -> nameResolveException "Invalid thread."
+              Just ref ->
+                do eenv <- getThreadField stExecEnv ref
+                   execEnvToNameResolveEnv metaTabs eenv
 
        ClosureEnvId cid ->
-         runAllocWith (dbgNames dbg) $
-           do mb <- lookupRef cid
-              case mb of
-                Nothing  -> liftIO $ nameResolveException "Invalid closure."
-                Just ref ->
-                  do closure <- readRef ref
-                     liftIO $ closureToResolveEnv metaTabs closure
+         do mb <- lookupRef (vmAllocRef vm) cid
+            case mb of
+              Nothing  -> nameResolveException "Invalid closure."
+              Just ref ->
+                do let closure = referenceVal ref
+                   closureToResolveEnv metaTabs closure
 
 closureToResolveEnv ::
   TypeMetatables -> Closure -> IO (FunId, NameResolveEnv)
@@ -485,8 +484,9 @@ closureToResolveEnv metaTabs c =
                      Just (fid,func) -> return (fid,func)
                      _ -> nameResolveException "Not in a Lua function."
      stack <- SV.new
+     ups <- Vector.freeze (cloUpvalues c)
      let nre = NameResolveEnv
-                 { nrUpvals   = cloUpvalues c
+                 { nrUpvals   = ups
                  , nrStack    = stack
                  , nrFunction = func
                  , nrMetas    = metaTabs
@@ -500,8 +500,9 @@ execEnvToNameResolveEnv metaTabs eenv =
                      Just (fid,func) -> return (fid,func)
                      _ -> nameResolveException "Not in a Lua function."
 
+     ups <- Vector.freeze (execUpvals eenv)
      let nre = NameResolveEnv
-                 { nrUpvals   = execUpvals eenv
+                 { nrUpvals   = ups
                  , nrStack    = execStack eenv
                  , nrFunction = func
                  , nrMetas    = metaTabs
@@ -728,7 +729,7 @@ addSourceFile brks breakRef sources mbName bytes cid fun =
       many -> choosePC (minimumBy (comparing (funNestDepth . fst)) many)
 
 
-newEmptyDebugger :: MVar (Async a) -> Options -> IO (Ptr (), Debugger)
+newEmptyDebugger :: MVar ThreadId -> Options -> IO (Ptr (), Debugger)
 newEmptyDebugger threadVar opts =
   do let chunks = Chunks { topLevelChunks = Map.empty
                          , allFunNames    = Map.empty
@@ -752,11 +753,11 @@ newEmptyDebugger threadVar opts =
                                                    dbgSources
                  , machOnShutdown =
                      do a <- takeMVar threadVar
-                        cancel a
+                        killThread a
                  , machOnQuery    = query
                  }
 
-     (cptr, dbgNames, vm, next) <- setupLuaState cfg
+     (cptr, vm, next) <- setupLuaState cfg
 
      dbgIdleReason   <- newIORef Ready
      dbgStateVM      <- newIORef (Running vm next)
@@ -770,7 +771,7 @@ newEmptyDebugger threadVar opts =
               return (Spec.specDecls s)
             `catch` \SomeException {} -> return [])
 
-     let dbg = Debugger { dbgSources, dbgNames, dbgIdleReason
+     let dbg = Debugger { dbgSources, dbgIdleReason
                         , dbgBreaks, dbgWatches
                         , dbgCommand, dbgCommandCounter, dbgClients
                         , dbgExportable, dbgStateVM
@@ -864,9 +865,10 @@ executeStatement dbg frame statement =
            do whenRunning dbg () $ \vm next ->
                 do recordConsoleInput statement
                    let stat = Text.unpack statement
-                   next' <- executeStatementInContext vm pc env stat $ \vs ->
-                     PrimStep (Interrupt next <$ liftIO (recordConsoleValues vs))
-                   writeIORef (dbgStateVM dbg) (Running vm next')
+                   (next',vm') <-
+                      executeStatementInContext vm pc env stat $ \vs ->
+                        Interrupt next <$ recordConsoleValues vs
+                   writeIORef (dbgStateVM dbg) (Running vm' next')
 
               runNonBlock dbg
 
@@ -899,9 +901,12 @@ prepareCondition dbg (pc,fid) expr =
   do fun  <- lookupFID dbg fid
      let stat = "return " ++ Text.unpack expr
      res <- try (compileStatementForLocation (LuaOpCodes fun) pc stat)
+     act <- newIORef Nothing
      return $! case res of
        Left ParseError{} -> Nothing
-       Right cp -> Just BreakCondition { brkCond = cp, brkText = expr }
+       Right cp -> Just BreakCondition { brkCond = cp
+                                       , brkText = expr
+                                       , brkActive = act }
 
 lookupFID :: Debugger -> FunId -> IO Function
 lookupFID dbg fid =
@@ -942,6 +947,9 @@ data StepMode
     -- If the op-code is a function call, do not stop until the function
     -- returns, or something else causes us to stop.
 
+  | StepOutOp
+    -- ^ Finish evaluating the current code, step over function calls
+
   | Stop
     -- ^ Evaluate until the closest safe place to stop.
 
@@ -950,12 +958,12 @@ data StepMode
     -- After that, procdeed with the given mode.
 
 
-  | StepOverLine Int
+  | StepOverLine {-# UNPACK #-} !Int
     -- ^ Evaluate while we are on this line number.
     -- If we encoutner functions, do not stop until they return
     -- or some other condition caused us to stop.
 
-  | StepIntoLine Int
+  | StepIntoLine {-# UNPACK #-} !Int
     -- ^ Evaluate while we are on this line number.
     -- ^ If we encoutner a function-call, then we stop at the beginning
     -- of the called function.
@@ -980,8 +988,9 @@ runDebugger dbg =
               case state of
                 Running vm next ->
                   do setIdleReason dbg Executing
-                     writeIORef (dbgStateVM dbg) =<<
-                       runAllocWith (dbgNames dbg) (doStepMode dbg vm next mode)
+                     let mode' = nextMode vm next mode
+                     vms <- doStepMode dbg vm next $! mode'
+                     writeIORef (dbgStateVM dbg) vms
                 _ -> return ()
               clients  <- readIORef (dbgClients dbg)
               writeIORef (dbgClients dbg) []
@@ -999,150 +1008,166 @@ handleCommand dbg isIdle cmd =
 
 getCurrentLineNumber :: VM -> IO Int
 getCurrentLineNumber vm =
-    do th <- readRef (vmCurThread vm)
-       return $! fromMaybe 0 $
-              do (_,func) <- luaOpCodes (execFunction (stExecEnv th))
-                 lookupLineNumber func (stPC th)
-
-doStepMode :: Debugger -> VM -> NextStep -> StepMode -> Alloc VMState
-doStepMode dbg vm next mode = oneStepK cont vm next
-  where
-  cont = Cont { running           = runInLua
-              , runningInC        = runInC
-              , finishedOk        = \v -> return (FinishedOk v)
-              , finishedWithError = \v -> return (FinishedWithError v)
-              }
-
-  runInC vm' =
-    do let luaTMVar = machLuaServer (vmMachineEnv vm')
-       res <- liftIO (atomically $ Left  <$> waitForCommandSTM dbg
-                               <|> Right <$> takeTMVar luaTMVar)
-       case res of
-         Left m ->
-           do newMode <- liftIO $
-                            do command <- m
-                               mb      <- handleCommand dbg False command
-                               case mb of
-                                 Nothing -> nextMode vm next mode
-                                 Just mo -> return mo
-              doStepMode dbg vm' WaitForC newMode
-
-         Right cResult ->
-           do let next' = runMach vm' (handleCCallState cResult)
-              mode'   <- liftIO (nextMode vm next mode)
-              doStepMode dbg vm' next' mode'
-
-  runInLua vm' next' =
-    liftIO (nextMode vm next mode) >>= \mode' ->
-    checkStopError dbg vm' next' $
-      if not (mayPauseAfter next)
-        then doStepMode dbg vm' next' mode'
-        else checkStop dbg mode' vm' next' $
-             checkBreakPoint dbg mode' vm' next' $
-             do mb <- liftIO (peekCmd dbg)
-                case mb of
-                  Nothing      -> doStepMode dbg vm' next' mode'
-                  Just command ->
-                    do mbNewMode <- liftIO (handleCommand dbg False command)
-                       let mode'' = fromMaybe mode' mbNewMode
-                       -- external stop directive and we're already
-                       -- at a safe point
-                       if mode'' == Stop then
-                          do liftIO (setIdleReason dbg Ready)
-                             return (Running vm' next')
-                       else
-                          doStepMode dbg vm' next' mode''
+  do let th = vmCurThread vm
+     pc <- getThreadField stPC th
+     return $! getLineNumberForCurFunPC vm pc
 
 
-checkStop :: Debugger -> StepMode -> VM -> NextStep ->
-                                              Alloc VMState -> Alloc VMState
-checkStop dbg mode vm next k =
+-- | Returns 0 if there was no line number associated with this PC getLineNumberForCurFunPC :: VM -> Int -> Int
+getLineNumberForCurFunPC vm pc =
+  fromMaybe 0 $
+  do (_,func) <- luaOpCodes (execFunction (vmCurExecEnv vm))
+     lookupLineNumber func pc
+
+
+
+
+doStepMode :: Debugger -> VM -> NextStep -> StepMode -> IO VMState
+doStepMode dbg vm next mode =
+  do vmstate <- oneStep vm next
+     case vmstate of
+       RunningInC vm' ->
+          do let luaTMVar = machLuaServer (vmMachineEnv vm')
+             res <- atomically $ Left  <$> waitForCommandSTM dbg
+                             <|> Right <$> takeTMVar luaTMVar
+             case res of
+               Left m ->
+                 do command <- m
+                    mbNewMode <- handleCommand dbg False command
+                    doStepMode dbg vm' WaitForC (fromMaybe mode mbNewMode)
+
+               Right cResult ->
+                 do next' <- handleCCallState vm' cResult
+                    let mode' = nextMode vm' next' mode
+                    checkStop dbg mode' (Running vm' next') $
+                      doStepMode dbg vm' next' mode'
+
+       Running vm' next' ->
+        do mode' <- return $! nextMode vm' next' mode
+           checkStopError dbg vm' next' $
+             if not (mayPauseBefore next')
+               then doStepMode dbg vm' next' mode'
+               else checkStop dbg mode' vmstate $
+                    checkBreakPoint dbg mode' vm' next' $
+                    do mb <- peekCmd dbg
+                       case mb of
+                         Nothing      -> doStepMode dbg vm' next' mode'
+                         Just command ->
+                           do mbNewMode <- handleCommand dbg False command
+                              let mode'' = fromMaybe mode' mbNewMode
+                              -- external stop directive and we're already
+                              -- at a safe point
+                              checkStop dbg mode'' vmstate $
+                                doStepMode dbg vm' next' mode''
+
+       _ -> return vmstate
+
+
+checkStop :: Debugger -> StepMode -> VMState -> IO VMState -> IO VMState
+checkStop dbg mode vms k =
   case mode of
-    Stop -> liftIO (do setIdleReason dbg Ready
-                       return (Running vm next))
+    Stop -> do setIdleReason dbg Ready
+               return vms
     _    -> k
 
-checkStopError :: Debugger -> VM -> NextStep -> Alloc VMState -> Alloc VMState
+checkStopError :: Debugger -> VM -> NextStep -> IO VMState -> IO VMState
 checkStopError dbg vm next k =
   case next of
     ThrowError e ->
-      do stopOnErr <- liftIO (readIORef (dbgBreakOnError dbg))
+      do stopOnErr <- readIORef (dbgBreakOnError dbg)
          if stopOnErr
-            then liftIO $ do setIdleReason dbg (ThrowingError e)
-                             return (Running vm next)
+            then do setIdleReason dbg (ThrowingError e)
+                    return (Running vm next)
             else k
     _ -> k
 
 
 
 checkBreakPoint :: Debugger -> StepMode -> VM -> NextStep ->
-                                                 Alloc VMState -> Alloc VMState
+                                                    IO VMState -> IO VMState
 checkBreakPoint dbg mode vm nextStep k =
-  do th <- liftIO (readRef (vmCurThread vm))
-     let curFun = funValueName (execFunction (stExecEnv th))
-         pc     = stPC th
-     case curFun of
-       LuaFID fid ->
+  do let th   = vmCurThread vm
+         eenv = vmCurExecEnv vm
+     let curFun = funValueName (execFunction eenv)
+     case (nextStep, curFun) of
+       (Goto pc, LuaFID fid) ->
          do let loc = (pc,fid)
-            breaks <- liftIO (readIORef (dbgBreaks dbg))
+            breaks <- readIORef (dbgBreaks dbg)
             case Map.lookup loc breaks of
               Just mbCond ->
                 case mbCond of
-                  Nothing -> liftIO $ do setIdleReason dbg ReachedBreakPoint
-                                         return (Running vm nextStep)
+                  Nothing -> atBreak
                   Just c ->
-                    do nextStep' <-
-                          liftIO $ executeCompiledStatment vm (stExecEnv th)
-                                                              (brkCond c)
-                                 $ \vs ->
-                                    let stop = valueBool (trimResult1 vs)
-                                    in if stop
-                                         then Interrupt nextStep
-                                         else nextStep
-                       doStepMode dbg vm nextStep' (StepOut mode)
+                    do act <- readIORef (brkActive c)
+                       case act of
+                         -- Already checked if active
+                         Just active ->
+                           do writeIORef (brkActive c) Nothing
+                              if active then atBreak else k
+
+                         -- Start evaluating the breakpoint condition
+                         Nothing ->
+                           do (nextStep',vm') <-
+                                 executeCompiledStatment vm eenv (brkCond c)
+                                   $ \vs -> do writeIORef (brkActive c)
+                                                 $! Just
+                                                 $! valueBool (trimResult1 vs)
+                                               return nextStep
+                              doStepMode dbg vm' nextStep' (StepOut mode)
               _ -> k
        _ -> k
 
+  where
+  atBreak = do setIdleReason dbg ReachedBreakPoint
+               return (Running vm nextStep)
 
--- | After executing this "step" we may pause execution.
-mayPauseAfter :: NextStep -> Bool
-mayPauseAfter lastStep =
-  case lastStep of
+
+-- | Before executing this "step" we may pause execution.
+mayPauseBefore :: NextStep -> Bool
+mayPauseBefore nextStep =
+  case nextStep of
     Goto{}        -> True
     ApiStart{}    -> True
     ApiEnd{}      -> True
-    Interrupt{}   -> True
     _             -> False
 
 
 
+nextMode :: VM -> NextStep -> StepMode -> StepMode
 
-nextMode :: VM -> NextStep -> StepMode -> IO StepMode
-
-nextMode _ Interrupt{} _ = return Stop
+nextMode _ (Interrupt _) _ = Stop
 
 nextMode vm step mode =
   case mode of
 
-    Stop                -> return Stop
+    Stop                -> Stop
 
-    StepIntoOp -> return $
+    StepIntoOp ->
       case step of
         Goto    {}      -> Stop
         ApiStart{}      -> Stop
         ApiEnd {}       -> Stop
         _               -> mode
 
-    StepOverOp -> return $
+    StepOverOp ->
       case step of
-        Goto    {}      -> Stop
-        ApiStart{}      -> StepOut mode
-        ApiEnd {}       -> Stop
-        FunCall {}      -> StepOut mode
-        Resume  {}      -> StepOutYield mode
+        Goto    {}      -> StepOutOp
+        ApiStart{}      -> StepOutOp
+        ApiEnd {}       -> StepOutOp
+        FunCall {}      -> StepOut StepOutOp      -- shouldn't happen
+        Resume  {}      -> StepOutYield StepOutOp -- shouldn't happen
         _               -> mode
 
-    StepOut m -> return $
+    StepOutOp ->
+      case step of
+        Goto    {}      -> Stop
+        ApiStart{}      -> Stop
+        ApiEnd {}       -> Stop
+        FunCall {}      -> StepOut StepOutOp
+        Resume  {}      -> StepOutYield StepOutOp
+        _               -> mode
+
+    StepOut m ->
       case step of
         FunCall   {}    -> StepOut mode
         ApiStart  {}    -> StepOut mode
@@ -1150,40 +1175,45 @@ nextMode vm step mode =
         FunReturn {}    -> m
         ErrorReturn {}  -> m
         ApiEnd    {}    -> m
+
+        -- ThreadExit and ThreadFail can't happen, because we should have
+        -- first reached the end of the function that we are trying to exit,
+        -- and stopped at that point
+
         _               -> mode
 
-    StepIntoLine n
-      | n < 0 -> do l <- getCurrentLineNumber vm
-                    nextMode vm step (StepIntoLine l)
-      | otherwise ->
+    StepIntoLine n ->
       case step of
-        FunCall {}      -> return Stop
-        FunTailcall {}  -> return Stop
-        FunReturn {}    -> return Stop
-        ErrorReturn {}  -> return Stop
-        ApiStart {}     -> return Stop
-        ApiEnd {}       -> return Stop
-        Goto {}         -> do l <- getCurrentLineNumber vm
-                              return (if n /= l then Stop else StepIntoLine l)
-        _               -> return mode
+        FunCall {}      -> Stop
+        FunTailcall {}  -> Stop
+        FunReturn {}    -> Stop
+        ErrorReturn {}  -> Stop
+        ApiStart {}     -> Stop
+        ApiEnd {}       -> Stop
+        Goto pc
+          | n >= 0 && n /= l -> Stop
+          | otherwise        -> StepIntoLine l
+          where l = getLineNumberForCurFunPC vm pc
 
-    StepOverLine n
-      | n < 0 -> do l <- getCurrentLineNumber vm
-                    nextMode vm step (StepOverLine l)
-      | otherwise ->
+        _ -> mode
+
+    StepOverLine n ->
       case step of
-        FunCall {}      -> return (StepOut mode)
-        FunTailcall {}  -> return (StepOut mode)
-        FunReturn {}    -> return Stop
-        ErrorReturn {}  -> return Stop
-        ApiStart {}     -> return (StepOut mode)
-        ApiEnd {}       -> return Stop
-        Resume {}       -> return (StepOutYield mode)
-        Goto {}         -> do l <- getCurrentLineNumber vm
-                              return (if n /= l then Stop else StepOverLine l)
-        _               -> return mode
+        FunCall {}      -> StepOut mode
+        FunTailcall {}  -> StepOut mode
+        FunReturn {}    -> Stop
+        ErrorReturn {}  -> Stop
+        ApiStart {}     -> StepOut mode
+        ApiEnd {}       -> Stop
+        Resume {}       -> StepOutYield mode
+        Goto pc
+          | n >= 0 && n /= l -> Stop
+          | otherwise        -> StepOverLine l
+          where l = getLineNumberForCurFunPC vm pc
 
-    StepOutYield m -> return $
+        _ -> mode
+
+    StepOutYield m ->
       case step of
         Yield {}        -> m
         ThreadExit {}   -> m
@@ -1191,7 +1221,7 @@ nextMode vm step mode =
         Resume {}       -> StepOutYield mode
         _               -> mode
 
-    Run                 -> return Run
+    Run                 -> Run
 
 
 
