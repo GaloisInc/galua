@@ -356,7 +356,10 @@ function drawDebugger(d) {
 
       drawWatches(dbgState, d.watches)
 
-      drawProfiling(dbgState, state.vm.stats, 'ind')
+      $('#profiling-button').leanModal(
+          { ready: function() { drawProfiling(dbgState, state.vm.stats, 'ind')
+      }} );
+
       drawRegistry(dbgState,  state.vm.registry )
 
       drawNewThread(dbgState, state.vm.thread)
