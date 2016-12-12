@@ -126,7 +126,7 @@ execute !vm !pc =
             m__newindex tabs advance t k v
 
        OP_NEWTABLE tgt arraySize hashSize ->
-        tgt =: (Table <$> machNewTable' vm arraySize hashSize)
+        tgt =: (Table <$> machNewTable vm arraySize hashSize)
 
        OP_SELF tgt src key ->
          do t <- get eenv src
@@ -272,7 +272,7 @@ execute !vm !pc =
             vs <- traverse (getLValue eenv) (funcUpvalues closureFunc)
             closureUpvals <- Vector.thaw vs
             let f = luaFunction fid closureFunc
-            tgt =: (Closure <$> machNewClosure' vm f closureUpvals)
+            tgt =: (Closure <$> machNewClosure vm f closureUpvals)
 
        OP_VARARG a b ->
          do let varargs = execVarargs eenv

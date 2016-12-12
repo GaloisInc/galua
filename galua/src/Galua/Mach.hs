@@ -22,7 +22,6 @@ import qualified Data.Vector as Vector
 import           Data.Vector.Mutable (IOVector)
 import qualified Data.Vector.Mutable as IOVector
 import           Data.ByteString (ByteString)
-import           Data.Void
 import           Foreign (ForeignPtr, Ptr, nullPtr, newForeignPtr, FunPtr
                          , castFunPtr )
 import           Foreign.StablePtr
@@ -355,7 +354,6 @@ newThreadExecEnv =
   do stack <- SV.new
      api   <- newIORef NoApiCall
      var   <- newIORef []
-     resultRef <- newIORef Nothing
      time  <- Clock.getTime Clock.ProcessCPUTime
      upvals <- IOVector.new 0
      return ExecEnv { execStack    = stack
@@ -399,8 +397,6 @@ instance Monad Mach where
 instance MonadIO Mach where
   liftIO m = Mach $ \_ k -> k =<< m
 
-machCall :: Reference Closure -> [Value] -> Mach [Value]
-machCall f vs = Mach $ \_ k -> return (FunCall f vs Nothing k)
 
 machTry ::
   HandlerType -> Reference Closure -> [Value] -> Mach (Either Value [Value])
@@ -415,8 +411,26 @@ machTry h f vs = Mach $ \_ k ->
 machReturn :: [Value] -> Mach a
 machReturn xs = abort (FunReturn xs)
 
+
+--------------------------------------------------------------------------------
+-- Excpetions
+--------------------------------------------------------------------------------
+luaError' :: String -> IO NextStep
+luaError' str =
+  do s <- fromByteString (packUtf8 str)
+     return (ThrowError (String s))
+
+
+luaError :: String -> Mach b
+luaError str = abort =<< liftIO (luaError' str)
+
 machThrow :: Value -> Mach a
 machThrow e = abort (ThrowError e)
+
+
+--------------------------------------------------------------------------------
+-- Threads
+--------------------------------------------------------------------------------
 
 machResume :: Reference Thread -> Mach ThreadResult
 machResume t = Mach $ \_ k -> return (Resume t k)
@@ -431,69 +445,19 @@ machApiCall vm apiCall impl =
 
 
 
+--------------------------------------------------------------------------------
+-- XXX
+
 machVM :: Mach VM
 machVM = Mach $ \e k -> k e
-
-
-machRefLoc :: Mach RefLoc
-machRefLoc = liftIO . machRefLoc' =<< machVM
-
-machRefLoc' :: VM -> IO RefLoc
-machRefLoc' vm =
-  do let tref = vmCurThread vm
-     pc    <- getThreadField stPC tref
-     let eenv = vmCurExecEnv vm
-     stack <- getThreadField stStack tref
-     return RefLoc { refLocCaller = getCaller stack
-                   , refLocSite   = mkLoc eenv pc
-                   }
-  where
-  getCaller st = case Stack.pop st of
-                   Just (ErrorFrame, more)       -> getCaller more
-                   Just (CallFrame pc env _ _,_) -> mkLoc env pc
-                   Nothing -> MachSetup -- XXX: or can this happen?
-
-  mkLoc env pc = case funValueName (execFunction env) of
-                   CFID nm    -> InC nm
-                   LuaFID fid -> InLua fid pc
-
-
-
 
 -- private
 abort :: NextStep -> Mach a
 abort x = Mach $ \_ _ -> return x
+--------------------------------------------------------------------------------
 
 
 
-
-
-
-------------------------------------------------------------------------
--- Derived machine functions
-------------------------------------------------------------------------
-
-machCallPrim :: Prim -> [Value] -> Mach Void
-machCallPrim p vs = machReturn =<< p vs
-
-machWaitForC :: Mach a
-machWaitForC = abort WaitForC
-
-
-
-getsMachEnv :: (MachineEnv -> a) -> Mach a
-getsMachEnv f = fmap f machCurrentEnv
-
--- | Inspect the current execution environment after applying
--- a function.
-getsExecEnv :: (ExecEnv -> a) -> Mach a
-getsExecEnv f =
-  do eenv <- getsVM vmCurExecEnv
-     return (f eenv)
-{-# INLINE getsExecEnv #-}
-
-getsVM :: (VM -> a) -> Mach a
-getsVM f = fmap f machVM
 
 newMachineEnv :: AllocRef -> MachConfig -> IO MachineEnv
 newMachineEnv aref machConfig =
@@ -537,81 +501,42 @@ newCPtr initialToken =
      newForeignPtr freeLuaState luastate
 
 
-luaError' :: String -> IO NextStep
-luaError' str =
-  do s <- fromByteString (packUtf8 str)
-     return (ThrowError (String s))
 
-machNewClosure' ::
+--------------------------------------------------------------------------------
+-- Allocation of values
+--------------------------------------------------------------------------------
+
+machNewClosure ::
   VM -> FunctionValue -> IOVector (IORef Value) -> IO (Reference Closure)
-machNewClosure' vm fun upvals =
+machNewClosure vm fun upvals =
   do let aref = vmAllocRef vm
-     loc  <- machRefLoc' vm
+     loc  <- machRefLoc vm
      newClosure aref loc fun upvals
 
-machNewTable' ::
+machNewTable ::
   VM ->
   Int {- ^ array size -} ->
   Int {- ^ hashtable size -} ->
   IO (Reference Table)
-machNewTable' vm aSz hSz =
+machNewTable vm aSz hSz =
   do let aref = vmAllocRef vm
-     loc <- machRefLoc' vm
+     loc <- machRefLoc vm
      newTable aref loc aSz hSz
 
+machNewUserData :: VM -> ForeignPtr () -> Int -> IO (Reference UserData)
+machNewUserData vm fp n =
+  do let aref = vmAllocRef vm
+     loc  <- machRefLoc vm
+     newUserData aref loc fp n
 
-
-
-luaError :: String -> Mach b
-luaError str = abort =<< liftIO (luaError' str)
-
-machNewClosure ::
-  FunctionValue -> IOVector (IORef Value) -> Mach (Reference Closure)
-machNewClosure fun upvals =
-  do vm <- machVM
-     liftIO (machNewClosure' vm fun upvals)
-
-machNewTable ::
-  Int {- ^ array size -} ->
-  Int {- ^ hashtable size -} ->
-  Mach (Reference Table)
-machNewTable aSz hSz =
-  do vm <- machVM
-     liftIO (machNewTable' vm aSz hSz)
-
-machNewUserData :: ForeignPtr () -> Int -> Mach (Reference UserData)
-machNewUserData fp n =
-  do aref <- machAllocRef
-     loc  <- machRefLoc
-     liftIO (newUserData aref loc fp n)
-
-machNewThread :: Mach (Reference Thread)
-machNewThread =
-  do aref    <- machAllocRef
-     loc     <- machRefLoc
-     luaMVar <- getsMachEnv machLuaServer
-     cMVar   <- getsMachEnv machCServer
-     liftIO (allocNewThread aref loc luaMVar cMVar ThreadNew)
-
-machLookupRef :: AllocType a => Int -> Mach (Maybe (Reference a))
-machLookupRef n =
-  do aref <- machAllocRef
-     liftIO (lookupRef aref n)
-
-
-data ExternalLuaState = ExternalLuaState
-  { extLuaStateLuaServer   :: TMVar CCallState
-  , extLuaStateCServer     :: MVar CNextStep
-  , extLuaStateThreadId    :: Int
-  }
-
-extToThreadRef :: ExternalLuaState -> Mach (Reference Thread)
-extToThreadRef ext =
-  do mb <- machLookupRef (extLuaStateThreadId ext)
-     case mb of
-       Nothing -> fail "extToThreadRef: Unexpectedly invalid weak thread reference"
-       Just x -> return x
-
+machNewThread :: VM -> IO (Reference Thread)
+machNewThread vm =
+  do let aref = vmAllocRef vm
+     loc     <- machRefLoc vm
+     let menv    = vmMachineEnv vm
+         luaMVar = machLuaServer menv
+         cMVar   = machCServer menv
+     allocNewThread aref loc luaMVar cMVar ThreadNew
 
 allocNewThread ::
   AllocRef ->
@@ -641,53 +566,85 @@ allocNewThread aref refLoc luaTMVar cMVar st =
      addRefFinalizer ref (freeStablePtr sptr)
      return ref
 
+machRefLoc :: VM -> IO RefLoc
+machRefLoc vm =
+  do let tref = vmCurThread vm
+     pc    <- getThreadField stPC tref
+     let eenv = vmCurExecEnv vm
+     stack <- getThreadField stStack tref
+     return RefLoc { refLocCaller = getCaller stack
+                   , refLocSite   = mkLoc eenv pc
+                   }
+  where
+  getCaller st = case Stack.pop st of
+                   Just (ErrorFrame, more)       -> getCaller more
+                   Just (CallFrame pc env _ _,_) -> mkLoc env pc
+                   Nothing -> MachSetup -- XXX: or can this happen?
 
-machAllocRef :: Mach AllocRef
-machAllocRef = getsVM vmAllocRef
+  mkLoc env pc = case funValueName (execFunction env) of
+                   CFID nm    -> InC nm
+                   LuaFID fid -> InLua fid pc
 
-machCurrentEnv :: Mach MachineEnv
-machCurrentEnv = getsVM vmMachineEnv
 
-machCurrentThread :: Mach (Reference Thread)
-machCurrentThread = getsVM vmCurThread
 
-machBlockedThreads :: Mach (Stack (Reference Thread))
-machBlockedThreads = getsVM vmBlocked
 
-machIsMainThread :: Reference Thread -> Mach Bool
-machIsMainThread t =
-  do mainThread <- getsMachEnv machMainThreadRef
-     return (t == mainThread)
+--------------------------------------------------------------------------------
+-- Mapping from C to Lua
+--------------------------------------------------------------------------------
 
-machLookupCFun :: CFun -> Mach CObjInfo
-machLookupCFun f =
-  do cacheRef    <- getsMachEnv machNameCache
-     getCFunInfo <- getsMachEnv machCFunInfo
+data ExternalLuaState = ExternalLuaState
+  { extLuaStateLuaServer   :: TMVar CCallState
+  , extLuaStateCServer     :: MVar CNextStep
+  , extLuaStateThreadId    :: Int
+  }
+
+machLookupRef :: AllocType a => VM -> Int -> IO (Maybe (Reference a))
+machLookupRef vm n = lookupRef (vmAllocRef vm) n
+
+extToThreadRef :: VM -> ExternalLuaState -> IO (Reference Thread)
+extToThreadRef vm ext =
+  do mb <- machLookupRef vm (extLuaStateThreadId ext)
+     case mb of
+       Nothing -> fail "extToThreadRef: Unexpectedly invalid weak thread reference"
+       Just x  -> return x
+
+--------------------------------------------------------------------------------
+
+
+
+
+machIsMainThread :: VM -> Reference Thread -> Bool
+machIsMainThread vm t = t == machMainThreadRef (vmMachineEnv vm)
+
+machLookupCFun :: VM -> CFun -> IO CObjInfo
+machLookupCFun vm f =
+  do let menv        = vmMachineEnv vm
+         cacheRef    = machNameCache menv
+         getCFunInfo = machCFunInfo menv
      {- Note that there is a potential race when we are updating the cache.
      We don't need to worry about it, because the cache is a "best effort"
      strucutre and we should be getting reasonable results even if some
      updates get lost. -}
-     liftIO $
-       do cache <- readIORef cacheRef
-          case cacheLookup f cache of
-            Just (i,newCache) ->
-              do writeIORef cacheRef $! newCache
-                 return i
-            Nothing ->
-              do o <- getCFunInfo (castFunPtr f)
-                 writeIORef cacheRef $! cacheInsert f o cache
-                 return o
+     cache <- readIORef cacheRef
+     case cacheLookup f cache of
+       Just (i,newCache) ->
+         do writeIORef cacheRef $! newCache
+            return i
+       Nothing ->
+         do o <- getCFunInfo (castFunPtr f)
+            writeIORef cacheRef $! cacheInsert f o cache
+            return o
 
 
 
 -- | Build a closure for a function using the given value as its only upvalue
 chunkToClosure ::
-  MachineEnv                        ->
+  VM ->
   Maybe String  {- ^ source name -}   ->
   ByteString    {- ^ function text -} ->
   Value         {- ^ first upvalue (i.e., "upvalues") -} ->
-  Mach (Either String (Reference Closure))
-chunkToClosure menv name bytes env =
+  IO (Either String (Reference Closure))
+chunkToClosure vm name bytes env =
   do res <- parser
      case res of
        Left e -> return (Left e)
@@ -696,7 +653,9 @@ chunkToClosure menv name bytes env =
                 initial _ = Nil
                 func' = propagateSources func
 
-            (upvalues,modNum) <- liftIO $
+                menv = vmMachineEnv vm
+
+            (upvalues,modNum) <-
               do upvalues <- IOVector.new numUpval
                  for_ [0 .. numUpval-1 ] $ \i ->
                    IOVector.write upvalues i =<< newIORef (initial i)
@@ -706,17 +665,17 @@ chunkToClosure menv name bytes env =
                  return (upvalues, modNum)
 
             let fid = rootFun modNum
-            clo <- machNewClosure (luaFunction fid func') upvalues
-            liftIO (machOnChunkLoad (machConfig menv) name bytes modNum func)
+            clo <- machNewClosure vm (luaFunction fid func') upvalues
+            machOnChunkLoad (machConfig menv) name bytes modNum func
             return (Right clo)
 
   where
   luaSignature = "\x1bLua"
   bytesL = L.fromStrict bytes
   parser | luaSignature `B.isPrefixOf` bytes = return (parseLuaBytecode name bytesL)
-         | otherwise                         = liftIO (parseLua name bytesL)
+         | otherwise                         = parseLua name bytesL
 
-activateThread :: Reference Closure -> [Value] -> Reference Thread -> Mach ()
+activateThread :: Reference Closure -> [Value] -> Reference Thread -> IO ()
 activateThread cRef vs tRef =
   setThreadField threadStatus tRef
       (ThreadSuspended (return (FunCall cRef vs Nothing (return . FunReturn))))

@@ -43,13 +43,16 @@ reentryFromC ::
   [PrimArgument] {- ^ arguments at entry point -} ->
   Mach (Maybe PrimArgument) {- ^ code to run   -} ->
   NextStep
-reentryFromC vm label returnAddress primargs k =
-  do let apiCall = ApiCall
+reentryFromC vm label returnAddress primargs impl =
+  let apiCall = ApiCall
            { apiCallMethod = label
            , apiCallReturn = returnAddress
            , apiCallArgs = primargs
            }
-     machApiCall vm apiCall k
+  in ApiStart apiCall $ unMach impl vm $ \res ->
+                        return (ApiEnd apiCall res)
+
+
 
 
 

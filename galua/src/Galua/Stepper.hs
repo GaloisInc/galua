@@ -271,9 +271,9 @@ performThreadFail c vm e =
 
        Just (t, ts) ->
          do setThreadField threadStatus th ThreadCrashed
-            eenv <- getThreadField stExecEnv t
+            newEnv <- getThreadField stExecEnv t
             vmSwitchToNormal c vm{ vmCurThread = t, vmBlocked = ts
-                                 , vmCurExecEnv = eenv }
+                                 , vmCurExecEnv = newEnv }
                                (ThreadError e)
 
 performThrowError :: Cont r -> VM -> Value -> IO r

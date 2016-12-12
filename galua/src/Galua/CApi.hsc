@@ -83,10 +83,27 @@ type Reentry m =
                     {- ^ operation continuation producing optional C return -} ->
   IO CInt
 
+-- ^ Do only IO
 reentryIO :: Reentry IO
 reentryIO label args l r k = reentry label args l r (liftIO . k)
 
+-- ^ Do only IO but has access to the VM
+reentryVM ::
+  String            {- ^ entry name -} ->
+  [PrimArgument]    {- ^ entry arguments -} ->
+  Ptr ()            {- ^ stable pointer -} ->
+  Ptr ()            {- ^ return address -} ->
+  (VM -> SV.SizedVector (IORef Value) -> IO (Maybe PrimArgument))
+                    {- ^ operation continuation producing optional C return -} ->
+  IO CInt
+reentryVM label args l r k = reentry label args l r $ \stack ->
+  do vm <- machVM
+     liftIO (k vm stack)
+
+
+
 -- | Resume execution of the machine upon entry from the C API
+-- ^ Do IO, has access to both VM and continuation
 reentry :: Reentry Mach
 reentry label args l r k =
   do res <- try body
@@ -107,8 +124,9 @@ reentry label args l r k =
 
 wrapWithStack :: Int -> (SV.SizedVector (IORef Value) -> Mach a) -> Mach a
 wrapWithStack threadId k =
-  do Just threadRef <- machLookupRef threadId
-     eenv <- getThreadField stExecEnv threadRef
+  do vm             <- machVM
+     Just threadRef <- liftIO (machLookupRef vm threadId)
+     eenv           <- getThreadField stExecEnv threadRef
      k (execStack eenv)
 
 result :: (MonadIO m, CArg a) => Ptr a -> a -> m (Maybe PrimArgument)
@@ -280,9 +298,9 @@ foreign export ccall lua_pushvalue_hs :: EntryPoint (CInt -> IO CInt)
 -- | [-0, +1, -]
 lua_pushvalue_hs :: EntryPoint (CInt -> IO CInt)
 lua_pushvalue_hs l r ix =
-  reentry "lua_pushvalue" [cArg ix] l r $ \args ->
-  do x <- valueArgument (fromIntegral ix) args
-     liftIO (push args x)
+  reentryVM "lua_pushvalue" [cArg ix] l r $ \vm args ->
+  do x <- valueArgument' vm (fromIntegral ix) args
+     push args x
      return Nothing
 
 foreign export ccall lua_pushcclosure_hs :: EntryPoint (CFun -> CInt -> IO CInt)
@@ -290,12 +308,12 @@ foreign export ccall lua_pushcclosure_hs :: EntryPoint (CFun -> CInt -> IO CInt)
 -- [-nup, +1, e]
 lua_pushcclosure_hs :: EntryPoint (CFun -> CInt -> IO CInt)
 lua_pushcclosure_hs l r func nup =
-  reentry "lua_pushcclosure" [cArg func, cArg nup] l r $ \args ->
+  reentryVM "lua_pushcclosure" [cArg func, cArg nup] l r $ \vm args ->
   do upvals <- popN args (fromIntegral nup)
-     info   <- machLookupCFun func
-     vs     <- liftIO (Vector.thaw =<< traverse newIORef (Vector.fromList upvals))
-     c      <- machNewClosure (cFunction CFunName { cfunName = info
-                                                  , cfunAddr = func}) vs
+     info   <- machLookupCFun vm func
+     vs     <- Vector.thaw =<< traverse newIORef (Vector.fromList upvals)
+     c      <- machNewClosure vm (cFunction CFunName { cfunName = info
+                                                     , cfunAddr = func}) vs
      push args (Closure c)
      return Nothing
 
@@ -305,8 +323,8 @@ foreign export ccall lua_tocfunction_hs
 -- [-0, +0, -]
 lua_tocfunction_hs :: EntryPoint (CInt -> Ptr CFun -> IO CInt)
 lua_tocfunction_hs l r ix out =
-  reentry "lua_tocfunction" [cArg ix] l r $ \args ->
-  do x <- valueArgument (fromIntegral ix) args
+  reentryVM "lua_tocfunction" [cArg ix] l r $ \vm args ->
+  do x <- valueArgument' vm (fromIntegral ix) args
      res <- case x of
               Closure cref ->
                 case funValueName (cloFun (referenceVal cref)) of
@@ -320,8 +338,8 @@ foreign export ccall lua_iscfunction_hs :: EntryPoint (CInt -> Ptr CInt -> IO CI
 -- [-0, +0, -]
 lua_iscfunction_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
 lua_iscfunction_hs l r ix out =
-  reentry "lua_iscfunction" [cArg ix] l r $ \args ->
-  do x <- valueArgument (fromIntegral ix) args
+  reentryVM "lua_iscfunction" [cArg ix] l r $ \vm args ->
+  do x <- valueArgument' vm (fromIntegral ix) args
      res <- case x of
               Closure cref ->
                 case funValueName (cloFun (referenceVal cref)) of
@@ -338,8 +356,8 @@ foreign export ccall lua_type_hs ::
 -- | [-0, +0, -]
 lua_type_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
 lua_type_hs l r ix out =
-  reentry "lua_type" [cArg ix] l r $ \args ->
-  do mb <- valueArgumentOpt (fromIntegral ix) args
+  reentryVM "lua_type" [cArg ix] l r $ \vm args ->
+  do mb <- valueArgumentOpt' vm (fromIntegral ix) args
      result out $
        case mb of
          Just x  -> lua_type_int x
@@ -465,8 +483,8 @@ foreign export ccall lua_isnumber_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
 -- | [-0, +0, -]
 lua_isnumber_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
 lua_isnumber_hs l r ix out =
-  reentry "lua_isnumber" [cArg ix] l r $ \args ->
-  do v <- valueArgument(fromIntegral ix) args
+  reentryVM "lua_isnumber" [cArg ix] l r $ \vm args ->
+  do v <- valueArgument' vm (fromIntegral ix) args
      result out $ case valueNumber v of
                     Just {} -> 1
                     Nothing -> 0
@@ -477,8 +495,8 @@ foreign export ccall lua_isuserdata_hs
 -- | [-0, +0, -]
 lua_isuserdata_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
 lua_isuserdata_hs l r ix out =
-  reentry "lua_isuserdata" [cArg ix] l r $ \args ->
-  do v <- valueArgument (fromIntegral ix) args
+  reentryVM "lua_isuserdata" [cArg ix] l r $ \vm args ->
+  do v <- valueArgument' vm (fromIntegral ix) args
      result out $ case v of
                     UserData{}      -> 1
                     LightUserData{} -> 1
@@ -490,8 +508,8 @@ foreign export ccall lua_isstring_hs
 -- | [-0, +0, -]
 lua_isstring_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
 lua_isstring_hs l r ix out =
-  reentry "lua_isstring" [cArg ix] l r $ \args ->
-  do v <- valueArgument (fromIntegral ix) args
+  reentryVM "lua_isstring" [cArg ix] l r $ \vm args ->
+  do v <- valueArgument' vm (fromIntegral ix) args
      result out $ case v of
                     String{} -> 1
                     Number{} -> 1
@@ -503,8 +521,8 @@ foreign export ccall lua_isinteger_hs
 -- | [-0, +0, -]
 lua_isinteger_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
 lua_isinteger_hs l r ix out =
-  reentry "lua_isinteger" [cArg ix] l r $ \args ->
-  do v <- valueArgument (fromIntegral ix) args
+  reentryVM "lua_isinteger" [cArg ix] l r $ \vm args ->
+  do v <- valueArgument' vm (fromIntegral ix) args
      result out $ case v of
                     Number Int{} -> 1
                     _            -> 0
@@ -528,11 +546,11 @@ foreign export ccall lua_tointegerx_hs
 -- | [-0, +0, -]
 lua_tointegerx_hs :: EntryPoint (CInt -> Ptr CInt -> Ptr Lua_Integer -> IO CInt)
 lua_tointegerx_hs l r ix isnum out =
-  reentry "lua_integerx" [cArg ix, cArg isnum] l r $ \args ->
-  do v <- valueArgument (fromIntegral ix) args
-     liftIO $ case valueInt v of
-                Just i  -> pokeNotNull isnum 1 >> result out (fromIntegral i)
-                Nothing -> pokeNotNull isnum 0 >> result out 0
+  reentryVM "lua_integerx" [cArg ix, cArg isnum] l r $ \vm args ->
+  do v <- valueArgument' vm (fromIntegral ix) args
+     case valueInt v of
+       Just i  -> pokeNotNull isnum 1 >> result out (fromIntegral i)
+       Nothing -> pokeNotNull isnum 0 >> result out 0
 
 foreign export ccall lua_toboolean_hs
   :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
@@ -540,8 +558,8 @@ foreign export ccall lua_toboolean_hs
 -- | [-0, +0, -]
 lua_toboolean_hs :: EntryPoint (CInt -> Ptr CInt -> IO CInt)
 lua_toboolean_hs l r ix out =
-  reentry "lua_toboolean" [cArg ix] l r $ \args ->
-  do b <- boolArgument (fromIntegral ix) args
+  reentryVM "lua_toboolean" [cArg ix] l r $ \vm args ->
+  do b <- boolArgument vm (fromIntegral ix) args
      result out (if b then 1 else 0)
 
 foreign export ccall lua_tonumberx_hs
@@ -550,13 +568,13 @@ foreign export ccall lua_tonumberx_hs
 -- | [-0, +0, -]
 lua_tonumberx_hs :: EntryPoint (CInt -> Ptr CInt -> Ptr Lua_Number -> IO CInt)
 lua_tonumberx_hs l r ix isnum out =
-  reentry "lua_tonumberx" [cArg ix, cArg isnum] l r $ \args ->
-  do v <- valueArgument (fromIntegral ix) args
-     liftIO $ case numberToDouble <$> valueNumber v of
-                Just d  -> do pokeNotNull isnum 1
-                              result out d
-                Nothing -> do pokeNotNull isnum 0
-                              result out 0
+  reentryVM "lua_tonumberx" [cArg ix, cArg isnum] l r $ \vm args ->
+  do v <- valueArgument' vm (fromIntegral ix) args
+     case numberToDouble <$> valueNumber v of
+       Just d  -> do pokeNotNull isnum 1
+                     result out d
+       Nothing -> do pokeNotNull isnum 0
+                     result out 0
 
 foreign export ccall lua_tolstring_hs
   :: EntryPoint (CInt -> Ptr CSize -> Ptr CString -> IO CInt)
@@ -592,8 +610,8 @@ foreign export ccall lua_touserdata_hs
 -- | [-0, +0, -]
 lua_touserdata_hs :: EntryPoint (CInt -> Ptr (Ptr ()) -> IO CInt)
 lua_touserdata_hs l r arg out =
-  reentry "lua_touserdata" [cArg arg] l r $ \args ->
-  do v <- valueArgument (fromIntegral arg) args
+  reentryVM "lua_touserdata" [cArg arg] l r $ \vm args ->
+  do v <- valueArgument' vm (fromIntegral arg) args
      ptr <- case v of
               UserData uref ->
                 do let fptr = userDataPtr (referenceVal uref)
@@ -636,8 +654,8 @@ foreign export ccall lua_createtable_hs :: EntryPoint (CInt -> CInt -> IO CInt)
 -- | [-0, +1, e]
 lua_createtable_hs :: EntryPoint (CInt -> CInt -> IO CInt)
 lua_createtable_hs l r na nh =
-  reentry "lua_createtable" [cArg na, cArg nh] l r $ \args ->
-  do t <- machNewTable (fromIntegral na) (fromIntegral nh)
+  reentryVM "lua_createtable" [cArg na, cArg nh] l r $ \vm args ->
+  do t <- machNewTable vm (fromIntegral na) (fromIntegral nh)
      push args (Table t)
      return Nothing
 
@@ -757,9 +775,9 @@ foreign export ccall lua_rawequal_hs
 
 lua_rawequal_hs :: EntryPoint (CInt -> CInt -> Ptr CInt -> IO CInt)
 lua_rawequal_hs l r ix1 ix2 out =
-  reentry "lua_rawequal" [cArg ix1, cArg ix2] l r $ \args ->
-  do x <- valueArgumentOpt (fromIntegral ix1) args
-     y <- valueArgumentOpt (fromIntegral ix2) args
+  reentryVM "lua_rawequal" [cArg ix1, cArg ix2] l r $ \vm args ->
+  do x <- valueArgumentOpt' vm (fromIntegral ix1) args
+     y <- valueArgumentOpt' vm (fromIntegral ix2) args
      result out $
        case (x,y) of
           (Just a, Just b) | a == b -> 1
@@ -843,13 +861,12 @@ foreign export ccall lua_newuserdata_hs
 -- | [-0, +1, e]
 lua_newuserdata_hs :: EntryPoint (CSize -> Ptr (Ptr ()) -> IO CInt)
 lua_newuserdata_hs l r sz out =
-  reentry "lua_newuserdata" [cArg sz] l r $ \args ->
+  reentryVM "lua_newuserdata" [cArg sz] l r $ \vm args ->
   do let sz' = fromIntegral sz
-     fptr <- liftIO (mallocForeignPtrBytes sz')
-     u <- machNewUserData fptr sz'
-
-     garbage <- getsMachEnv machGarbage
-     liftIO (addRefFinalizer u (atomicModifyIORef garbage (\xs -> (UserData u : xs, ()))))
+     fptr <- mallocForeignPtrBytes sz'
+     u    <- machNewUserData vm fptr sz'
+     let garbage = machGarbage (vmMachineEnv vm)
+     addRefFinalizer u (atomicModifyIORef garbage (\xs -> (UserData u : xs, ())))
 
      push args (UserData u)
      result out (unsafeForeignPtrToPtr fptr)
@@ -966,15 +983,14 @@ foreign export ccall lua_rawlen_hs :: EntryPoint (CInt -> Ptr CSize -> IO CInt)
 -- | [-0, +0, –]
 lua_rawlen_hs :: EntryPoint (CInt -> Ptr CSize -> IO CInt)
 lua_rawlen_hs l r idx out =
-  reentry "lua_rawlen" [cArg idx] l r $ \args ->
-  do v <- valueArgument (fromIntegral idx) args
-     liftIO $
-       do len <- case v of
-                   String xs  -> return (luaStringLen xs)
-                   Table t    -> tableLen t
-                   UserData u -> return (userDataSize (referenceVal u))
-                   _          -> return 0
-          result out (fromIntegral len)
+  reentryVM "lua_rawlen" [cArg idx] l r $ \vm args ->
+  do v   <- valueArgument' vm (fromIntegral idx) args
+     len <- case v of
+              String xs  -> return (luaStringLen xs)
+              Table t    -> tableLen t
+              UserData u -> return (userDataSize (referenceVal u))
+              _          -> return 0
+     result out (fromIntegral len)
 
 ------------------------------------------------------------------------
 
@@ -985,16 +1001,16 @@ foreign export ccall lua_load_hs ::
 lua_load_hs :: EntryPoint (CString -> CSize -> CString -> CString -> Ptr CInt -> IO CInt)
 lua_load_hs l r chunk chunksize chunkname mode out =
   -- Note: this is an internal entry point, the C api handles the Reader
-  reentry "lua_load" [cstringArg0 chunkname, cstringArg0 mode] l r
-     $ \args ->
-    do chunk1<- liftIO (B.packCStringLen (chunk, fromIntegral chunksize))
+  reentryVM "lua_load" [cstringArg0 chunkname, cstringArg0 mode] l r
+     $ \vm args ->
+    do chunk1<- B.packCStringLen (chunk, fromIntegral chunksize)
        name  <- if nullPtr == chunkname
                   then return Nothing
-                  else liftIO (Just <$> peekCAString chunkname)
-       menv  <- machCurrentEnv
-       globals <- getsMachEnv machGlobals
-       eclo <- chunkToClosure menv name chunk1 (Table globals)
-       liftIO $ case eclo of
+                  else Just <$> peekCAString chunkname
+       let menv    = vmMachineEnv vm
+           globals = machGlobals menv
+       eclo <- chunkToClosure vm name chunk1 (Table globals)
+       case eclo of
          Left e    -> do e' <- fromByteString (B8.pack e)
                          push args (String e')
                          result out 1
@@ -1010,9 +1026,10 @@ lua_setglobal_hs :: EntryPoint (CString -> IO CInt)
 lua_setglobal_hs l r cname =
   reentry "lua_setglobal" [cstringArg0 cname] l r $ \args ->
   do v <- pop args
-     t <- getsMachEnv machGlobals
+     vm <- machVM
      liftIO $
-       do k <- peekLuaString0 cname
+       do let t = machGlobals (vmMachineEnv vm)
+          k <- peekLuaString0 cname
           setTableRaw t (String k) v
           return Nothing
 
@@ -1020,13 +1037,12 @@ foreign export ccall lua_getglobal_hs :: EntryPoint (CString -> Ptr CInt -> IO C
 
 lua_getglobal_hs :: EntryPoint (CString -> Ptr CInt -> IO CInt)
 lua_getglobal_hs l r cname out =
-  reentry "lua_getglobal" [cstringArg0 cname] l r $ \args ->
-  do t <- getsMachEnv machGlobals
-     liftIO $
-       do k <- peekLuaString0 cname
-          v <- getTableRaw t (String k)
-          push args v
-          result out (lua_type_int v)
+  reentryVM "lua_getglobal" [cstringArg0 cname] l r $ \vm args ->
+  do let t = machGlobals (vmMachineEnv vm)
+     k <- peekLuaString0 cname
+     v <- getTableRaw t (String k)
+     push args v
+     result out (lua_type_int v)
 
 ------------------------------------------------------------------------
 
@@ -1093,8 +1109,8 @@ foreign export ccall
 
 lua_tothread_hs :: EntryPoint (CInt -> Ptr (Ptr ()) -> IO CInt)
 lua_tothread_hs l r n out =
-  reentry "lua_tothread" [cArg n] l r $ \args ->
-    do v <- valueArgument (fromIntegral n) args
+  reentryVM "lua_tothread" [cArg n] l r $ \vm args ->
+    do v <- valueArgument' vm (fromIntegral n) args
        result out $!
          case v of
            Thread t -> unsafeForeignPtrToPtr (threadCPtr (referenceVal t))
@@ -1105,10 +1121,10 @@ foreign export ccall
 
 lua_pushthread_hs :: EntryPoint (Ptr CInt -> IO CInt)
 lua_pushthread_hs l r out =
-  reentry "lua_pushthread" [] l r $ \args ->
-    do ref    <- machCurrentThread
-       isMain <- machIsMainThread ref
-       push args (Thread ref)
+  reentryVM "lua_pushthread" [] l r $ \vm args ->
+    do let curT   = vmCurThread vm
+           isMain = machIsMainThread vm curT
+       push args (Thread curT)
        result out (if isMain then 1 else 0)
 
 
@@ -1117,9 +1133,9 @@ foreign export ccall
 
 lua_status_hs :: EntryPoint (Ptr CInt -> IO CInt)
 lua_status_hs l r out =
-  reentry "lua_status" [] l r $ \_ ->
-     do thread <- extToThreadRef =<< liftIO (deRefLuaState l)
-        st <- getThreadField threadStatus thread
+  reentryVM "lua_status" [] l r $ \vm _ ->
+     do thread <- extToThreadRef vm =<< deRefLuaState l
+        st     <- getThreadField threadStatus thread
 
         result out $
           case st of
@@ -1135,7 +1151,8 @@ foreign export ccall
 lua_resume_hs :: EntryPoint (Ptr () -> CInt -> Ptr CInt -> IO CInt)
 lua_resume_hs l r from nargs out =
   reentry "lua_resume" [cArg from, cArg nargs] l r $ \args ->
-    do tRef <- extToThreadRef =<< liftIO (deRefLuaState l)
+    do vm   <- machVM
+       tRef <- liftIO (extToThreadRef vm =<< deRefLuaState l)
 
        st <- getThreadField threadStatus tRef
        case st of
@@ -1148,7 +1165,7 @@ lua_resume_hs l r from nargs out =
                closure <- functionArgument (-1) args
                void (pop args)
 
-               activateThread closure resumeArgs tRef
+               liftIO (activateThread closure resumeArgs tRef)
                doResume tRef args
 
          _ -> do e <- liftIO (fromByteString "Thread not resumable")
@@ -1180,7 +1197,8 @@ lua_yieldk_hs l r nResults ctx func =
   reentry "lua_yieldk" [cArg nResults, cArg ctx, cArg func] l r $ \args ->
     do outputs <- popN args (fromIntegral nResults)
 
-       tRef <- extToThreadRef =<< liftIO (deRefLuaState l)
+       vm <- machVM
+       tRef <- liftIO (extToThreadRef vm =<< deRefLuaState l)
        stack <- execStack <$> getThreadField stExecEnv tRef
        liftIO $ do n <- SV.size stack
                    SV.shrink stack n
@@ -1199,8 +1217,8 @@ foreign export ccall
 
 lua_newthread_hs :: EntryPoint (Ptr (Ptr ()) -> IO CInt)
 lua_newthread_hs l r out =
-  reentry "lua_newthread" [] l r $ \args ->
-    do threadRef <- machNewThread
+  reentryVM "lua_newthread" [] l r $ \vm args ->
+    do threadRef <- machNewThread vm
        push args (Thread threadRef)
        result out (unsafeForeignPtrToPtr (threadCPtr (referenceVal threadRef)))
 
@@ -1209,10 +1227,10 @@ foreign export ccall
 
 lua_isyieldable_hs :: EntryPoint (Ptr CInt -> IO CInt)
 lua_isyieldable_hs l r out =
-  reentry "lua_isyieldable" [] l r $ \_ ->
-    do tRef <- extToThreadRef =<< liftIO (deRefLuaState l)
+  reentryVM "lua_isyieldable" [] l r $ \vm _ ->
+    do tRef <- extToThreadRef vm =<< deRefLuaState l
 
-       isMain <- machIsMainThread tRef
+       let isMain = machIsMainThread vm tRef
        isYieldable <- if isMain
                            then return False
                            else isThreadRunning <$> getThreadField threadStatus tRef
@@ -1299,19 +1317,18 @@ foreign export ccall
 
 lua_getstack_hs :: EntryPoint (CInt -> Ptr LuaDebug -> Ptr CInt -> IO CInt)
 lua_getstack_hs l r level ar out =
-  reentry "lua_getstack" [cArg level, cArg (castPtr ar :: Ptr ())] l r $ \_ ->
+  reentryVM "lua_getstack" [cArg level, cArg (castPtr ar :: Ptr ())] l r $ \vm _ ->
 
-  do tRef <- extToThreadRef =<< liftIO (deRefLuaState l)
-     liftIO $
-       do mbExecEnv <- findExecEnv (fromIntegral level) tRef
+  do tRef <- extToThreadRef vm =<< deRefLuaState l
+     mbExecEnv <- findExecEnv (fromIntegral level) tRef
 
-          case mbExecEnv of
-            -- get stack doesn't access a thread's initial stack for whatever reason
-            Just execEnv | not (isNullCFunction (execFunction (snd execEnv))) ->
-              do pokeLuaDebugCallInfo ar =<< exportExecEnv execEnv
-                 result out 1
+     case mbExecEnv of
+       -- get stack doesn't access a thread's initial stack for whatever reason
+       Just execEnv | not (isNullCFunction (execFunction (snd execEnv))) ->
+         do pokeLuaDebugCallInfo ar =<< exportExecEnv execEnv
+            result out 1
 
-            _ -> result out 0
+       _ -> result out 0
 
 
 isNullCFunction :: FunctionValue -> Bool
@@ -1326,73 +1343,72 @@ foreign export ccall
 
 lua_getinfo_hs :: EntryPoint (CString -> Ptr LuaDebug -> Ptr CInt -> IO CInt)
 lua_getinfo_hs l r whatPtr ar out =
-  reentry "lua_getinfo" [cstringArg0 whatPtr, cArg (castPtr ar :: Ptr ())] l r $ \args ->
-  do what         <- liftIO (peekCString whatPtr)
+  reentryVM "lua_getinfo" [cstringArg0 whatPtr, cArg (castPtr ar :: Ptr ())] l r $ \vm args ->
+  do what         <- peekCString whatPtr
 
      (pc,execEnv) <- if '>'`elem` what
-                       then do th <- extToThreadRef =<< liftIO (deRefLuaState l)
+                       then do th <- extToThreadRef vm =<< deRefLuaState l
                                pc <- getThreadField stPC th
                                eenv <- getThreadField stExecEnv th
                                return (pc,eenv)
-                       else liftIO (importExecEnv =<< peekLuaDebugCallInfo ar)
+                       else importExecEnv =<< peekLuaDebugCallInfo ar
 
      let luaWhat fid = if isRootFun fid then "main" else "Lua"
 
      let funVal = execFunction execEnv
-     liftIO $
-       case (funValueName funVal) of
+     case (funValueName funVal) of
 
-         LuaFID fid -> liftIO $
-           do let Just (_,fun) = luaOpCodes funVal
-              when ('n' `elem` what) $
-                do pokeLuaDebugName            ar =<< newCAString ("(FID " ++ show fid ++ ")") -- track this
-                   pokeLuaDebugNameWhat        ar =<< newCAString (luaWhat fid)
+       LuaFID fid ->
+         do let Just (_,fun) = luaOpCodes funVal
+            when ('n' `elem` what) $
+              do pokeLuaDebugName            ar =<< newCAString ("(FID " ++ show fid ++ ")") -- track this
+                 pokeLuaDebugNameWhat        ar =<< newCAString (luaWhat fid)
 
-              when ('S' `elem` what) $
-                do pokeLuaDebugSource          ar =<< newCAString (maybe "=(unknown source)" B8.unpack (funcSource fun))
-                   pokeLuaDebugShortSrc        ar (maybe "(unknown source)" B8.unpack (funcSource fun))
-                   pokeLuaDebugLineDefined     ar (fromIntegral (funcLineDefined fun))
-                   pokeLuaDebugLastLineDefined ar (fromIntegral (funcLastLineDefined fun))
-                   pokeLuaDebugWhat            ar =<< newCAString (luaWhat fid)
+            when ('S' `elem` what) $
+              do pokeLuaDebugSource          ar =<< newCAString (maybe "=(unknown source)" B8.unpack (funcSource fun))
+                 pokeLuaDebugShortSrc        ar (maybe "(unknown source)" B8.unpack (funcSource fun))
+                 pokeLuaDebugLineDefined     ar (fromIntegral (funcLineDefined fun))
+                 pokeLuaDebugLastLineDefined ar (fromIntegral (funcLastLineDefined fun))
+                 pokeLuaDebugWhat            ar =<< newCAString (luaWhat fid)
 
-              when ('l' `elem` what) $
-                do pokeLuaDebugCurrentLine     ar (maybe 0 fromIntegral (lookupLineNumber fun pc))
+            when ('l' `elem` what) $
+              do pokeLuaDebugCurrentLine     ar (maybe 0 fromIntegral (lookupLineNumber fun pc))
 
-              when ('t' `elem` what) $
-                do pokeLuaDebugIsTailCall      ar 0 -- XXX: Track tail calls
+            when ('t' `elem` what) $
+              do pokeLuaDebugIsTailCall      ar 0 -- XXX: Track tail calls
 
-              when ('u' `elem` what) $
-                do pokeLuaDebugNUps            ar (fromIntegral (IOVector.length (execUpvals execEnv)))
-                   pokeLuaDebugNParams         ar (fromIntegral (funcNumParams fun))
-                   pokeLuaDebugIsVarArg        ar (if funcIsVararg fun then 1 else 0)
+            when ('u' `elem` what) $
+              do pokeLuaDebugNUps            ar (fromIntegral (IOVector.length (execUpvals execEnv)))
+                 pokeLuaDebugNParams         ar (fromIntegral (funcNumParams fun))
+                 pokeLuaDebugIsVarArg        ar (if funcIsVararg fun then 1 else 0)
 
 
-         CFID cfun ->
-           do let funName = cfunName cfun
-                  funNameStr = fromMaybe (cObjAddr funName) (cObjName funName)
+       CFID cfun ->
+         do let funName = cfunName cfun
+                funNameStr = fromMaybe (cObjAddr funName) (cObjName funName)
 
-              when ('n' `elem` what) $
-                do pokeLuaDebugName            ar =<< newCAString funNameStr
-                   pokeLuaDebugNameWhat        ar =<< newCAString "C"
+            when ('n' `elem` what) $
+              do pokeLuaDebugName            ar =<< newCAString funNameStr
+                 pokeLuaDebugNameWhat        ar =<< newCAString "C"
 
-              when ('S' `elem` what) $
-                do pokeLuaDebugSource          ar =<< newCAString "=(unknown source)" -- XXX
-                   pokeLuaDebugShortSrc        ar funNameStr
-                   pokeLuaDebugLineDefined     ar 0 -- XXX
-                   pokeLuaDebugLastLineDefined ar 0 -- XXX
-                   pokeLuaDebugWhat            ar =<< newCAString "C"
+            when ('S' `elem` what) $
+              do pokeLuaDebugSource          ar =<< newCAString "=(unknown source)" -- XXX
+                 pokeLuaDebugShortSrc        ar funNameStr
+                 pokeLuaDebugLineDefined     ar 0 -- XXX
+                 pokeLuaDebugLastLineDefined ar 0 -- XXX
+                 pokeLuaDebugWhat            ar =<< newCAString "C"
 
-              when ('l' `elem` what) $
-                do pokeLuaDebugCurrentLine     ar (-1)
-                       -- When no line information is available, currentline is set to -1
+            when ('l' `elem` what) $
+              do pokeLuaDebugCurrentLine     ar (-1)
+                     -- When no line information is available, currentline is set to -1
 
-              when ('t' `elem` what) $
-                do pokeLuaDebugIsTailCall      ar 0 -- XXX: Track tail calls
+            when ('t' `elem` what) $
+              do pokeLuaDebugIsTailCall      ar 0 -- XXX: Track tail calls
 
-              when ('u' `elem` what) $
-                do pokeLuaDebugNUps            ar (fromIntegral (IOVector.length (execUpvals execEnv)))
-                   pokeLuaDebugNParams         ar 0 -- always 0 for C functions
-                   pokeLuaDebugIsVarArg        ar 1 -- always true for C functions
+            when ('u' `elem` what) $
+              do pokeLuaDebugNUps            ar (fromIntegral (IOVector.length (execUpvals execEnv)))
+                 pokeLuaDebugNParams         ar 0 -- always 0 for C functions
+                 pokeLuaDebugIsVarArg        ar 1 -- always true for C functions
 
 
      when ('f'`elem`what) (push args (execClosure execEnv))
@@ -1410,7 +1426,7 @@ lua_getlocal_hs l r ar n out =
     Nothing <$
       if ar == nullPtr
         then getLocalFunArgs (fromIntegral n) out args
-        else getLocalStackArgs (fromIntegral n) out args ar
+        else liftIO (getLocalStackArgs (fromIntegral n) out args ar)
 
 getLocalFunArgs :: Int -> Ptr CString -> SV.SizedVector (IORef Value) -> Mach ()
 getLocalFunArgs n out args =
@@ -1423,15 +1439,15 @@ getLocalFunArgs n out args =
            Just bs -> poke out =<< newCAString (B8.unpack bs)--XXX: Leak
        _ -> poke out nullPtr
 
-getLocalStackArgs :: Int -> Ptr CString -> SV.SizedVector (IORef Value) -> Ptr LuaDebug -> Mach ()
+getLocalStackArgs :: Int -> Ptr CString -> SV.SizedVector (IORef Value) -> Ptr LuaDebug -> IO ()
 getLocalStackArgs n out args ar =
-  do (pc,execEnv) <- liftIO (importExecEnv =<< peekLuaDebugCallInfo ar)
+  do (pc,execEnv) <- importExecEnv =<< peekLuaDebugCallInfo ar
 
      let stack = execStack execEnv
 
      let ix = fromIntegral n - 1
 
-     liftIO $ case luaOpCodes (execFunction execEnv) of
+     case luaOpCodes (execFunction execEnv) of
        Just (_,func)
          | Just name <- lookupLocalName func pc (Reg ix) ->
              do len <- SV.size stack
@@ -1452,14 +1468,14 @@ foreign export ccall
 
 lua_getupvalue_hs :: EntryPoint (CInt -> CInt -> Ptr CString -> IO CInt)
 lua_getupvalue_hs l r funcindex n out =
-  reentry "lua_getupvalue" [cArg funcindex, cArg n] l r $ \args ->
-    do v <- valueArgument (fromIntegral funcindex) args
+  reentryVM "lua_getupvalue" [cArg funcindex, cArg n] l r $ \vm args ->
+    do v <- valueArgument' vm (fromIntegral funcindex) args
 
        let n' = fromIntegral n - 1
 
        result out =<<
          case v of
-           Closure ref -> liftIO $
+           Closure ref ->
               do let clo = referenceVal ref
                      ups = cloUpvalues clo
 
@@ -1547,17 +1563,16 @@ foreign export ccall
 
 lua_xmove_hs :: EntryPoint (Ptr () -> CInt -> IO CInt)
 lua_xmove_hs l r to n =
-  reentry "lua_xmove" [cArg to, cArg n] l r $ \fromArgs ->
+  reentryVM "lua_xmove" [cArg to, cArg n] l r $ \vm fromArgs ->
 
-    do fromRef <- extToThreadRef =<< liftIO (deRefLuaState l)
-       toRef   <- extToThreadRef =<< liftIO (deRefLuaState to)
+    do fromRef <- extToThreadRef vm =<< deRefLuaState l
+       toRef   <- extToThreadRef vm =<< deRefLuaState to
 
-       liftIO $
-        unless (fromRef == toRef) $
-          do transfer <- popN fromArgs (fromIntegral n)
+       unless (fromRef == toRef) $
+         do transfer <- popN fromArgs (fromIntegral n)
 
-             toStack <- execStack <$> getThreadField stExecEnv toRef
-             traverse_ (push toStack) transfer
+            toStack <- execStack <$> getThreadField stExecEnv toRef
+            traverse_ (push toStack) transfer
        return Nothing
 
 ------------------------------------------------------------------------
@@ -1570,12 +1585,12 @@ foreign export ccall
 -- [-0, +0, –]
 lua_upvaluejoin_hs :: EntryPoint (CInt -> CInt -> CInt -> CInt -> IO CInt)
 lua_upvaluejoin_hs l r f1 n1 f2 n2 =
-  reentry "lua_upvaluejoin" (cArg <$> [f1,n1,f2,n2]) l r $ \args ->
-    do f1' <- valueArgument (fromIntegral f1) args
-       f2' <- valueArgument (fromIntegral f2) args
+  reentryVM "lua_upvaluejoin" (cArg <$> [f1,n1,f2,n2]) l r $ \vm args ->
+    do f1' <- valueArgument' vm (fromIntegral f1) args
+       f2' <- valueArgument' vm (fromIntegral f2) args
        let n1' = fromIntegral n1 - 1
            n2' = fromIntegral n2 - 1
-       liftIO $ case (f1',f2') of
+       case (f1',f2') of
          (Closure ref1, Closure ref2) ->
            do let v1 = cloUpvalues (referenceVal ref1)
                   v2 = cloUpvalues (referenceVal ref2)
@@ -1618,7 +1633,7 @@ foreign export ccall
 
 lua_setallocf_hs :: EntryPoint (Lua_Alloc -> Ptr () -> IO CInt)
 lua_setallocf_hs l r f ud =
-  reentry "lua_setallocf" [cArg f, cArg ud] l r $ \_ -> return Nothing
+  reentryIO "lua_setallocf" [cArg f, cArg ud] l r $ \_ -> return Nothing
   -- XXX: Not implemented, ignored
 
 
@@ -1627,8 +1642,8 @@ foreign export ccall
 
 lua_topointer_hs :: EntryPoint (CInt -> Ptr (Ptr ()) -> IO CInt)
 lua_topointer_hs l r ix out =
-  reentry "lua_topointer" [cArg ix] l r $ \args ->
-  do mb <- valueArgument (fromIntegral ix) args
+  reentryVM "lua_topointer" [cArg ix] l r $ \vm args ->
+  do mb <- valueArgument' vm (fromIntegral ix) args
      result out $
        case mb of
          Thread   ref -> plusPtr nullPtr $ referenceId ref
@@ -1646,9 +1661,9 @@ foreign export ccall lua_close_hs :: ApiLuaClose
 
 -- [-0, +0, -]
 lua_close_hs :: ApiLuaClose
-lua_close_hs l r = reentry "lua_close" [] l r $ \_args ->
-  do cfg <- getsMachEnv machConfig
-     liftIO (Nothing <$ machOnShutdown cfg)
+lua_close_hs l r = reentryVM "lua_close" [] l r $ \vm _args ->
+  do let cfg = machConfig (vmMachineEnv vm)
+     Nothing <$ machOnShutdown cfg
 
 ------------------------------------------------------------------------
 
@@ -1657,9 +1672,9 @@ type GaluaControl = EntryPoint (CString -> IO CInt)
 foreign export ccall galua_control_hs :: GaluaControl
 
 galua_control_hs :: GaluaControl
-galua_control_hs l r cmdPtr = reentry "galua_control" [cstringArg0 cmdPtr] l r $ \args ->
-  do cmd <- liftIO (peekCString cmdPtr)
-     onQuery <- getsMachEnv (machOnQuery . machConfig)
-     answer <- liftIO (onQuery cmd)
+galua_control_hs l r cmdPtr = reentryVM "galua_control" [cstringArg0 cmdPtr] l r $ \vm args ->
+  do cmd <- peekCString cmdPtr
+     let onQuery = machOnQuery (machConfig (vmMachineEnv vm))
+     answer <- onQuery cmd
      push args answer
      return Nothing

@@ -24,12 +24,12 @@ assign :: Int -> Value -> SV.SizedVector (IORef Value) -> Mach ()
 assign i x stack
   | i == registryIndex = luaError "assign: Can not replace registry"
 
-  | i <  registryIndex = do v <- getsExecEnv execUpvals
-                            let i' = registryIndex - i - 1
-                            liftIO $
-                              do mb <- IOVector.readMaybe v i'
-                                 for_ mb $ \ref ->
-                                   writeIORef ref x
+  | i <  registryIndex =
+    do vm <- machVM
+       liftIO $ do let v = execUpvals (vmCurExecEnv vm)
+                       i' = registryIndex - i - 1
+                   mb <- IOVector.readMaybe v i'
+                   for_ mb $ \ref -> writeIORef ref x
 
   | otherwise = liftIO $
       case compare i 0 of
@@ -40,17 +40,18 @@ assign i x stack
         GT -> do mb <- SV.getMaybe stack (i-1)
                  for_ mb $ \ref -> writeIORef ref x
 
-select :: Int -> SV.SizedVector (IORef Value) -> Mach (Maybe Value)
-select i stack
-  | i == registryIndex = do r <- getsMachEnv machRegistry
-                            return (Just (Table r))
 
-  | i <  registryIndex = do v <- getsExecEnv execUpvals
-                            let i' = registryIndex - i - 1
-                            liftIO $ do mbRef <- IOVector.readMaybe v i'
-                                        traverse readIORef mbRef
+select' :: VM -> Int -> SV.SizedVector (IORef Value) -> IO (Maybe Value)
+select' vm i stack
+  | i == registryIndex = do let r = machRegistry (vmMachineEnv vm)
+                            return $! Just $! Table r
 
-  | otherwise = liftIO $
+  | i <  registryIndex = do let v  = execUpvals (vmCurExecEnv vm)
+                                i' = registryIndex - i - 1
+                            mbRef <- IOVector.readMaybe v i'
+                            traverse readIORef mbRef
+
+  | otherwise =
       case compare i 0 of
         EQ -> return Nothing
         LT -> do n  <- SV.size stack
@@ -59,17 +60,35 @@ select i stack
         GT -> do mb <- SV.getMaybe stack (i-1)
                  traverse readIORef mb
 
+
+
+select :: Int -> SV.SizedVector (IORef Value) -> Mach (Maybe Value)
+select i stack =
+  do vm <- machVM
+     liftIO (select' vm i stack)
+
 -- | Upvalues are 1 based. This computes an upvalue index, to an index
 -- suitable for passing to select, where very negative numbers are upvalues.
 upvalue :: Int -> Int
 upvalue x = registryIndex - x
 
-valueArgument :: Int -> SV.SizedVector (IORef Value) -> Mach Value
-valueArgument i args =
-  do mb <- select i args
+
+valueArgument' :: VM -> Int -> SV.SizedVector (IORef Value) -> IO Value
+valueArgument' vm i args =
+  do mb <- select' vm i args
      case mb of
        Just x -> return x
        Nothing -> return Nil
+
+
+
+valueArgument :: Int -> SV.SizedVector (IORef Value) -> Mach Value
+valueArgument i args =
+  do vm <- machVM
+     liftIO (valueArgument' vm i args)
+
+valueArgumentOpt' :: VM -> Int -> SV.SizedVector (IORef Value) -> IO (Maybe Value)
+valueArgumentOpt' = select'
 
 valueArgumentOpt :: Int -> SV.SizedVector (IORef Value) -> Mach (Maybe Value)
 valueArgumentOpt = select
@@ -146,9 +165,9 @@ intArgumentOpt i args =
 
 
 
-boolArgument :: Int -> SV.SizedVector (IORef Value) -> Mach Bool
-boolArgument i args =
-  do mb <- select i args
+boolArgument :: VM -> Int -> SV.SizedVector (IORef Value) -> IO Bool
+boolArgument vm i args =
+  do mb <- select' vm i args
      case mb of
        Just x -> return (valueBool x)
        Nothing -> return False
