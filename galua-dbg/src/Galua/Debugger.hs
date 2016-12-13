@@ -105,7 +105,6 @@ import           Control.Applicative ((<|>))
 import           Control.Concurrent (killThread, ThreadId)
 import           Control.Concurrent.STM (STM, atomically, takeTMVar)
 import           Control.Concurrent.STM.TQueue (TQueue, newTQueue, writeTQueue, readTQueue, isEmptyTQueue)
-import           Control.Monad.IO.Class(liftIO)
 import           Control.Monad(join, when,forever)
 import           Control.Exception
 import           MonadLib(ExceptionT,runExceptionT,raise,lift)
@@ -1006,14 +1005,8 @@ handleCommand dbg isIdle cmd =
     StartExec m client -> Just m  <$ modifyIORef (dbgClients dbg) (client :)
 
 
-getCurrentLineNumber :: VM -> IO Int
-getCurrentLineNumber vm =
-  do let th = vmCurThread vm
-     pc <- getThreadField stPC th
-     return $! getLineNumberForCurFunPC vm pc
-
-
 -- | Returns 0 if there was no line number associated with this PC getLineNumberForCurFunPC :: VM -> Int -> Int
+getLineNumberForCurFunPC :: VM -> Int -> Int
 getLineNumberForCurFunPC vm pc =
   fromMaybe 0 $
   do (_,func) <- luaOpCodes (execFunction (vmCurExecEnv vm))
@@ -1086,9 +1079,8 @@ checkStopError dbg vm next k =
 checkBreakPoint :: Debugger -> StepMode -> VM -> NextStep ->
                                                     IO VMState -> IO VMState
 checkBreakPoint dbg mode vm nextStep k =
-  do let th   = vmCurThread vm
-         eenv = vmCurExecEnv vm
-     let curFun = funValueName (execFunction eenv)
+  do let eenv = vmCurExecEnv vm
+         curFun = funValueName (execFunction eenv)
      case (nextStep, curFun) of
        (Goto pc, LuaFID fid) ->
          do let loc = (pc,fid)

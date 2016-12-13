@@ -65,7 +65,6 @@ import           Data.IORef(readIORef,writeIORef,modifyIORef')
 import           MonadLib
 import           System.FilePath(splitFileName,splitPath,(</>))
 import           Numeric (showHex)
-import qualified System.Clock as Clock
 import           Foreign.C.String
 import           Foreign.Ptr (nullPtr, nullFunPtr)
 
@@ -580,33 +579,14 @@ exportVM funs vm next =
                                       return (Text.pack (prettyRef r), js)
      ts <- mapM (exportValue funs VP_None . Thread) (toList (vmBlocked vm))
      let menv = vmMachineEnv vm
-     stats <- io $ exportProfilingStats funs $ machProfiling menv
      let actualRegistry = Table (machRegistry menv)
      registry <- exportValue funs (VP_Registry actualRegistry) actualRegistry
      return (JS.object [ "thread"   .= t
                        , "openThreads" .= JS.object openTs
                        , "blocked"  .= ts
-                       , "stats"    .= stats
                        , "registry" .= registry
                        ])
 
-
-exportProfilingStats :: Chunks -> ProfilingInfo -> IO JS.Value
-exportProfilingStats funs info =
-  do calls  <- readIORef (profCallCounters info)
-     times  <- readIORef (profFunctionTimers info)
-     return $ JS.object
-        [ "calls"  .= [ JS.object
-                          [ "loc"   .= exportFunName funs f
-                          , "calls" .= n
-                          , "cum"   .= exportTimeSpec (runtimeCumulative rts)
-                          , "ind"   .= exportTimeSpec (runtimeIndividual rts) ]
-                      | (f,(n,rts)) <- Map.toList (Map.intersectionWith (,) calls times)]
-        ]
-
--- | Export a timespec in seconds
-exportTimeSpec :: Clock.TimeSpec -> Double
-exportTimeSpec t = fromInteger (Clock.toNanoSecs t) / 1e9
 
 
 exportHandler :: Chunks -> HandlerType -> ExportM JS.Value
