@@ -8,7 +8,7 @@ packages:
 - location: lib/dwarf-tools
 - location: lib/language-lua
 
-resolver: lts-7.12
+resolver: lts-7.13
 extra-deps:
 - config-value-0.5
 - config-value-getopt-0.1.0.0
