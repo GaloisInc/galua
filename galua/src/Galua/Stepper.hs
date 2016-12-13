@@ -66,6 +66,7 @@ oneStep' c !vm instr = do
     Interrupt n         -> running              c vm n
 
 
+{-# INLINE performApiEnd #-}
 performApiEnd ::
   Cont r ->
   VM                 {- ^ virtual machine state -} ->
@@ -76,17 +77,18 @@ performApiEnd c vm =
      putMVar (machCServer (vmMachineEnv vm)) CResume
      running c vm WaitForC
 
+{-# INLINE performApiStart #-}
 performApiStart :: Cont r -> VM -> ApiCall -> IO NextStep -> IO r
 performApiStart c vm apiCall next =
   do let eenv = vmCurExecEnv vm
      writeIORef (execApiCall eenv) (ApiCallActive apiCall)
      running c vm =<< next
 
+{-# INLINE performGoto #-}
 performGoto :: Cont r -> VM -> Int -> IO r
 performGoto c vm pc =
   do setThreadField stPC (vmCurThread vm) pc
      running c vm =<< execute vm pc
-
 
 {-# INLINE performTailCall #-}
 performTailCall ::
@@ -154,6 +156,7 @@ performThreadExit c vm vs =
 -- for the current execution environment and resumes the next environment
 -- on the stack. In the case that the next frame is an error marker, it
 -- begins unwinding the stack until a suitable handler is found.
+{-# INLINE performFunReturn #-}
 performFunReturn :: Cont r -> VM -> [Value] -> IO r
 performFunReturn c vm vs =
   do let th = vmCurThread vm
@@ -185,7 +188,6 @@ performFunReturn c vm vs =
 
 
 
-{-# LANGUAGE performThreadFail #-}
 performThreadFail :: Cont r -> VM -> Value -> IO r
 performThreadFail c vm e =
   do let th = vmCurThread vm
@@ -283,7 +285,6 @@ performYield c vm k =
 -- | Unwind the call stack until a handler is found or the stack becomes
 -- empty. Resume execution in the error handler if one is found or finish
 -- execution with the final error otherwise.
-{-# INLINE performErrorReturn #-}
 performErrorReturn :: Cont r -> VM -> Value -> IO r
 performErrorReturn c vm e =
   do let ref = vmCurThread vm
