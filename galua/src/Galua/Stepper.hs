@@ -28,7 +28,6 @@ import           Control.Exception (assert)
 import           Data.IORef
 import           Data.Foldable (traverse_)
 import qualified Data.Map as Map
-import qualified System.Clock as Clock
 
 import           GHC.Exts (inline)
 
@@ -97,32 +96,17 @@ performTailCall ::
   [Value]           {- ^ arguments        -} ->
   IO r
 performTailCall c vm f vs =
-  do bumpCallCounter f vm
-
-     (newEnv, next) <- enterClosure f vs
+  do (newEnv, next) <- enterClosure f vs
 
      let th = vmCurThread vm
          execEnv = vmCurExecEnv vm
 
-     recordProfTime (execCreateTime newEnv) (vmMachineEnv vm) execEnv
-     recordProfEntry (vmMachineEnv vm) (funValueName (execFunction newEnv))
-
      stack <- getThreadField stStack th
-     let elapsed = execCreateTime newEnv - execCreateTime execEnv
 
-     setThreadField stStack th (addElapsedToTop elapsed stack)
      setThreadField stExecEnv th newEnv
      let newVM = vm { vmCurExecEnv = newEnv }
 
      running c newVM =<< next newVM
-
-addElapsedToTop :: Clock.TimeSpec -> Stack StackFrame -> Stack StackFrame
-addElapsedToTop elapsed stack =
-  case Stack.pop stack of
-    Just (CallFrame pc eenv err k,fs) ->
-      Stack.push (CallFrame pc (addChildTime elapsed eenv) err k) fs
-    Just (f,fs) -> Stack.push f (addElapsedToTop elapsed fs)
-    Nothing     -> stack
 
 
 {-# INLINE performFunCall #-}
@@ -135,9 +119,7 @@ performFunCall ::
   ([Value] -> IO NextStep) {- ^ return continuation    -} ->
   IO r
 performFunCall c vm f vs mb k =
-  do bumpCallCounter f vm
-     (newEnv, next) <- enterClosure f vs
-     recordProfEntry (vmMachineEnv vm) (funValueName (execFunction newEnv))
+  do (newEnv, next) <- enterClosure f vs
 
      let th = vmCurThread vm
 
@@ -155,15 +137,6 @@ performFunCall c vm f vs mb k =
      let newVM = vm { vmCurExecEnv = newEnv }
      running c newVM =<< next newVM
 
-bumpCallCounter :: Reference Closure -> VM -> IO ()
-bumpCallCounter clo vm =
-     atomicModifyIORef' prof $ \counts ->
-       let key     = funValueName (cloFun (referenceVal clo))
-           counts' = inline Map.alter inc key counts
-           inc old = Just $! maybe 1 succ old
-       in (counts', ())
-
-  where prof = profCallCounters $ machProfiling $ vmMachineEnv vm
 
 
 performThreadExit :: Cont r -> VM -> [Value] -> IO r
@@ -185,15 +158,10 @@ performFunReturn :: Cont r -> VM -> [Value] -> IO r
 performFunReturn c vm vs =
   do let th = vmCurThread vm
 
-     now <- Clock.getTime Clock.ProcessCPUTime
      let eenv = vmCurExecEnv vm
      stack <- getThreadField stStack th
 
-     let elapsed = now - execCreateTime eenv
-     recordProfTime now (vmMachineEnv vm) eenv
-     let stack' = addElapsedToTop elapsed stack
-
-     case Stack.pop stack' of
+     case Stack.pop stack of
 
        Nothing ->
           running c vm (ThreadExit vs)
@@ -215,45 +183,6 @@ performFunReturn c vm vs =
 
                 running c vm { vmCurExecEnv = fenv } =<< k vs
 
-recordProfEntry :: MachineEnv -> FunName -> IO ()
-recordProfEntry menv funName =
-  do let profRef    = profFunctionTimers (machProfiling menv)
-
-         addCounter Nothing = Just $! FunctionRuntimes
-           { runtimeIndividual = 0
-           , runtimeCumulative = 0
-           , runtimeCounter    = 1
-           }
-
-         addCounter (Just rts) = Just $! rts { runtimeCounter = runtimeCounter rts + 1 }
-
-     atomicModifyIORef' profRef $ \prof ->
-       (Map.alter addCounter funName prof, ())
-
-recordProfTime :: Clock.TimeSpec -> MachineEnv -> ExecEnv -> IO ()
-recordProfTime now menv eenv =
-  do let curFunName = funValueName (execFunction eenv)
-         profRef    = profFunctionTimers (machProfiling menv)
-         elapsed    = now - execCreateTime eenv
-         child      = execChildTime eenv
-
-
-         addTimes rts = Just $! FunctionRuntimes
-           { runtimeIndividual = runtimeIndividual rts + (elapsed - child)
-           , runtimeCumulative = if runtimeCounter rts == 1
-                                   then runtimeCumulative rts + elapsed
-                                   else runtimeCumulative rts
-           , runtimeCounter    = runtimeCounter    rts - 1
-           }
-
-     assert (0 <= child && child <= elapsed) $
-       atomicModifyIORef' profRef $ \prof ->
-         (Map.update addTimes curFunName prof, ())
-
-
-addChildTime :: Clock.TimeSpec -> ExecEnv -> ExecEnv
-addChildTime elapsed e =
-  e { execChildTime = execChildTime e + elapsed }
 
 
 {-# LANGUAGE performThreadFail #-}
@@ -445,7 +374,6 @@ enterClosure c vs =
      traverse_ (SV.push stack <=< newIORef) stackElts
      vasRef   <- newIORef vas
      apiRef   <- newIORef NoApiCall
-     time     <- Clock.getTime Clock.ProcessCPUTime
 
      let newEnv = ExecEnv { execStack    = stack
                           , execUpvals   = cloUpvalues
@@ -453,8 +381,6 @@ enterClosure c vs =
                           , execVarargs  = vasRef
                           , execApiCall  = apiRef
                           , execClosure  = Closure c
-                          , execCreateTime = time
-                          , execChildTime  = 0
                           , execInstructions  = code
                           }
 

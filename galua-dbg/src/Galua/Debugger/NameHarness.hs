@@ -28,7 +28,6 @@ import           Galua.Value (Value(String,Table,Nil))
 import           Language.Lua.Bytecode
 import           Language.Lua.Bytecode.FunId (noFun)
 import           Language.Lua.Bytecode.Debug (lookupLocalName)
-import qualified System.Clock as Clock
 
 data HarnessParams = HarnessParams
    { harnessLocals :: [Maybe String]
@@ -135,7 +134,6 @@ execEnvForCompiledStatment ::
   IO ExecEnv
 execEnvForCompiledStatment globals env stat =
   do apiCallRef <- newIORef NoApiCall
-     now        <- Clock.getTime Clock.ProcessCPUTime
      stack      <- prepareStack stat (execStack env)
      ups <- do oldUps <- Vector.freeze (execUpvals env)
                Vector.thaw (Vector.snoc oldUps globals)
@@ -146,8 +144,6 @@ execEnvForCompiledStatment globals env stat =
        , execClosure  = Nil -- used for debug API
        , execApiCall  = apiCallRef
        , execInstructions = funcCode (csFunc stat)
-       , execCreateTime = now
-       , execChildTime  = 0
        }
 
 -- | Prepare a statement for execution at the specific program location.

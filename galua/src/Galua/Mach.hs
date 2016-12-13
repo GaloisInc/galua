@@ -32,7 +32,6 @@ import           System.Exit
 import           System.IO (hPutStrLn, stderr)
 import           System.IO.Error (isDoesNotExistError)
 import           System.Environment (lookupEnv)
-import qualified System.Clock as Clock
 
 import           Language.Lua.Bytecode
 import           Language.Lua.Bytecode.FunId
@@ -262,9 +261,6 @@ data MachineEnv = MachineEnv
   , machGarbage       :: {-# UNPACK #-} !(IORef [Value])
     -- ^ These things need to be garbage collected.
 
-  , machProfiling     :: {-# UNPACK #-} !ProfilingInfo
-    -- ^ Profiling information
-
   , machNameCache     :: {-# UNPACK #-} !(IORef (Cache CFun CObjInfo))
     -- ^ A cache mapping addresses of C functions to human-readable
     -- information about them.
@@ -273,23 +269,6 @@ data MachineEnv = MachineEnv
   }
 
 
-
-data ProfilingInfo = ProfilingInfo
-  { profCallCounters  :: {-# UNPACK #-} !(IORef (Map FunName Int))
-  , profFunctionTimers :: {-# UNPACK #-} !(IORef (Map FunName FunctionRuntimes))
-    -- ^ How many times was a particular function called.
-  }
-
-data FunctionRuntimes = FunctionRuntimes
-  { runtimeIndividual :: {-# UNPACK #-} !Clock.TimeSpec
-    -- ^ Time spent in this function directly
-
-  , runtimeCumulative :: {-# UNPACK #-} !Clock.TimeSpec
-    -- ^ Time spent in this function its calls
-
-  , runtimeCounter    :: !Int
-    -- ^ Number of active stack frames
-  }
 
 data MachConfig = MachConfig
   { machOnChunkLoad :: Maybe String -> ByteString -> Int -> Function -> IO ()
@@ -313,10 +292,6 @@ data ExecEnv = ExecEnv
     -- Interaction with the C world
   , execApiCall    :: {-# UNPACK #-} !(IORef ApiCallStatus)
   , execInstructions :: {-# UNPACK #-} !(Vector OpCode)
-
-    -- Profiling
-  , execCreateTime :: {-# UNPACK #-} !Clock.TimeSpec
-  , execChildTime :: {-# UNPACK #-} !Clock.TimeSpec
   }
 
 -- | Get the function id for this stack frame.
@@ -344,7 +319,6 @@ newThreadExecEnv =
   do stack <- SV.new
      api   <- newIORef NoApiCall
      var   <- newIORef []
-     time  <- Clock.getTime Clock.ProcessCPUTime
      upvals <- IOVector.new 0
      return ExecEnv { execStack    = stack
                     , execUpvals   = upvals
@@ -353,8 +327,6 @@ newThreadExecEnv =
                     , execApiCall  = api
                     , execInstructions = Vector.empty
                     , execClosure  = Nil
-                    , execCreateTime = time
-                    , execChildTime  = 0
                     }
 
 
@@ -379,7 +351,6 @@ newMachineEnv aref machConfig =
      machLuaServer     <- atomically newEmptyTMVar
      machCServer       <- newEmptyMVar
      machGarbage       <- newIORef []
-     machProfiling     <- newProfilingInfo
      machMainThreadRef <- allocNewThread aref refLoc
                                       machLuaServer machCServer ThreadRunning
      setTableRaw machRegistry (Number 1) (Thread machMainThreadRef)
@@ -389,11 +360,6 @@ newMachineEnv aref machConfig =
      machCFunInfo      <- cfunInfoFun
      return MachineEnv { .. }
 
-newProfilingInfo :: IO ProfilingInfo
-newProfilingInfo =
-  do profCallCounters  <- newIORef Map.empty
-     profFunctionTimers <- newIORef Map.empty
-     return ProfilingInfo { .. }
 
 foreign import ccall "galua_allocate_luaState"
   allocateLuaState :: Ptr () -> IO (Ptr ())
