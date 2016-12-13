@@ -8,7 +8,7 @@ module Galua.Debugger.View
   , analyze
   ) where
 
-import Galua.CObjInfo(CObjInfo(..))
+import Galua.CObjInfo(CObjInfo(..),noFunInfo)
 import Galua.Debugger
 import Galua.Debugger.PrettySource (omittedLine,lineToJSON)
 import Galua.Debugger.Trie
@@ -633,7 +633,13 @@ exportCallStackFrameShort funs pc env mbnext =
      st  <- io (readIORef (execApiCall env))
      apiInfo <- case mbnext of
                   Just (ApiStart api _) -> exportApiCall api ApiCallStarting
-                  Just (ApiEnd api res) -> exportApiCall api (ApiCallEnding res)
+                  Just (ApiEnd res) ->
+                    let xXXX = ApiCall
+                               { apiCallMethod = "(TODO)"
+                               , apiCallReturn = noFunInfo nullFunPtr
+                               , apiCallArgs   = []
+                               }
+                    in exportApiCall xXXX (ApiCallEnding res)
                   _ -> case st of
                          NoApiCall -> pure []
                          ApiCallAborted api  -> exportApiCall api ApiCallRunning

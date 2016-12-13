@@ -4,7 +4,6 @@ module Galua.CallIntoC (execCFunction, handleCCallState) where
 import           Galua.Mach
 import           Galua.Value
 import           Galua.Overloading
-import           Galua.CObjInfo
 
 import qualified Galua.Util.SizedVector as SV
 
@@ -21,9 +20,8 @@ execCFunction !vm cfun =
 handleCCallState :: VM -> CCallState -> IO NextStep
 handleCCallState !vm cResult =
   case cResult of
-    CReturned n -> returnFromC vm n
-    CReEntry label returnAddress primargs k ->
-      handleGC vm (reentryFromC vm label returnAddress primargs k)
+    CReturned n           -> returnFromC vm n
+    CReEntry apiCall impl -> handleGC vm (ApiStart apiCall (impl vm))
 
 handleGC :: VM -> NextStep -> IO NextStep
 handleGC vm next =
@@ -34,27 +32,6 @@ handleGC vm next =
      let collect []       = return next
          collect (v : vs) = m__gc tabsRef (collect vs) v
      collect garbage
-
-
-reentryFromC ::
-  VM ->
-  String         {- ^ name of entry point      -} ->
-  CObjInfo       {- ^ return address           -} ->
-  [PrimArgument] {- ^ arguments at entry point -} ->
-  Mach (Maybe PrimArgument) {- ^ code to run   -} ->
-  NextStep
-reentryFromC vm label returnAddress primargs impl =
-  let apiCall = ApiCall
-           { apiCallMethod = label
-           , apiCallReturn = returnAddress
-           , apiCallArgs = primargs
-           }
-  in ApiStart apiCall $ unMach impl vm $ \res ->
-                        return (ApiEnd apiCall res)
-
-
-
-
 
 -- | Clean up memory allocations during handling of C call, extract results
 -- from the stack, and return from the current call frame.

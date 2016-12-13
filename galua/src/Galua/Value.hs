@@ -27,7 +27,6 @@ module Galua.Value
   -- * Closures
   , Closure(..)
   , FunctionValue
-  , Prim
   , PrimArgument(..)
   , newClosure
   , FunName(..)
@@ -77,7 +76,7 @@ import           Foreign.C.Types (CInt, CSize)
 import           Foreign.C.String (CString, CStringLen)
 import           Data.Hashable(Hashable(..))
 
-import {-# SOURCE #-} Galua.Mach (Thread,Mach)
+import {-# SOURCE #-} Galua.Mach (Thread)
 
 import qualified Galua.Util.Table as Tab
 
@@ -218,8 +217,6 @@ data Closure = MkClosure
   { cloFun      :: FunctionValue
   , cloUpvalues :: IOVector (IORef Value)
   }
-
-type Prim = [Value] -> Mach [Value]
 
 data PrimArgument
   = PrimIntArg Integer

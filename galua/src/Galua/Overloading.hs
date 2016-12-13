@@ -37,7 +37,6 @@ module Galua.Overloading
   , valueMetatable
   , setMetatable
 
-  , mach1, mach2, mach3, machD1, machD2
   ) where
 
 import qualified Data.ByteString as B
@@ -57,34 +56,6 @@ type Meth1  = MetaTabRef -> Cont Value -> Value -> IO NextStep
 type Meth2  = MetaTabRef -> Cont Value -> Value -> Value -> IO NextStep
 type Rel    = MetaTabRef -> Cont Bool  -> Value -> Value -> IO NextStep
 
-{-# INLINE mach1 #-}
-mach1 :: (MetaTabRef -> Cont b -> a -> IO NextStep) ->
-         a -> Mach b
-mach1 f x =
-  Mach $ \vm cont -> f (machMetatablesRef (vmMachineEnv vm)) cont x
-
-{-# INLINE mach2 #-}
-mach2 :: (MetaTabRef -> Cont c -> a -> b -> IO NextStep) ->
-         a -> b -> Mach c
-mach2 f x y =
-  Mach $ \vm cont -> f (machMetatablesRef (vmMachineEnv vm)) cont x y
-
-
-{-# INLINE mach3 #-}
-mach3 :: (MetaTabRef -> IO NextStep -> a -> b -> c -> IO NextStep) ->
-         a -> b -> c -> Mach ()
-mach3 f x y z =
-  Mach $ \vm cont -> f (machMetatablesRef (vmMachineEnv vm)) (cont ()) x y z
-
-{-# INLINE machD1 #-}
-machD1 :: (IORef TypeMetatables -> a -> IO b) -> a -> Mach b
-machD1 f x =
-  Mach $ \vm cont -> cont =<< f (machMetatablesRef (vmMachineEnv vm)) x
-
-{-# INLINE machD2 #-}
-machD2 :: (IORef TypeMetatables -> a -> b -> IO c) -> a -> b -> Mach c
-machD2 f x y =
-  Mach $ \vm cont -> cont =<< f (machMetatablesRef (vmMachineEnv vm)) x y
 
 
 ------------------------------------------------------------------------

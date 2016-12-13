@@ -1,6 +1,6 @@
 module Galua.Arguments where
 
-import           Control.Monad.IO.Class
+import           Control.Exception
 import           Data.IORef
 import           Data.Foldable (for_)
 
@@ -20,18 +20,17 @@ registryIndex = -maxstack - 1000
 isPseudo :: Int -> Bool
 isPseudo x = x <= registryIndex
 
-assign :: Int -> Value -> SV.SizedVector (IORef Value) -> Mach ()
-assign i x stack
-  | i == registryIndex = luaError "assign: Can not replace registry"
+assign :: VM -> Int -> Value -> SV.SizedVector (IORef Value) -> IO ()
+assign vm i x stack
+  | i == registryIndex = throwIO (LuaX "assign: Can not replace registry")
 
   | i <  registryIndex =
-    do vm <- machVM
-       liftIO $ do let v = execUpvals (vmCurExecEnv vm)
-                       i' = registryIndex - i - 1
-                   mb <- IOVector.readMaybe v i'
-                   for_ mb $ \ref -> writeIORef ref x
+      do let v = execUpvals (vmCurExecEnv vm)
+             i' = registryIndex - i - 1
+         mb <- IOVector.readMaybe v i'
+         for_ mb $ \ref -> writeIORef ref x
 
-  | otherwise = liftIO $
+  | otherwise =
       case compare i 0 of
         EQ -> return () -- XXX: what should we do here?
         LT -> do n  <- SV.size stack
@@ -41,8 +40,8 @@ assign i x stack
                  for_ mb $ \ref -> writeIORef ref x
 
 
-select' :: VM -> Int -> SV.SizedVector (IORef Value) -> IO (Maybe Value)
-select' vm i stack
+select :: VM -> Int -> SV.SizedVector (IORef Value) -> IO (Maybe Value)
+select vm i stack
   | i == registryIndex = do let r = machRegistry (vmMachineEnv vm)
                             return $! Just $! Table r
 
@@ -61,86 +60,70 @@ select' vm i stack
                  traverse readIORef mb
 
 
-
-select :: Int -> SV.SizedVector (IORef Value) -> Mach (Maybe Value)
-select i stack =
-  do vm <- machVM
-     liftIO (select' vm i stack)
-
 -- | Upvalues are 1 based. This computes an upvalue index, to an index
 -- suitable for passing to select, where very negative numbers are upvalues.
 upvalue :: Int -> Int
 upvalue x = registryIndex - x
 
 
-valueArgument' :: VM -> Int -> SV.SizedVector (IORef Value) -> IO Value
-valueArgument' vm i args =
-  do mb <- select' vm i args
+valueArgument :: VM -> Int -> SV.SizedVector (IORef Value) -> IO Value
+valueArgument vm i args =
+  do mb <- select vm i args
      case mb of
        Just x -> return x
        Nothing -> return Nil
 
-
-
-valueArgument :: Int -> SV.SizedVector (IORef Value) -> Mach Value
-valueArgument i args =
-  do vm <- machVM
-     liftIO (valueArgument' vm i args)
-
-valueArgumentOpt' :: VM -> Int -> SV.SizedVector (IORef Value) -> IO (Maybe Value)
-valueArgumentOpt' = select'
-
-valueArgumentOpt :: Int -> SV.SizedVector (IORef Value) -> Mach (Maybe Value)
+valueArgumentOpt :: VM -> Int -> SV.SizedVector (IORef Value) -> IO (Maybe Value)
 valueArgumentOpt = select
 
 
-stringArgument :: Int -> SV.SizedVector (IORef Value) -> Mach LuaString
-stringArgument i args =
-  do mb <- select i args
+stringArgument :: VM -> Int -> SV.SizedVector (IORef Value) -> IO LuaString
+stringArgument vm i args =
+  do mb <- select vm i args
      case mb of
        Just x -> checkStringArgument i x
        Nothing -> badArgument i "string expected, got no value"
 
-stringArgumentOpt :: Int -> SV.SizedVector (IORef Value) -> Mach (Maybe LuaString)
-stringArgumentOpt i args =
-  do mb <- select i args
+stringArgumentOpt :: VM -> Int -> SV.SizedVector (IORef Value) -> IO (Maybe LuaString)
+stringArgumentOpt vm i args =
+  do mb <- select vm i args
      case mb of
        Just Nil -> return Nothing
        Nothing -> return Nothing
        Just x -> Just <$> checkStringArgument i x
 
 
-checkStringArgument :: Int -> Value -> Mach LuaString
+checkStringArgument :: Int -> Value -> IO LuaString
 checkStringArgument i v =
   case v of
-    Number x -> liftIO (fromByteString (packUtf8 (numberToString x)))
+    Number x -> fromByteString (packUtf8 (numberToString x))
     String x -> return x
     x        -> typeError i "string" x
 
 
 
 
-intArgument :: Int -> SV.SizedVector (IORef Value) -> Mach Int
-intArgument i args =
-  do mb <- select i args
+intArgument :: VM -> Int -> SV.SizedVector (IORef Value) -> IO Int
+intArgument vm i args =
+  do mb <- select vm i args
      case mb of
        Just x -> checkIntArgument i x
        Nothing -> badArgument i "string expected, got no value"
 
-doubleArgument :: Int -> SV.SizedVector (IORef Value) -> Mach Double
-doubleArgument i args =
-  do mb <- select i args
+doubleArgument :: VM -> Int -> SV.SizedVector (IORef Value) -> IO Double
+doubleArgument vm i args =
+  do mb <- select vm i args
      case mb of
        Just x -> checkDoubleArgument i x
        Nothing -> badArgument i "number expected, got no value"
 
-checkDoubleArgument :: Int -> Value -> Mach Double
+checkDoubleArgument :: Int -> Value -> IO Double
 checkDoubleArgument i v =
   case fmap numberToDouble (valueNumber v) of
     Nothing -> typeError i "number" v
     Just x  -> return x
 
-checkIntArgument :: Int -> Value -> Mach Int
+checkIntArgument :: Int -> Value -> IO Int
 checkIntArgument i v =
   case v of
     Number n ->
@@ -154,9 +137,9 @@ checkIntArgument i v =
             Just x -> return x
     _ -> typeError i "number" v
 
-intArgumentOpt :: Int -> SV.SizedVector (IORef Value) -> Mach (Maybe Int)
-intArgumentOpt i args =
-  do mb <- select i args
+intArgumentOpt :: VM -> Int -> SV.SizedVector (IORef Value) -> IO (Maybe Int)
+intArgumentOpt vm i args =
+  do mb <- select vm i args
      case mb of
        Just Nil -> return Nothing
        Just x -> Just <$> checkIntArgument i x
@@ -167,7 +150,7 @@ intArgumentOpt i args =
 
 boolArgument :: VM -> Int -> SV.SizedVector (IORef Value) -> IO Bool
 boolArgument vm i args =
-  do mb <- select' vm i args
+  do mb <- select vm i args
      case mb of
        Just x -> return (valueBool x)
        Nothing -> return False
@@ -177,22 +160,22 @@ boolArgument vm i args =
 
 
 
-tableArgument :: Int -> SV.SizedVector (IORef Value) -> Mach (Reference Table)
-tableArgument i args =
-  do mb <- select i args
+tableArgument :: VM -> Int -> SV.SizedVector (IORef Value) -> IO (Reference Table)
+tableArgument vm i args =
+  do mb <- select vm i args
      case mb of
        Just x -> checkTableArgument i x
        Nothing -> badArgument i "table expected, got no value"
 
-tableArgumentOpt :: Int -> SV.SizedVector (IORef Value) -> Mach (Maybe (Reference Table))
-tableArgumentOpt i args =
-  do mb <- select i args
+tableArgumentOpt :: VM -> Int -> SV.SizedVector (IORef Value) -> IO (Maybe (Reference Table))
+tableArgumentOpt vm i args =
+  do mb <- select vm i args
      case mb of
        Nothing -> return Nothing
        Just Nil -> return Nothing
        Just x -> Just <$> checkTableArgument i x
 
-checkTableArgument :: Int -> Value -> Mach (Reference Table)
+checkTableArgument :: Int -> Value -> IO (Reference Table)
 checkTableArgument i v =
   case v of
     Table t -> return t
@@ -202,14 +185,14 @@ checkTableArgument i v =
 
 
 
-functionArgument :: Int -> SV.SizedVector (IORef Value) -> Mach (Reference Closure)
-functionArgument i args =
-  do mb <- select i args
+functionArgument :: VM -> Int -> SV.SizedVector (IORef Value) -> IO (Reference Closure)
+functionArgument vm i args =
+  do mb <- select vm i args
      case mb of
        Just x -> checkFunctionArgument i x
        Nothing -> badArgument i "function expected, got no value"
 
-checkFunctionArgument :: Int -> Value -> Mach (Reference Closure)
+checkFunctionArgument :: Int -> Value -> IO (Reference Closure)
 checkFunctionArgument i v =
   case v of
     Closure c -> return c
@@ -217,22 +200,22 @@ checkFunctionArgument i v =
 
 
 
-threadArgument :: Int -> SV.SizedVector (IORef Value) -> Mach (Reference Thread)
-threadArgument i args =
-  do mb <- select i args
+threadArgument :: VM -> Int -> SV.SizedVector (IORef Value) -> IO (Reference Thread)
+threadArgument vm i args =
+  do mb <- select vm i args
      case mb of
        Just x  -> checkThreadArgument i x
        Nothing -> badArgument i "thread expected, got no value"
 
-threadArgumentOpt :: Int -> SV.SizedVector (IORef Value) -> Mach (Maybe (Reference Thread))
-threadArgumentOpt i args =
-  do mb <- select i args
+threadArgumentOpt :: VM -> Int -> SV.SizedVector (IORef Value) -> IO (Maybe (Reference Thread))
+threadArgumentOpt vm i args =
+  do mb <- select vm i args
      case mb of
        Nothing  -> return Nothing
        Just Nil -> return Nothing
        Just x   -> Just <$> checkThreadArgument i x
 
-checkThreadArgument :: Int -> Value -> Mach (Reference Thread)
+checkThreadArgument :: Int -> Value -> IO (Reference Thread)
 checkThreadArgument i v =
   case v of
     Thread t -> return t
@@ -244,10 +227,17 @@ checkThreadArgument i v =
 --------------------------------------------------------------------------------
 -- Errors
 
-badArgument :: Int -> String -> Mach a
-badArgument n extra = luaError ("bad argument #" ++ show n ++
-                                                          " (" ++ extra ++ ")")
+newtype LuaX = LuaX String
+                    deriving Show
 
-typeError :: Int -> String -> Value -> Mach a
+instance Exception LuaX
+
+badArgument :: Int -> String -> IO a
+badArgument n extra =
+  throwIO (LuaX ("bad argument #" ++ show n ++ " (" ++ extra ++ ")"))
+
+typeError :: Int -> String -> Value -> IO a
 typeError n expect got =
   badArgument n (expect ++ " expected, got " ++ prettyValueType (valueType got))
+
+

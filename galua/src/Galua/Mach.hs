@@ -93,11 +93,7 @@ data VMState  = FinishedOk ![Value]
 
 data CCallState
   = CReturned Int
-  | CReEntry
-        String         -- entry point name
-        CObjInfo       -- lazily computed return location
-        [PrimArgument] -- api call arguments
-        (Mach (Maybe PrimArgument)) -- api call implementation
+  | CReEntry ApiCall (VM -> IO NextStep)
 
 data CNextStep = CAbort | CResume | CCallback CFun
 
@@ -136,7 +132,7 @@ data NextStep
   | ThreadFail Value
 
   | ApiStart ApiCall (IO NextStep)
-  | ApiEnd ApiCall (Maybe PrimArgument)
+  | ApiEnd (Maybe PrimArgument)
 
   | Interrupt NextStep
 
@@ -155,7 +151,7 @@ dumpNextStep next =
     Resume r _      -> "resume " ++ show (prettyRef r)
     Yield _         -> "yield"
     ApiStart api _  -> "apistart " ++ apiCallMethod api
-    ApiEnd api _    -> "apiend " ++ apiCallMethod api
+    ApiEnd _        -> "apiend"
     Interrupt {}    -> "interrupt"
 
 
@@ -233,8 +229,6 @@ getThreadField :: MonadIO m => (Thread -> IORef a) -> Reference Thread -> m a
 getThreadField sel = \ref ->
   liftIO (readIORef (sel (referenceVal ref)))
 {-# INLINE setThreadField #-}
-
-newtype Mach a = Mach { unMach :: VM -> (a -> IO NextStep) -> IO NextStep }
 
 type TypeMetatables = Map ValueType (Reference Table)
 
@@ -367,96 +361,14 @@ newThreadExecEnv =
                     , execChildTime  = 0
                     }
 
-instance Functor Mach where
-  fmap f m = Mach $ \env k -> unMach m env $ \x -> k (f x)
-  x <$ m   = Mach $ \env k -> unMach m env $ \_ -> k x
-  {-# INLINE fmap #-}
-  {-# INLINE (<$) #-}
-
-instance Applicative Mach where
-  pure x  = Mach $ \_   k -> k x
-  m <*> n = Mach $ \env k -> unMach m env $ \f ->
-                             unMach n env $ \x -> k (f x)
-  m  *> n = Mach $ \env k -> unMach m env $ \_ ->
-                             unMach n env k
-  m <*  n = Mach $ \env k -> unMach m env $ \x ->
-                             unMach n env $ \_ -> k x
-  {-# INLINE (*>) #-}
-  {-# INLINE (<*) #-}
-  {-# INLINE (<*>) #-}
-  {-# INLINE pure #-}
-
-instance Monad Mach where
-  m >>= f  = Mach $ \env k -> unMach m env $ \a ->
-                              unMach (f a) env k
-  fail e   = Mach $ \_ _   -> error e
-  (>>)     = (*>)
-  {-# INLINE (>>=) #-}
-  {-# INLINE (>>) #-}
-
-instance MonadIO Mach where
-  liftIO m = Mach $ \_ k -> k =<< m
-
-
-machTry ::
-  HandlerType -> Reference Closure -> [Value] -> Mach (Either Value [Value])
-machTry h f vs = Mach $ \_ k ->
-  return $
-  FunCall f vs (Just Handler { handlerType = h
-                             , handlerK = k . Left
-                             })
-               (k . Right)
-
-
-machReturn :: [Value] -> Mach a
-machReturn xs = abort (FunReturn xs)
-
 
 --------------------------------------------------------------------------------
--- Excpetions
+-- Exceptions
 --------------------------------------------------------------------------------
 luaError' :: String -> IO NextStep
 luaError' str =
   do s <- fromByteString (packUtf8 str)
      return (ThrowError (String s))
-
-
-luaError :: String -> Mach b
-luaError str = abort =<< liftIO (luaError' str)
-
-machThrow :: Value -> Mach a
-machThrow e = abort (ThrowError e)
-
-
---------------------------------------------------------------------------------
--- Threads
---------------------------------------------------------------------------------
-
-machResume :: Reference Thread -> Mach ThreadResult
-machResume t = Mach $ \_ k -> return (Resume t k)
-
-machYield :: Mach ()
-machYield = Mach $ \_ k -> return (Yield (k ()))
-
-machApiCall :: VM -> ApiCall -> Mach (Maybe PrimArgument) -> NextStep
-machApiCall vm apiCall impl =
-  ApiStart apiCall $ unMach impl vm $ \res ->
-                     return (ApiEnd apiCall res)
-
-
-
---------------------------------------------------------------------------------
--- XXX
-
-machVM :: Mach VM
-machVM = Mach $ \e k -> k e
-
--- private
-abort :: NextStep -> Mach a
-abort x = Mach $ \_ _ -> return x
---------------------------------------------------------------------------------
-
-
 
 
 newMachineEnv :: AllocRef -> MachConfig -> IO MachineEnv

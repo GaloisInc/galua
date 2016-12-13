@@ -62,7 +62,7 @@ oneStep' c !vm instr = do
     Resume tRef k       -> performResume        c vm tRef k
     Yield k             -> performYield         c vm k
     ApiStart apiCall op -> performApiStart      c vm apiCall op
-    ApiEnd _ _          -> performApiEnd        c vm
+    ApiEnd _            -> performApiEnd        c vm
     WaitForC            -> runningInC           c vm
     Interrupt n         -> running              c vm n
 
