@@ -326,10 +326,6 @@ execFunId env =
     LuaFID fid -> Just fid
     _          -> Nothing
 
--- | Get the chunk id for this exec env, if any
-execChunk :: ExecEnv -> Maybe Int
-execChunk env = getRoot =<< execFunId env
-
 
 data ApiCallStatus
   = ApiCallActive !ApiCall
