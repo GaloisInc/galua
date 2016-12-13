@@ -1,6 +1,6 @@
 
 local sum = 0
-local maxJ = 10000
+local maxJ = 1000
 
 for j = 1,maxJ do
 
