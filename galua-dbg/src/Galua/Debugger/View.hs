@@ -631,19 +631,18 @@ exportCallStackFrameShort :: Chunks -> Int -> ExecEnv -> Maybe NextStep -> Expor
 exportCallStackFrameShort funs pc env mbnext =
   do ref <- newThing (ExportableStackFrame pc env)
      st  <- io (readIORef (execApiCall env))
+
+     let phase = case mbnext of
+                   Just ApiStart{}   -> ApiCallStarting
+                   Just (ApiEnd res) -> ApiCallEnding res
+                   _                 -> ApiCallRunning
+
      apiInfo <- case mbnext of
-                  Just (ApiStart api _) -> exportApiCall api ApiCallStarting
-                  Just (ApiEnd res) ->
-                    let xXXX = ApiCall
-                               { apiCallMethod = "(TODO)"
-                               , apiCallReturn = noFunInfo nullFunPtr
-                               , apiCallArgs   = []
-                               }
-                    in exportApiCall xXXX (ApiCallEnding res)
+                  Just (ApiStart api _) -> exportApiCall api phase
                   _ -> case st of
                          NoApiCall -> pure []
-                         ApiCallAborted api  -> exportApiCall api ApiCallRunning
-                         ApiCallActive api   -> exportApiCall api ApiCallRunning
+                         ApiCallAborted api  -> exportApiCall api phase
+                         ApiCallActive api   -> exportApiCall api phase
      return (JS.object ( apiInfo ++
                          tag "call"
                        : "ref"    .= ref
