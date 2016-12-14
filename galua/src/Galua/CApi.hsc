@@ -33,14 +33,13 @@ import qualified Data.ByteString.Char8 as B8
 import System.IO
 import System.IO.Unsafe (unsafeInterleaveIO)
 
-import Language.Lua.Bytecode
-import Language.Lua.Bytecode.Parser
-import Language.Lua.Bytecode.Debug
+import Language.Lua.Bytecode.Debug(lookupLocalName)
 import Language.Lua.Bytecode.FunId
 
 
 import qualified Galua.Util.SizedVector as SV
 
+import Galua.Code
 import Galua.Arguments
 import Galua.Mach
 import Galua.Number
@@ -1094,12 +1093,10 @@ lua_dump_hs :: EntryPoint (FunPtr LuaWriter -> Ptr () -> CInt -> Ptr CInt -> IO 
 lua_dump_hs l r writer dat strip out =
   reentryG "lua_dump" [cArg writer, cArg dat, cArg strip] l r $ \vm args ->
     do clo <- functionArgument vm (-1) args
-       fun <- case luaOpCodes (cloFun (referenceVal clo)) of
+       (_,fun) <- case luaOpCodes (cloFun (referenceVal clo)) of
                 Nothing -> throwIO (LuaX "expected lua function") -- ?
-                Just (_,fun) -> return fun
-       let bytecode = dumpLuaBytecode
-                        luaBytecodeMode53
-                        (Chunk (length (funcUpvalues fun)) fun)
+                Just fun -> return fun
+       let bytecode = dumpLuaBytecode fun
            loop [] = result out 0
            loop (x:xs) =
              U.unsafeUseAsCStringLen x $ \(ptr, len) ->
@@ -1447,7 +1444,7 @@ getLocalFunArgs vm n out args =
      void (pop args)
      case luaOpCodes (cloFun (referenceVal clo)) of
        Just (_,fun) ->
-         case lookupLocalName fun 0 (Reg (n-1)) of
+         case lookupLocalName (funcOrig fun) 0 (Reg (n-1)) of
            Nothing -> poke out nullPtr
            Just bs -> poke out =<< newCAString (B8.unpack bs)--XXX: Leak
        _ -> poke out nullPtr
@@ -1462,7 +1459,7 @@ getLocalStackArgs n out args ar =
 
      case luaOpCodes (execFunction execEnv) of
        Just (_,func)
-         | Just name <- lookupLocalName func pc (Reg ix) ->
+         | Just name <- lookupLocalName (funcOrig func) pc (Reg ix) ->
              do len <- SV.size stack
                 if 0 <= ix && ix < len
                   then do cell <- SV.get stack ix
@@ -1528,7 +1525,7 @@ lua_setlocal_hs l r ar n out =
      result out =<<
       case luaOpCodes (execFunction execEnv) of
        Just (_,func)
-         | Just name <- lookupLocalName func pc (Reg ix) ->
+         | Just name <- lookupLocalName (funcOrig func) pc (Reg ix) ->
            do mb <- SV.getMaybe stack ix
               case mb of
                 Nothing -> return nullPtr

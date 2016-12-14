@@ -14,22 +14,19 @@ import           Galua.FunValue(funValueCode,FunCode(..))
 import           Galua.CallIntoC
 import           Galua.OpcodeInterpreter (execute)
 import           Galua.LuaString
+import           Galua.Code
 
 import           Galua.Util.Stack (Stack)
 import qualified Galua.Util.Stack as Stack
 import qualified Galua.Util.SizedVector as SV
 
-import           Language.Lua.Bytecode (Function(..))
 
 import           Control.Monad ((<=<))
 import           Control.Concurrent
 import           Control.Concurrent.STM (atomically, takeTMVar)
-import           Control.Exception (assert)
 import           Data.IORef
 import           Data.Foldable (traverse_)
-import qualified Data.Map as Map
 
-import           GHC.Exts (inline)
 
 data Cont r = Cont
   { running           :: VM -> NextStep -> IO r
@@ -101,9 +98,6 @@ performTailCall c vm f vs =
   do (newEnv, next) <- enterClosure f vs
 
      let th = vmCurThread vm
-         execEnv = vmCurExecEnv vm
-
-     stack <- getThreadField stStack th
 
      setThreadField stExecEnv th newEnv
      let newVM = vm { vmCurExecEnv = newEnv }
@@ -161,7 +155,6 @@ performFunReturn :: Cont r -> VM -> [Value] -> IO r
 performFunReturn c vm vs =
   do let th = vmCurThread vm
 
-     let eenv = vmCurExecEnv vm
      stack <- getThreadField stStack th
 
      case Stack.pop stack of

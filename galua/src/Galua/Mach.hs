@@ -33,10 +33,7 @@ import           System.IO (hPutStrLn, stderr)
 import           System.IO.Error (isDoesNotExistError)
 import           System.Environment (lookupEnv)
 
-import           Language.Lua.Bytecode
-import           Language.Lua.Bytecode.FunId
-import           Language.Lua.Bytecode.Parser
-
+import           Galua.Code
 import           Galua.Reference
 import           Galua.Value
 import           Galua.FunValue(cFunction,luaFunction)
@@ -525,9 +522,9 @@ chunkToClosure vm name bytes env =
        Right (Chunk numUpval func) ->
          do let initial 0 = env
                 initial _ = Nil
-                func' = propagateSources func
 
                 menv = vmMachineEnv vm
+
 
             (upvalues,modNum) <-
               do upvalues <- IOVector.new numUpval
@@ -539,14 +536,14 @@ chunkToClosure vm name bytes env =
                  return (upvalues, modNum)
 
             let fid = rootFun modNum
-            clo <- machNewClosure vm (luaFunction fid func') upvalues
+            clo <- machNewClosure vm (luaFunction fid func) upvalues
             machOnChunkLoad (machConfig menv) name bytes modNum func
             return (Right clo)
 
   where
   luaSignature = "\x1bLua"
   bytesL = L.fromStrict bytes
-  parser | luaSignature `B.isPrefixOf` bytes = return (parseLuaBytecode name bytesL)
+  parser | luaSignature `B.isPrefixOf` bytes = parseLuaBytecode name bytesL
          | otherwise                         = parseLua name bytesL
 
 activateThread :: Reference Closure -> [Value] -> Reference Thread -> IO ()
@@ -564,7 +561,7 @@ parseLua mbName src =
                  (hPutStrLn stderr "WARNING: luac not found in path (configurable with $LUAC)")
             return (Left (show e))
        Right (ExitFailure{},_,err) -> return $! Left $! unpackUtf8 $! L.toStrict err
-       Right (ExitSuccess,chunk,_) -> return $! parseLuaBytecode mbName chunk
+       Right (ExitSuccess,chunk,_) -> parseLuaBytecode mbName chunk
 
 incrementCounter :: ReferenceType a => Reference a -> IORef (Map CodeLoc Int) -> IO ()
 incrementCounter i countRef =

@@ -13,28 +13,13 @@ import qualified Data.Vector as Vector
 
 import qualified Galua.Util.SizedVector as SV
 
-import           Language.Lua.Bytecode
-import           Language.Lua.Bytecode.FunId
+import           Galua.Code
 import           Galua.Value
 import           Galua.FunValue
 import           Galua.Overloading
 import           Galua.Mach
 import           Galua.Number
-import           Galua.LuaString
 import qualified Galua.Util.IOVector as IOVector
-
--- | Compute the 'Value' corresponding to a bytecode file 'Constant'.
-constantValue :: Constant -> IO Value
-constantValue k =
-  case k of
-    KNil      -> return Nil
-    KNum d    -> return (Number (Double d))
-    KInt i    -> return (Number (Int i))
-    KBool b   -> return (Bool b)
-    KString s -> String <$> fromByteString s
-    KLongString s -> String <$> fromByteString s
-
-
 
 -- | Attempt to load the instruction stored at the given address
 -- in the currently executing function.
@@ -54,7 +39,6 @@ loadExtraArg eenv pc =
      case instr of
        OP_EXTRAARG k -> return k
        _             -> interpThrow ExpectedExtraArg
-
 
 
 -- | Compute the result of executing the opcode at the given address
@@ -92,14 +76,13 @@ execute !vm !pc =
 
      case instr of
        OP_MOVE     tgt src -> tgt =: get eenv src
-       OP_LOADK    tgt src -> tgt =: get eenv src
+       OP_LOADK    tgt src -> tgt =: return src
        OP_GETUPVAL tgt src -> tgt =: get eenv src
        OP_SETUPVAL src tgt -> tgt =: get eenv src
                    -- SETUPVAL's argument order is different!
 
-       OP_LOADKX tgt ->
-         do src <- Kst <$> getExtraArg
-            set eenv tgt =<< get eenv src
+       OP_LOADKX tgt v -> 
+         do set eenv tgt v
             jump 1 -- skip over the extrarg
 
        OP_LOADBOOL tgt b c ->
@@ -267,11 +250,11 @@ execute !vm !pc =
             resetTop eenv
             jump skip
 
-       OP_CLOSURE tgt i ->
-         do (fid,closureFunc) <- getProto eenv i
-            vs <- traverse (getLValue eenv) (funcUpvalues closureFunc)
+       OP_CLOSURE tgt ix cloFunc ->
+         do vs <- traverse (getLValue eenv) (funcUpvalues cloFunc)
             closureUpvals <- Vector.thaw vs
-            let f = luaFunction fid closureFunc
+            (fid,_) <- curLuaFunction eenv
+            let f = luaFunction (subFun fid ix) cloFunc
             tgt =: (Closure <$> machNewClosure vm f closureUpvals)
 
        OP_VARARG a b ->
@@ -327,11 +310,11 @@ forloopAsNumber label v cont =
     Just n  -> cont n
     Nothing -> luaError' ("'for' " ++ label ++ " must be a number")
 
-curLuaFunction :: ExecEnv -> IO (FunId, Function)
+curLuaFunction :: ExecEnv -> IO (FunId,Function)
 curLuaFunction eenv =
   case luaOpCodes (execFunction eenv) of
-    Just (fid,f) -> return (fid,f)
-    Nothing      -> interpThrow NonLuaFunction
+    Just x  -> return x
+    Nothing -> interpThrow NonLuaFunction
 ------------------------------------------------------------------------
 -- Reference accessors
 ------------------------------------------------------------------------
@@ -386,36 +369,9 @@ lvalToRval eenv r = readIORef =<< getLValue eenv r
 
 instance RValue RK where
   get eenv (RK_Reg r) = get eenv r
-  get eenv (RK_Kst k) = get eenv k
+  get _    (RK_Kst k) = return k
   {-# INLINE get #-}
 
-instance RValue Kst where
-  {-# INLINE get #-}
-  get eenv (Kst i) =
-    do (_fid,Function{..}) <- curLuaFunction eenv
-       case funcConstants Vector.!? i of
-         Nothing -> interpThrow (BadConstant i)
-         Just x  -> constantValue x
-
-getProto :: ExecEnv -> ProtoIx -> IO (FunId,Function)
-getProto eenv (ProtoIx i) =
-  do (fid,f) <- curLuaFunction eenv
-     case funcProtos f Vector.!? i of
-       Nothing -> interpThrow (BadProto i)
-       Just x  -> return (subFun fid i,x)
-
-
-
-------------------------------------------------------------------------
--- Binary operations
-------------------------------------------------------------------------
-
-
-
-
-------------------------------------------------------------------------
--- Relational operations
-------------------------------------------------------------------------
 
 
 ------------------------------------------------------------------------

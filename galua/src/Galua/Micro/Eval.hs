@@ -319,6 +319,7 @@ runStmt aref f@Frame { .. } pc stmt =
 
     CloseStack _ -> crash "CloseStack in phase 2"
 
+{- XXX:
     NewClosure res proto us ->
       do rs <- mapM (isReference <=< getExpr f) us
          fun <- case subFuns Vector.!? proto of
@@ -331,7 +332,7 @@ runStmt aref f@Frame { .. } pc stmt =
          clo <- newClosure aref refLoc fun =<< Vector.thaw (Vector.fromList rs)
          setReg f res clo
          return Continue
-
+-}
 
     Drop ArgReg n ->
       do modifyIORef' argRegRef (drop n)

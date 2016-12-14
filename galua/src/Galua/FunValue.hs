@@ -16,9 +16,8 @@ module Galua.FunValue
 
 import Foreign.C(CInt)
 import Foreign.Ptr (FunPtr,nullFunPtr,Ptr)
-import Language.Lua.Bytecode(Function)
-import Language.Lua.Bytecode.FunId(FunId)
 
+import {-# SOURCE #-} Galua.Code(Function,FunId)
 import Galua.CObjInfo(CObjInfo,noFunInfo)
 
 
