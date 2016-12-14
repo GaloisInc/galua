@@ -55,6 +55,7 @@ import           Galua.Debugger.Options
 import           Galua.Debugger.NameHarness
 import           Galua.Debugger.Console(recordConsoleInput,recordConsoleValues)
 
+import           Galua.Code
 import           Galua.Mach
 import           Galua.Stepper
 import           Galua.Reference
@@ -66,11 +67,6 @@ import qualified Galua.Util.SizedVector as SV
 
 import qualified Galua.Spec.AST as Spec
 import qualified Galua.Spec.Parser as Spec
-
-import           Language.Lua.Bytecode(Function(..))
-import           Language.Lua.Bytecode.Debug
-                    (lookupLineNumber,inferSubFunctionNames,deepLineNumberMap)
-import           Language.Lua.Bytecode.FunId
 
 import           Data.Maybe (catMaybes,mapMaybe,fromMaybe,maybeToList)
 import           Data.Map (Map)
@@ -648,7 +644,7 @@ addTopLevel mbName bytes cid fun Chunks { .. } =
       []             -> Nothing
       ((fid,f) : fs) -> Just (out,new ++ fs)
         where
-        protos    = zip [ 0 .. ] (Vector.toList (funcProtos f))
+        protos    = zip [ 0 .. ] (Vector.toList (funcNested f))
         subNames  = Map.fromList (inferSubFunctionNames f)
         out       = [ (subFun fid i, funVisName (Map.lookup i subNames) sf)
                                          | (i,sf) <- protos ]
@@ -920,7 +916,7 @@ lookupFID dbg fid =
   go path fun =
     case path of
       []     -> return fun
-      x : xs -> go xs =<< (funcProtos fun Vector.!? x)
+      x : xs -> go xs =<< (funcNested fun Vector.!? x)
 
 removeBreakPoint :: Debugger -> (Int,FunId) -> IO ()
 removeBreakPoint dbg@Debugger { dbgBreaks } loc =

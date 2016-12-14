@@ -1,15 +1,14 @@
 {-# LANGUAGE OverloadedStrings, ForeignFunctionInterface #-}
 -- module Galua.MicroOpCode where
 
-import qualified Language.Lua.Bytecode as OP
 import           Language.Lua.Bytecode.Pretty(PP(..),blankPPInfo)
-import           Language.Lua.Bytecode.FunId
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 
 import           Foreign(Ptr)
 
+import Galua.Code
 import Galua.Mach(parseLua)
 import Galua.Micro.AST(Function(..),ppDot)
 import Galua.Micro.Translate(translateTop)
@@ -36,8 +35,8 @@ testFile f =
   do txt <- LBS.readFile f
      mb  <- parseLua (Just f) txt
      case mb of
-       Right (OP.Chunk _ fun) ->
-         do let tr = translateTop 0 fun
+       Right (Chunk _ fun) ->
+         do let tr = translateTop 0 (funcOrig fun)
                 dotFile pre x = pre ++ "_" ++ funIdString x ++ ".dot"
 
             let save pre x =
@@ -102,7 +101,7 @@ initalGlobalState chunkId =
                  , tableMeta   = basic Nil
                  }
 
-  chunkFun = FunV { functionUpVals = Map.singleton (OP.UpIx 0)
+  chunkFun = FunV { functionUpVals = Map.singleton (UpIx 0)
                                         (NotTop (Set.singleton upRef))
                   , functionFID    = OneValue (LuaFunImpl (rootFun chunkId))
                   }

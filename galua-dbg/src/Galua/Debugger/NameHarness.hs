@@ -25,9 +25,7 @@ import qualified Galua.Util.SizedVector as SV
 import           Galua.Util.SizedVector (SizedVector)
 import qualified Galua.Util.Stack as Stack
 import           Galua.Value (Value(String,Table,Nil))
-import           Language.Lua.Bytecode
-import           Language.Lua.Bytecode.FunId (noFun)
-import           Language.Lua.Bytecode.Debug (lookupLocalName)
+import           Galua.Code
 
 data HarnessParams = HarnessParams
    { harnessLocals :: [Maybe String]
@@ -50,7 +48,7 @@ harnessFunction params statement =
      case res of
        Left e                    -> throwIO (ParseError e)
        Right (Chunk _ outerFunc) ->
-         case funcProtos outerFunc Vector.!? 0 of
+         case funcNested outerFunc Vector.!? 0 of
            Nothing        -> throwIO (ParseError "PANIC: Bad harness")
            Just innerFunc -> return innerFunc
 

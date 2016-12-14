@@ -33,7 +33,6 @@ import qualified Data.ByteString.Char8 as B8
 import System.IO
 import System.IO.Unsafe (unsafeInterleaveIO)
 
-import Language.Lua.Bytecode.Debug(lookupLocalName)
 import Language.Lua.Bytecode.FunId
 
 
@@ -1444,7 +1443,7 @@ getLocalFunArgs vm n out args =
      void (pop args)
      case luaOpCodes (cloFun (referenceVal clo)) of
        Just (_,fun) ->
-         case lookupLocalName (funcOrig fun) 0 (Reg (n-1)) of
+         case lookupLocalName fun 0 (Reg (n-1)) of
            Nothing -> poke out nullPtr
            Just bs -> poke out =<< newCAString (B8.unpack bs)--XXX: Leak
        _ -> poke out nullPtr
@@ -1459,7 +1458,7 @@ getLocalStackArgs n out args ar =
 
      case luaOpCodes (execFunction execEnv) of
        Just (_,func)
-         | Just name <- lookupLocalName (funcOrig func) pc (Reg ix) ->
+         | Just name <- lookupLocalName func pc (Reg ix) ->
              do len <- SV.size stack
                 if 0 <= ix && ix < len
                   then do cell <- SV.get stack ix
@@ -1525,7 +1524,7 @@ lua_setlocal_hs l r ar n out =
      result out =<<
       case luaOpCodes (execFunction execEnv) of
        Just (_,func)
-         | Just name <- lookupLocalName (funcOrig func) pc (Reg ix) ->
+         | Just name <- lookupLocalName func pc (Reg ix) ->
            do mb <- SV.getMaybe stack ix
               case mb of
                 Nothing -> return nullPtr

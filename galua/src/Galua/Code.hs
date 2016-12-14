@@ -12,22 +12,40 @@ module Galua.Code
   , OpCode(..)
   , plusReg
   , regRange
-  , DebugInfo(..)
   , module FunId
+
+  -- * Pretty print
+  , BC.blankPPInfo
+  , BC.PP(..)
+  , ppOpCode
+
+    -- * Devug
+  , DebugInfo(..)
+  , VarInfo(..)
   , lookupLineNumber
+  , lookupLocalName
+  , deepLineNumberMap
+  , inferSubFunctionNames
+  , inferFunctionName
   ) where
 
+import           Data.Map(Map)
 import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
 import           Data.ByteString(ByteString)
 import qualified Data.ByteString.Lazy as L
+import           Text.PrettyPrint
 
 import           Language.Lua.Bytecode
                     (UpIx(..),Reg(..),ProtoIx(..),Count(..),Upvalue(..)
-                    ,DebugInfo(..),plusReg,regRange)
+                    ,DebugInfo(..),VarInfo(..),plusReg,regRange)
 import           Language.Lua.Bytecode.FunId as FunId
 import qualified Language.Lua.Bytecode as BC
+import qualified Language.Lua.Bytecode.Pretty as BC
+-- import           Language.Lua.Bytecode.Pretty(PP(..),ppExtraArg,ppNextPC,
+--                   ppRegRangeCount, ppRegRange, ppRegRangeInf, blankPPInfo)
 import qualified Language.Lua.Bytecode.Parser as BC
+import qualified Language.Lua.Bytecode.Debug as BC
 
 import           Galua.Value
 import           Galua.Number
@@ -49,6 +67,19 @@ dumpLuaBytecode fun =
 lookupLineNumber :: Function -> Int -> Maybe Int
 lookupLineNumber f pc =
   debugInfoLines (funcDebug f) Vector.!? pc
+
+lookupLocalName :: Function -> Int -> Reg -> Maybe ByteString
+lookupLocalName f pc = BC.lookupLocalName (funcOrig f) pc
+
+deepLineNumberMap :: Function -> Map Int [(FunId,[Int])]
+deepLineNumberMap x = BC.deepLineNumberMap (funcOrig x)
+
+inferFunctionName :: Function -> Int -> Maybe ByteString
+inferFunctionName f = BC.inferFunctionName (funcOrig f)
+
+inferSubFunctionNames :: Function -> [(Int,ByteString)]
+inferSubFunctionNames f = BC.inferSubFunctionNames (funcOrig f)
+
 
 
 data Chunk = Chunk !Int !Function
@@ -251,4 +282,8 @@ cvtRK fun rk =
     BC.RK_Reg r -> return (RK_Reg r)
     BC.RK_Kst k -> RK_Kst <$> cvtKst fun k
 
+--------------------------------------------------------------------------------
+
+ppOpCode :: Function -> Int -> Doc
+ppOpCode f pc = BC.ppOpCode (funcOrig f) pc
 

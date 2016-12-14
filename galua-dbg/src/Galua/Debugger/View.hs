@@ -26,6 +26,7 @@ import Galua.Debugger.Console
 import Galua.Debugger.View.Analysis(exportResult)
 import qualified Galua.Util.Table as Tab
 import qualified Galua.Util.SizedVector as SV
+import Galua.Code
 
 import qualified Galua.Micro.AST         as Analysis
 import qualified Galua.Micro.Type.Primitives  as Analysis
@@ -34,11 +35,7 @@ import qualified Galua.Micro.Type.Value  as Analysis
 import qualified Galua.Micro.Type.Eval   as Analysis
 import qualified Galua.Micro.Translate   as Analysis
 
-import Language.Lua.Bytecode(Reg(..),Function(..),DebugInfo(..))
 import Language.Lua.Bytecode.FunId
-import Language.Lua.Bytecode.Pretty (ppOpCode,blankPPInfo,pp)
-import Language.Lua.Bytecode.Debug
-                            (lookupLocalName,lookupLineNumber)
 import Language.Lua.StringLiteral (constructStringLiteral)
 
 import qualified Data.Aeson as JS
@@ -278,7 +275,7 @@ analyze dbg n =
 
   where
   expandSources     = foldr expandTop Map.empty . Map.toList
-  expandTop (r,f) m = Analysis.translateAll (rootFun r) (chunkFunction f) m
+  expandTop (r,f) m = Analysis.translateAll (rootFun r) (funcOrig (chunkFunction f)) m
 
   save pre x = sequence_
                     [ writeFile (dotFile pre fid)
@@ -854,7 +851,7 @@ lookupFun funs fid =
 
   where
   go [] f       = return f
-  go (x : xs) f = go xs =<< funcProtos f Vector.!? x
+  go (x : xs) f = go xs =<< funcNested f Vector.!? x
 
 funIdParent :: FunId -> Maybe FunId
 funIdParent (FunId []) = Nothing
@@ -916,7 +913,7 @@ exportFun funs mbPc mbEid fid0 =
   subFunLines = sortBy (compare `on` fst)
               . map (\p -> (funcLineDefined p, funcLastLineDefined p))
               . Vector.toList
-              . funcProtos
+              . funcNested
 
   -- If an opcode ends up in the range of a subfunction, say that it is
   -- at the beginning of the function.  This could happen for opcodes that

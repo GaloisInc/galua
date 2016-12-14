@@ -9,8 +9,6 @@ module Galua.Names.Eval
 
 import           Language.Lua.Syntax(Unop(..))
 import           Language.Lua.Bytecode.Pretty(PP,pp,blankPPInfo)
-import           Language.Lua.Bytecode
-                    (UpIx(..),Reg(..),DebugInfo(..),VarInfo(..),Function(..))
 import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
 import           Data.Maybe(fromMaybe)
@@ -21,6 +19,7 @@ import qualified Data.Text as Text
 import           Data.Bits(complement)
 import           Control.Exception(Exception,throwIO)
 
+import Galua.Code
 import Galua.Value(Reference, referenceVal, Value(..),valueBool)
 import Galua.Overloading(get_m__index)
 import Galua.Util.Table(Table,getTableRaw,tableLen)

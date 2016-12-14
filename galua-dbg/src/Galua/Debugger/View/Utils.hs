@@ -11,11 +11,8 @@ import qualified Data.Aeson as JS
 import qualified Data.Vector as Vector
 import           Data.String(fromString)
 
-import Language.Lua.Bytecode(Function(..),OpCode(..),
-                              ProtoIx(..))
 import Language.Lua.Bytecode.FunId
-import Language.Lua.Bytecode.Debug
-
+import Galua.Code
 import Galua.Value(unpackUtf8)
 
 data FunName = FunName { fun      :: Function
@@ -56,9 +53,8 @@ getProtoNames fid f = foldr check [] $ Vector.indexed $ funcCode f
   where
   check (pc,op) mp =
     case op of
-      OP_CLOSURE _ (ProtoIx k) ->
-        let proto = funcProtos f Vector.! k
-            info  = FunName { fun     = proto
+      OP_CLOSURE _ k proto ->
+        let info  = FunName { fun     = proto
                             , funId   = subFun fid k
                             , funName = unpackUtf8 <$> inferFunctionName f pc
                             }
