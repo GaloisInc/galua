@@ -90,7 +90,7 @@ execute !vm !pc =
             jump (if c then 1 else 0)
 
        OP_LOADNIL tgt count ->
-         do traverse_ (\r -> set eenv r Nil) [tgt .. plusReg tgt count]
+         do traverse_ (\r -> set eenv r Nil) (regFromTo tgt (plusReg tgt count))
             advance
 
        OP_GETTABUP tgt src tabKey -> binOp m__index tgt src tabKey
@@ -115,7 +115,7 @@ execute !vm !pc =
          do t <- get eenv src
             k <- get eenv key
             let after v =  do set eenv tgt v
-                              set eenv (succ tgt) t
+                              set eenv (plusReg tgt 1) t
                               advance
             m__index tabs after t k
 
@@ -140,7 +140,7 @@ execute !vm !pc =
 
 
        OP_CONCAT tgt start end ->
-         do xs  <- traverse (get eenv) [start .. end]
+         do xs  <- traverse (get eenv) (regFromTo start end)
             m__concat tabs (storeIn tgt) xs
 
        OP_JMP mbCloseReg jmp ->
@@ -164,14 +164,14 @@ execute !vm !pc =
 
        OP_CALL a b c ->
          do u      <- get eenv a
-            args   <- getCallArguments eenv (succ a) b
+            args   <- getCallArguments eenv (plusReg a 1) b
             let after result = do setCallResults eenv a c result
                                   advance
             m__call tabs after u args
 
        OP_TAILCALL a b _c ->
          do u       <- get eenv a
-            args    <- getCallArguments eenv (succ a) b
+            args    <- getCallArguments eenv (plusReg a 1) b
             let after (f,as) = return (FunTailcall f as)
             resolveFunction tabs after u args
 
@@ -218,7 +218,7 @@ execute !vm !pc =
             m__call tabs after f [a1,a2]
 
        OP_TFORLOOP a sBx ->
-         do v <- get eenv (succ a)
+         do v <- get eenv (plusReg a 1)
             if v == Nil
               then advance
               else do set eenv a v
@@ -272,7 +272,7 @@ getCallArguments eenv a b =
   do end <- case b of
        CountTop   -> getTop eenv
        CountInt x -> return (plusReg a x)
-     vs <- traverse (get eenv) [a .. pred end]
+     vs <- traverse (get eenv) (regFromTo a (plusReg end (-1)))
      resetTop eenv
      return vs
 
@@ -290,7 +290,7 @@ setCallResults eenv a b xs =
               CountInt x -> return (plusReg a x)
               CountTop   -> top <$ setTop eenv top
                  where top = plusReg a (length xs)
-     zipWithM_ (set eenv) [a .. pred end] (xs ++ repeat Nil)
+     zipWithM_ (set eenv) (regFromTo a (plusReg end (-1))) (xs ++ repeat Nil)
 
 -- | Allocate fresh references for all registers from the `start` to the
 -- `TOP` of the stack
@@ -418,8 +418,8 @@ instance Show InterpreterFailure where
 
 
 
--- | Get the register that is one beyond the last valid
--- register. This value is meaningful when dealing with
+-- | Get the last valid register.
+-- This value is meaningful when dealing with
 -- variable argument function calls and returns.
 {-# INLINE getTop #-}
 getTop :: ExecEnv -> IO Reg

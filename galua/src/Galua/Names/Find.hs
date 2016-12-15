@@ -25,7 +25,7 @@ import           Language.Lua.Annotated.Simplify
 import           Language.Lua.Annotated.Syntax
 import           Language.Lua.StringLiteral(interpretStringLiteral)
 import qualified Language.Lua.Syntax as Lua
-import           Language.Lua.Bytecode(Reg(..),plusReg)
+import           Galua.Code(Reg(..),plusReg)
 import           Language.Lua.Bytecode.FunId(rootFun, subFun, FunId(..))
 
 import Galua.Number
