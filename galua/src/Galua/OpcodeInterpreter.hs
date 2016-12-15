@@ -212,8 +212,7 @@ execute !vm !pc =
             a1 <- get eenv (plusReg a 1)
             a2 <- get eenv (plusReg a 2)
             let after result =
-                 do let resultRegs = regRange (plusReg a 3) c
-                    zipWithM_ (set eenv) resultRegs (result ++ repeat Nil)
+                 do setCallResults eenv (plusReg a 3) (CountInt c) result
                     advance
             m__call tabs after f [a1,a2]
 
