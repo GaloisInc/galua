@@ -31,6 +31,7 @@ module Galua.Code
   , inferFunctionName
   ) where
 
+import           Control.Monad (unless)
 import           Data.Map(Map)
 import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
@@ -216,8 +217,35 @@ cvtUpvalue :: BC.Function -> BC.Upvalue -> IO Upvalue
 cvtUpvalue _   (BC.UpUp u) = pure (UpUp u)
 cvtUpvalue fun (BC.UpReg r) = UpReg <$> cvtReg fun r
 
+extraRegChecks :: BC.Function -> OpCode -> IO OpCode
+extraRegChecks fun op =
+  do case op of
+       OP_FORLOOP r _     -> simple r 3
+       OP_FORPREP r _     -> simple r 2
+       OP_TFORLOOP r _    -> simple r 1
+       OP_CALL r c1 c2    -> counted (plusReg r 1) c1 >> counted r c2
+       OP_TAILCALL r c1 _ -> counted (plusReg r 1) c1
+       OP_TFORCALL r c    -> counted (plusReg r 3) (CountInt c) >> simple r 2
+       OP_SELF r _ _      -> simple r 1
+       OP_SETLIST r 0 _   -> return ()
+       OP_SETLIST r c _   -> counted r (CountInt c)
+       OP_LOADNIL r c     -> counted r (CountInt (c+1))
+       _ -> return ()
+     return op
+  where
+    simple (Reg r) i =
+      do let r' = r + i
+         unless (0 <=r' && r' < BC.funcMaxStackSize fun)
+           (fail "bad reg")
+
+    counted (Reg r) CountTop = return ()
+    counted (Reg r) (CountInt i) =
+      do let r' = r + i
+         unless (0 <= r && r <= r' && r' <= BC.funcMaxStackSize fun)
+           (fail "bad counted reg")
+
 cvtOpCode :: Vector Function -> BC.Function -> (Int,BC.OpCode) -> IO OpCode
-cvtOpCode nest fun (pc,op) =
+cvtOpCode nest fun (pc,op) = extraRegChecks fun =<<
   case op of
     BC.OP_MOVE     r1 r2      -> OP_MOVE <$> cvtReg fun r1 <*> cvtReg fun r2
     BC.OP_LOADK    r1 k       -> OP_LOADK <$> cvtReg fun r1 <*> cvtKst fun k

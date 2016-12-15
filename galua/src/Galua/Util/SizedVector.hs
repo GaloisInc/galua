@@ -9,6 +9,7 @@ module Galua.Util.SizedVector
   , shrink
   , set
   , get
+  , unsafeGet
   , getMaybe
   , rotateSubset
   , fromList
@@ -89,6 +90,11 @@ size (SizedVector ref) = svCount <$> readIORef ref
 
 get :: SizedVector a -> Int -> IO a
 get sv i = maybe (failure "Get: bad index") return =<< getMaybe sv i
+
+unsafeGet :: SizedVector a -> Int -> IO a
+unsafeGet (SizedVector ref) i =
+  do SizedVector'{..} <- readIORef ref
+     IOVector.unsafeRead svArray i
 
 getMaybe :: SizedVector a -> Int -> IO (Maybe a)
 getMaybe (SizedVector ref) i =

@@ -336,7 +336,7 @@ instance LValue UpIx where
   {-# INLINE getLValue #-}
 
 instance LValue Reg where
-  getLValue eenv (Reg i) = SV.get (execStack eenv) i
+  getLValue eenv (Reg i) = SV.unsafeGet (execStack eenv) i
   {-# INLINE getLValue #-}
 
 instance LValue Upvalue where
