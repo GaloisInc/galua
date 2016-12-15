@@ -232,9 +232,9 @@ execute !vm !pc =
 
             count <-
               if b == 0
-                 then do Reg top <- getTop eenv
+                 then do sz <- getStackSize eenv
                          let Reg aval = a
-                         return (top - aval - 1)
+                         return (sz - aval - 1)
                  else return b
 
             (offset, skip) <-
@@ -247,7 +247,7 @@ execute !vm !pc =
               do x <- get eenv (plusReg a i)
                  setTableRaw tab (Number (Int (offset+i))) x
 
-            resetTop eenv
+            resetStackSize eenv
             jump skip
 
        OP_CLOSURE tgt ix cloFunc ->
@@ -270,10 +270,11 @@ getCallArguments ::
   ExecEnv -> Reg {- ^ start -} -> Count {- ^ count -} -> IO [Value]
 getCallArguments eenv a b =
   do end <- case b of
-       CountTop   -> getTop eenv
-       CountInt x -> return (plusReg a x)
-     vs <- traverse (get eenv) (regFromTo a (plusReg end (-1)))
-     resetTop eenv
+       CountTop   -> do sz <- getStackSize eenv
+                        return $! Reg (sz-1)
+       CountInt x -> return (plusReg a (x-1))
+     vs <- traverse (get eenv) (regFromTo a end)
+     resetStackSize eenv
      return vs
 
 
@@ -286,11 +287,14 @@ setCallResults ::
   [Value] {- ^ results           -} ->
   IO ()
 setCallResults eenv a b xs =
-  do end <- case b of
-              CountInt x -> return (plusReg a x)
-              CountTop   -> top <$ setTop eenv top
-                 where top = plusReg a (length xs)
-     zipWithM_ (set eenv) (regFromTo a (plusReg end (-1))) (xs ++ repeat Nil)
+  do count <- case b of
+              CountInt x -> return x
+              CountTop   -> n <$ setStackSize eenv sz'
+                 where Reg base = a
+                       sz' = base + n
+                       n   = length xs
+
+     zipWithM_ (set eenv) (regRange a count) (xs ++ repeat Nil)
 
 -- | Allocate fresh references for all registers from the `start` to the
 -- `TOP` of the stack
@@ -421,24 +425,22 @@ instance Show InterpreterFailure where
 -- | Get the last valid register.
 -- This value is meaningful when dealing with
 -- variable argument function calls and returns.
-{-# INLINE getTop #-}
-getTop :: ExecEnv -> IO Reg
-getTop eenv =
+{-# INLINE getStackSize #-}
+getStackSize :: ExecEnv -> IO Int
+getStackSize eenv =
   do let stack = execStack eenv
-     n <- SV.size stack
-     return (Reg n)
+     SV.size stack
 
-{-# INLINE resetTop #-}
-resetTop :: ExecEnv -> IO ()
-resetTop eenv =
+{-# INLINE resetStackSize #-}
+resetStackSize :: ExecEnv -> IO ()
+resetStackSize eenv =
   do (_,fun) <- curLuaFunction eenv
-     let n = funcMaxStackSize fun
-     setTop eenv (Reg n)
+     setStackSize eenv (funcMaxStackSize fun)
 
 -- | Update TOP and ensure that the stack is large enough
 -- to index up to (but excluding) TOP.
-setTop :: ExecEnv -> Reg -> IO ()
-setTop eenv (Reg newLen) =
+setStackSize :: ExecEnv -> Int -> IO ()
+setStackSize eenv newLen =
   do let stack = execStack eenv
      oldLen <- SV.size stack
 
