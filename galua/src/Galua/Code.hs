@@ -174,7 +174,7 @@ cvtFunction fun =
      return Function
       { funcSource          = BC.funcSource fun
       , funcLineDefined     = BC.funcLineDefined fun
-      , funcLastLineDefined = BC.funcLineDefined fun
+      , funcLastLineDefined = BC.funcLastLineDefined fun
       , funcNumParams       = BC.funcNumParams fun
       , funcIsVararg        = BC.funcIsVararg fun
       , funcMaxStackSize    = BC.funcMaxStackSize fun
