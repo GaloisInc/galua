@@ -90,7 +90,7 @@ execute !vm !pc =
             jump (if c then 1 else 0)
 
        OP_LOADNIL tgt count ->
-         do traverse_ (\r -> set eenv r Nil) (regFromTo tgt (plusReg tgt count))
+         do traverse_ (\r -> set eenv r Nil) (regRange tgt (count+1))
             advance
 
        OP_GETTABUP tgt src tabKey -> binOp m__index tgt src tabKey
