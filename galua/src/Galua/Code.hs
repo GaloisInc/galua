@@ -42,8 +42,6 @@ import           Language.Lua.Bytecode
 import           Language.Lua.Bytecode.FunId as FunId
 import qualified Language.Lua.Bytecode as BC
 import qualified Language.Lua.Bytecode.Pretty as BC
--- import           Language.Lua.Bytecode.Pretty(PP(..),ppExtraArg,ppNextPC,
---                   ppRegRangeCount, ppRegRange, ppRegRangeInf, blankPPInfo)
 import qualified Language.Lua.Bytecode.Parser as BC
 import qualified Language.Lua.Bytecode.Debug as BC
 
@@ -65,8 +63,7 @@ dumpLuaBytecode fun =
     (BC.Chunk (length (funcUpvalues fun)) (funcOrig fun))
 
 lookupLineNumber :: Function -> Int -> Maybe Int
-lookupLineNumber f pc =
-  debugInfoLines (funcDebug f) Vector.!? pc
+lookupLineNumber f pc = BC.lookupLineNumber (funcOrig f) pc
 
 lookupLocalName :: Function -> Int -> Reg -> Maybe ByteString
 lookupLocalName f pc = BC.lookupLocalName (funcOrig f) pc
