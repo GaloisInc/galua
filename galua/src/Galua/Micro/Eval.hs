@@ -17,7 +17,6 @@ import qualified Language.Lua.Bytecode as OP
 import           Language.Lua.Bytecode.FunId
 
 import           Galua.Value
-import           Galua.FunValue
 import           Galua.Number(Number(..),wordshiftL,wordshiftR,nummod,
                               numberPow,numberDiv)
 import           Galua.Reference(AllocRef)
