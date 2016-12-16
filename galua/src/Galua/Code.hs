@@ -11,7 +11,6 @@ module Galua.Code
   , RK(..)
   , Count(..)
   , OpCode(..)
-  , plusReg
   , regRange
   , regFromTo
   , module FunId
@@ -37,7 +36,7 @@ import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
 import           Data.ByteString(ByteString)
 import qualified Data.ByteString.Lazy as L
-import           Text.PrettyPrint
+import           Text.PrettyPrint hiding (nest)
 
 import           Language.Lua.Bytecode
                     (UpIx(..),ProtoIx(..),Count(..)
@@ -227,7 +226,7 @@ extraRegChecks fun op =
        OP_TAILCALL r c1 _ -> counted (plusReg r 1) c1
        OP_TFORCALL r c    -> counted (plusReg r 3) (CountInt c) >> simple r 2
        OP_SELF r _ _      -> simple r 1
-       OP_SETLIST r 0 _ _ -> return ()
+       OP_SETLIST _ 0 _ _ -> return ()
        OP_SETLIST r c _ _ -> counted r (CountInt c)
        OP_LOADNIL r c     -> counted r (CountInt (c+1))
        _ -> return ()
@@ -238,7 +237,7 @@ extraRegChecks fun op =
          unless (0 <=r' && r' < BC.funcMaxStackSize fun)
            (fail "bad reg")
 
-    counted (Reg r) CountTop = return ()
+    counted (Reg _) CountTop = return ()
     counted (Reg r) (CountInt i) =
       do let r' = r + i
          unless (0 <= r && r <= r' && r' <= BC.funcMaxStackSize fun)
