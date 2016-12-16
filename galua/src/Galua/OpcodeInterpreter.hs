@@ -223,7 +223,7 @@ execute !vm !pc =
               else do set eenv a v
                       jump sBx
 
-       OP_SETLIST a b c ->
+       OP_SETLIST a b offset skip ->
          do tab' <- get eenv a
             tab <- case tab' of
                      Table tab -> return tab
@@ -235,12 +235,6 @@ execute !vm !pc =
                          let Reg aval = a
                          return (sz - aval - 1)
                  else return b
-
-            (offset, skip) <-
-               if c == 0
-                 then do k <- getExtraArg
-                         return (50*k,1)
-                 else return (50 * (c-1), 0)
 
             forM_ [1..count] $ \i ->
               do x <- get eenv (plusReg a i)
