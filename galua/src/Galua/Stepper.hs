@@ -6,6 +6,7 @@
 module Galua.Stepper
   ( oneStep
   , runAllSteps
+  , oneStep', Cont(..)
   ) where
 
 import           Galua.Mach
@@ -181,6 +182,7 @@ performFunReturn c vm vs =
 
 
 
+{-# INLINE performThreadFail #-}
 performThreadFail :: Cont r -> VM -> Value -> IO r
 performThreadFail c vm e =
   do let th = vmCurThread vm
@@ -278,6 +280,7 @@ performYield c vm k =
 -- | Unwind the call stack until a handler is found or the stack becomes
 -- empty. Resume execution in the error handler if one is found or finish
 -- execution with the final error otherwise.
+{-# INLINE performErrorReturn #-}
 performErrorReturn :: Cont r -> VM -> Value -> IO r
 performErrorReturn c vm e =
   do let ref = vmCurThread vm

@@ -1012,44 +1012,46 @@ getLineNumberForCurFunPC vm pc =
 
 
 doStepMode :: Debugger -> VM -> NextStep -> StepMode -> IO VMState
-doStepMode dbg vm next mode =
-  do vmstate <- oneStep vm next
-     case vmstate of
-       RunningInC vm' ->
-          do let luaTMVar = machLuaServer (vmMachineEnv vm')
-             res <- atomically $ Left  <$> waitForCommandSTM dbg
-                             <|> Right <$> takeTMVar luaTMVar
-             case res of
-               Left m ->
-                 do command <- m
-                    mbNewMode <- handleCommand dbg False command
-                    doStepMode dbg vm' WaitForC (fromMaybe mode mbNewMode)
+doStepMode dbg vm next mode = oneStep' Cont { .. } vm next
+  where
+  runningInC !vm' =
+    do let luaTMVar = machLuaServer (vmMachineEnv vm')
+       res <- atomically $ Left  <$> waitForCommandSTM dbg
+                       <|> Right <$> takeTMVar luaTMVar
+       case res of
+         Left m ->
+           do command <- m
+              mbNewMode <- handleCommand dbg False command
+              doStepMode dbg vm' WaitForC (fromMaybe mode mbNewMode)
 
-               Right cResult ->
-                 do next' <- handleCCallState vm' cResult
-                    let mode' = nextMode vm' next' mode
-                    checkStop dbg mode' (Running vm' next') $
-                      doStepMode dbg vm' next' mode'
+         Right cResult ->
+           do next' <- handleCCallState vm' cResult
+              let mode' = nextMode vm' next' mode
+              checkStop dbg mode' (Running vm' next') $
+                doStepMode dbg vm' next' mode'
 
-       Running vm' next' ->
-        do mode' <- return $! nextMode vm' next' mode
-           checkStopError dbg vm' next' $
-             if not (mayPauseBefore next')
-               then doStepMode dbg vm' next' mode'
-               else checkStop dbg mode' vmstate $
-                    checkBreakPoint dbg mode' vm' next' $
-                    do mb <- peekCmd dbg
-                       case mb of
-                         Nothing      -> doStepMode dbg vm' next' mode'
-                         Just command ->
-                           do mbNewMode <- handleCommand dbg False command
-                              let mode'' = fromMaybe mode' mbNewMode
-                              -- external stop directive and we're already
-                              -- at a safe point
-                              checkStop dbg mode'' vmstate $
-                                doStepMode dbg vm' next' mode''
 
-       _ -> return vmstate
+
+  running !vm' !next' =
+    do mode' <- return $! nextMode vm' next' mode
+       checkStopError dbg vm' next' $
+         if not (mayPauseBefore next')
+           then doStepMode dbg vm' next' mode'
+           else checkStop dbg mode' (Running vm' next') $
+                checkBreakPoint dbg mode' vm' next' $
+                do mb <- peekCmd dbg
+                   case mb of
+                     Nothing      -> doStepMode dbg vm' next' mode'
+                     Just command ->
+                       do mbNewMode <- handleCommand dbg False command
+                          let mode'' = fromMaybe mode' mbNewMode
+                          -- external stop directive and we're already
+                          -- at a safe point
+                          checkStop dbg mode'' (Running vm' next') $
+                            doStepMode dbg vm' next' mode''
+
+  finishedOk vs = return $! FinishedOk vs
+  finishedWithError v = return $! FinishedWithError v
 
 
 checkStop :: Debugger -> StepMode -> VMState -> IO VMState -> IO VMState
@@ -1120,7 +1122,7 @@ mayPauseBefore nextStep =
     _             -> False
 
 
-
+{-# INLINE nextMode #-}
 nextMode :: VM -> NextStep -> StepMode -> StepMode
 
 nextMode _ (Interrupt _) _ = Stop
