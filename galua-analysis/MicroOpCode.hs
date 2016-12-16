@@ -2,6 +2,7 @@
 -- module Galua.MicroOpCode where
 
 import           Language.Lua.Bytecode.Pretty(PP(..),blankPPInfo)
+import qualified Language.Lua.Bytecode as BC
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map as Map
 import qualified Data.Set as Set
@@ -101,7 +102,7 @@ initalGlobalState chunkId =
                  , tableMeta   = basic Nil
                  }
 
-  chunkFun = FunV { functionUpVals = Map.singleton (UpIx 0)
+  chunkFun = FunV { functionUpVals = Map.singleton (BC.UpIx 0)
                                         (NotTop (Set.singleton upRef))
                   , functionFID    = OneValue (LuaFunImpl (rootFun chunkId))
                   }

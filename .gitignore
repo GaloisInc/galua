@@ -12,3 +12,4 @@ log
 galua-c/*.a.gz
 config.txt
 log
+luac.out
