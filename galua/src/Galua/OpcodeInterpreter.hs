@@ -19,7 +19,7 @@ import           Galua.FunValue
 import           Galua.Overloading
 import           Galua.Mach
 import           Galua.Number
-import qualified Galua.Util.IOVector as IOVector
+import qualified Data.Vector.Mutable as IOVector
 
 -- | Attempt to load the instruction stored at the given address
 -- in the currently executing function.
@@ -329,10 +329,7 @@ class LValue a where
 instance LValue UpIx where
   getLValue eenv (UpIx i) =
     do let upvals = execUpvals eenv
-       mb <- IOVector.readMaybe upvals i
-       case mb of
-         Just ref -> return ref
-         Nothing  -> interpThrow (BadUpval i)
+       IOVector.unsafeRead upvals i
   {-# INLINE getLValue #-}
 
 instance LValue Reg where

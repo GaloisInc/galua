@@ -228,7 +228,7 @@ readReg eenv (Reg n) =
   do mb <- getMaybe (nrStack eenv) n
      case mb of
        Just ref -> readIORef ref
-       Nothing  -> bad $ "Invalid register: " ++ show (Reg n)
+       Nothing  -> bad $ "Invalid register: " ++ sh (Reg n)
 
 sh :: PP a => a -> String
 sh = show . pp blankPPInfo

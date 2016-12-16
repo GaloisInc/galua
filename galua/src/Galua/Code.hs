@@ -40,7 +40,7 @@ import qualified Data.ByteString.Lazy as L
 import           Text.PrettyPrint
 
 import           Language.Lua.Bytecode
-                    (UpIx(..),ProtoIx(..),Count(..)
+                    (ProtoIx(..),Count(..)
                     ,DebugInfo(..),VarInfo(..))
 import           Language.Lua.Bytecode.FunId as FunId
 import qualified Language.Lua.Bytecode as BC
@@ -117,6 +117,9 @@ regRange = coerce BC.regRange
 
 regFromTo :: Reg -> Reg -> [Reg]
 regFromTo (Reg reg1) (Reg regN) = coerce [reg1 .. regN]
+
+newtype UpIx = UpIx Int
+  deriving (Eq, Ord, Show)
 
 data OpCode
   = OP_MOVE     !Reg !Reg       {- ^    A B     R(A) := R(B)                                    -}
@@ -213,9 +216,14 @@ cvtReg fun (BC.Reg r)
   | 0 <= r, r < BC.funcMaxStackSize fun = return (Reg r)
   | otherwise = fail "cvtReg: Register out of range"
 
+cvtUpIx :: BC.Function -> BC.UpIx -> IO UpIx
+cvtUpIx fun (BC.UpIx u)
+  | 0 <= u, u < length (BC.funcUpvalues fun) = return (UpIx u)
+  | otherwise = fail "cvtReg: Upvalue index out of range"
+
 cvtUpvalue :: BC.Function -> BC.Upvalue -> IO Upvalue
-cvtUpvalue _   (BC.UpUp u) = pure (UpUp u)
-cvtUpvalue fun (BC.UpReg r) = UpReg <$> cvtReg fun r
+cvtUpvalue fun (BC.UpUp  u) = UpUp  <$> cvtUpIx fun u
+cvtUpvalue fun (BC.UpReg r) = UpReg <$> cvtReg  fun r
 
 extraRegChecks :: BC.Function -> OpCode -> IO OpCode
 extraRegChecks fun op =
@@ -254,13 +262,13 @@ cvtOpCode nest fun (pc,op) = extraRegChecks fun =<<
          OP_LOADKX <$> cvtReg fun r1 <*> cvtKst fun (BC.Kst k)
     BC.OP_LOADBOOL r1 b1 b2   -> OP_LOADBOOL <$> cvtReg fun r1 <*> pure b1 <*> pure b2
     BC.OP_LOADNIL  r1 x       -> OP_LOADNIL  <$> cvtReg fun r1 <*> pure x
-    BC.OP_GETUPVAL r1 u1      -> OP_GETUPVAL <$> cvtReg fun r1 <*> pure u1
+    BC.OP_GETUPVAL r1 u1      -> OP_GETUPVAL <$> cvtReg fun r1 <*> cvtUpIx fun u1
 
-    BC.OP_GETTABUP r1 u1 rk1  -> OP_GETTABUP <$> cvtReg fun r1 <*> pure u1 <*> cvtRK fun rk1
+    BC.OP_GETTABUP r1 u1 rk1  -> OP_GETTABUP <$> cvtReg fun r1 <*> cvtUpIx fun u1 <*> cvtRK fun rk1
     BC.OP_GETTABLE r1 r2 rk1  -> OP_GETTABLE <$> cvtReg fun r1 <*> cvtReg fun r2 <*> cvtRK fun rk1
 
-    BC.OP_SETTABUP u1 rk1 rk2 -> OP_SETTABUP u1 <$> cvtRK fun rk1 <*> cvtRK fun rk2
-    BC.OP_SETUPVAL r1 u1      -> OP_SETUPVAL <$> cvtReg fun r1 <*> pure u1
+    BC.OP_SETTABUP u1 rk1 rk2 -> OP_SETTABUP <$> cvtUpIx fun u1 <*> cvtRK fun rk1 <*> cvtRK fun rk2
+    BC.OP_SETUPVAL r1 u1      -> OP_SETUPVAL <$> cvtReg fun r1 <*> cvtUpIx fun u1
     BC.OP_SETTABLE r1 rk1 rk2 -> OP_SETTABLE <$> cvtReg fun r1 <*> cvtRK fun rk1 <*> cvtRK fun rk2
 
     BC.OP_NEWTABLE r1 x y     -> OP_NEWTABLE <$> cvtReg fun r1 <*> pure x <*> pure y
@@ -339,4 +347,12 @@ cvtRK fun rk =
 
 ppOpCode :: Function -> Int -> Doc
 ppOpCode f pc = BC.ppOpCode (funcOrig f) pc
+
+--------------------------------------------------------------------------------
+
+instance BC.PP UpIx where
+  pp i (UpIx u) = BC.pp i (BC.UpIx u)
+
+instance BC.PP Reg where
+  pp i (Reg u) = BC.pp i (BC.Reg u)
 
