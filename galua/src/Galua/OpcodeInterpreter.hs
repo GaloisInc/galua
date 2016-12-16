@@ -30,17 +30,6 @@ loadInstruction eenv i =
     Nothing -> interpThrow (BadPc i)
     Just x  -> return x
 
--- | Attempt to load the EXTRAARG instruction stored at the given address
--- in the currently executing function.
-{-# INLINE loadExtraArg #-}
-loadExtraArg :: ExecEnv -> Int {- ^ program counter -} -> IO Int
-loadExtraArg eenv pc =
-  do instr <- loadInstruction eenv pc
-     case instr of
-       OP_EXTRAARG k -> return k
-       _             -> interpThrow ExpectedExtraArg
-
-
 -- | Compute the result of executing the opcode at the given address
 -- within the current function execution environment.
 execute :: VM -> Int -> IO NextStep
@@ -51,7 +40,6 @@ execute !vm !pc =
      instr <- loadInstruction eenv pc
      let advance      = jump 0
          jump i       = return $! Goto (pc + i + 1)
-         getExtraArg  = loadExtraArg eenv (pc+1)
          tgt =: m     = do a <- m
                            set eenv tgt a
                            advance
@@ -223,7 +211,7 @@ execute !vm !pc =
               else do set eenv a v
                       jump sBx
 
-       OP_SETLIST a b c ->
+       OP_SETLIST a b offset skip ->
          do tab' <- get eenv a
             tab <- case tab' of
                      Table tab -> return tab
@@ -235,12 +223,6 @@ execute !vm !pc =
                          let Reg aval = a
                          return (sz - aval - 1)
                  else return b
-
-            (offset, skip) <-
-               if c == 0
-                 then do k <- getExtraArg
-                         return (50*k,1)
-                 else return (50 * (c-1), 0)
 
             forM_ [1..count] $ \i ->
               do x <- get eenv (plusReg a i)

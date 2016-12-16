@@ -11,7 +11,6 @@ module Galua.Code
   , RK(..)
   , Count(..)
   , OpCode(..)
-  , plusReg
   , regRange
   , regFromTo
   , module FunId
@@ -37,7 +36,7 @@ import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
 import           Data.ByteString(ByteString)
 import qualified Data.ByteString.Lazy as L
-import           Text.PrettyPrint
+import           Text.PrettyPrint hiding (nest)
 
 import           Language.Lua.Bytecode
                     (ProtoIx(..),Count(..)
@@ -177,7 +176,7 @@ data OpCode
   | OP_TFORCALL !Reg !Int         {- ^    A C     R(A+3), ... ,R(A+2+C) := R(A)(R(A+1), R(A+2));  -}
   | OP_TFORLOOP !Reg !Int         {- ^    A sBx   if R(A+1) ~= nil then { R(A)=R(A+1); pc += sBx }-}
 
-  | OP_SETLIST  !Reg !Int !Int   {- ^    A B C   R(A)[(C-1)*FPF+i] := R(A+i), 1 <= i <= B        -}
+  | OP_SETLIST  !Reg !Int !Int !Int   {- ^    A B C D  R(A)[C+i] := R(A+i), 1 <= i <= B; pc += D -}
 
   | OP_CLOSURE  !Reg !Int !Function   {- ^    A Bx    R(A) := closure(KPROTO[Bx])                     -}
 
@@ -205,11 +204,11 @@ cvtFunction fun =
       , funcOrig            = fun
       }
 
-getOpCode :: BC.Function -> Int -> IO BC.OpCode
-getOpCode fun pc =
+getExtraOp :: BC.Function -> Int -> IO Int
+getExtraOp fun pc =
   case BC.funcCode fun Vector.!? pc of
-    Nothing -> fail "Malformed op-codes"
-    Just op -> return op
+    Just (BC.OP_EXTRAARG n) -> return n
+    _ -> fail "Malformed op-codes"
 
 cvtReg :: BC.Function -> BC.Reg -> IO Reg
 cvtReg fun (BC.Reg r)
@@ -235,8 +234,8 @@ extraRegChecks fun op =
        OP_TAILCALL r c1 _ -> counted (plusReg r 1) c1
        OP_TFORCALL r c    -> counted (plusReg r 3) (CountInt c) >> simple r 2
        OP_SELF r _ _      -> simple r 1
-       OP_SETLIST r 0 _   -> return ()
-       OP_SETLIST r c _   -> counted r (CountInt c)
+       OP_SETLIST _ 0 _ _ -> return ()
+       OP_SETLIST r c _ _ -> counted r (CountInt c)
        OP_LOADNIL r c     -> counted r (CountInt (c+1))
        _ -> return ()
      return op
@@ -246,7 +245,7 @@ extraRegChecks fun op =
          unless (0 <=r' && r' < BC.funcMaxStackSize fun)
            (fail "bad reg")
 
-    counted (Reg r) CountTop = return ()
+    counted (Reg _) CountTop = return ()
     counted (Reg r) (CountInt i) =
       do let r' = r + i
          unless (0 <= r && r <= r' && r' <= BC.funcMaxStackSize fun)
@@ -258,7 +257,7 @@ cvtOpCode nest fun (pc,op) = extraRegChecks fun =<<
     BC.OP_MOVE     r1 r2      -> OP_MOVE <$> cvtReg fun r1 <*> cvtReg fun r2
     BC.OP_LOADK    r1 k       -> OP_LOADK <$> cvtReg fun r1 <*> cvtKst fun k
     BC.OP_LOADKX   r1  ->
-      do BC.OP_EXTRAARG k <- getOpCode fun (pc + 1)
+      do k <- getExtraOp fun (pc + 1)
          OP_LOADKX <$> cvtReg fun r1 <*> cvtKst fun (BC.Kst k)
     BC.OP_LOADBOOL r1 b1 b2   -> OP_LOADBOOL <$> cvtReg fun r1 <*> pure b1 <*> pure b2
     BC.OP_LOADNIL  r1 x       -> OP_LOADNIL  <$> cvtReg fun r1 <*> pure x
@@ -312,7 +311,13 @@ cvtOpCode nest fun (pc,op) = extraRegChecks fun =<<
     BC.OP_TFORCALL r1 x       -> OP_TFORCALL <$> cvtReg fun r1 <*> pure x
     BC.OP_TFORLOOP r1 x       -> OP_TFORLOOP <$> cvtReg fun r1 <*> pure x
 
-    BC.OP_SETLIST  r1 x y     -> OP_SETLIST <$> cvtReg fun r1 <*> pure x <*> pure y
+    BC.OP_SETLIST  r1 x y ->
+      do r' <- cvtReg fun r1
+         let fpf = 50
+         if y == 0
+            then do k <- getExtraOp fun (pc + 1)
+                    return $! OP_SETLIST r' x (fpf * k) 1
+            else return $! OP_SETLIST r' x (fpf * (y - 1)) 0
 
     BC.OP_CLOSURE  r1 (ProtoIx f) ->
       case nest Vector.!? f of
