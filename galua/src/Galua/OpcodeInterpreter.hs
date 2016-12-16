@@ -24,11 +24,11 @@ import qualified Data.Vector.Mutable as IOVector
 -- | Attempt to load the instruction stored at the given address
 -- in the currently executing function.
 {-# INLINE loadInstruction #-}
-loadInstruction :: ExecEnv -> Int {- ^ instruction counter -} -> IO OpCode
+loadInstruction :: ExecEnv -> Int {- ^ instruction counter -} -> OpCode
 loadInstruction eenv i =
-  case execInstructions eenv Vector.!? i of
-    Nothing -> interpThrow (BadPc i)
-    Just x  -> return x
+  execInstructions eenv `Vector.unsafeIndex` i
+  -- program counter offsets are checked when functions
+  -- are loaded in Galua.Code
 
 -- | Compute the result of executing the opcode at the given address
 -- within the current function execution environment.
@@ -36,9 +36,7 @@ execute :: VM -> Int -> IO NextStep
 execute !vm !pc =
 
   do let eenv = vmCurExecEnv vm
-
-     instr <- loadInstruction eenv pc
-     let advance      = jump 0
+         advance      = jump 0
          jump i       = return $! Goto (pc + i + 1)
          tgt =: m     = do a <- m
                            set eenv tgt a
@@ -62,7 +60,7 @@ execute !vm !pc =
               f tabs (\res -> jump (if res /= invert then 1 else 0)) x1 x2
 
 
-     case instr of
+     case loadInstruction eenv pc of
        OP_MOVE     tgt src -> tgt =: get eenv src
        OP_LOADK    tgt src -> tgt =: return src
        OP_GETUPVAL tgt src -> tgt =: get eenv src

@@ -224,21 +224,20 @@ cvtUpvalue :: BC.Function -> BC.Upvalue -> IO Upvalue
 cvtUpvalue fun (BC.UpUp  u) = UpUp  <$> cvtUpIx fun u
 cvtUpvalue fun (BC.UpReg r) = UpReg <$> cvtReg  fun r
 
-extraRegChecks :: BC.Function -> OpCode -> IO OpCode
+extraRegChecks :: BC.Function -> OpCode -> IO ()
 extraRegChecks fun op =
-  do case op of
-       OP_FORLOOP r _     -> simple r 3
-       OP_FORPREP r _     -> simple r 2
-       OP_TFORLOOP r _    -> simple r 1
-       OP_CALL r c1 c2    -> counted (plusReg r 1) c1 >> counted r c2
-       OP_TAILCALL r c1 _ -> counted (plusReg r 1) c1
-       OP_TFORCALL r c    -> counted (plusReg r 3) (CountInt c) >> simple r 2
-       OP_SELF r _ _      -> simple r 1
-       OP_SETLIST _ 0 _ _ -> return ()
-       OP_SETLIST r c _ _ -> counted r (CountInt c)
-       OP_LOADNIL r c     -> counted r (CountInt (c+1))
-       _ -> return ()
-     return op
+  case op of
+    OP_FORLOOP r _     -> simple r 3
+    OP_FORPREP r _     -> simple r 2
+    OP_TFORLOOP r _    -> simple r 1
+    OP_CALL r c1 c2    -> counted (plusReg r 1) c1 >> counted r c2
+    OP_TAILCALL r c1 _ -> counted (plusReg r 1) c1
+    OP_TFORCALL r c    -> counted (plusReg r 3) (CountInt c) >> simple r 2
+    OP_SELF r _ _      -> simple r 1
+    OP_SETLIST _ 0 _ _ -> return ()
+    OP_SETLIST r c _ _ -> counted r (CountInt c)
+    OP_LOADNIL r c     -> counted r (CountInt (c+1))
+    _ -> return ()
   where
     simple (Reg r) i =
       do let r' = r + i
@@ -251,8 +250,46 @@ extraRegChecks fun op =
          unless (0 <= r && r <= r' && r' <= BC.funcMaxStackSize fun)
            (fail "bad counted reg")
 
+extraPcChecks :: BC.Function -> Int -> OpCode -> IO ()
+extraPcChecks fun pc op =
+  case op of
+    -- possible jumps by 1
+    OP_EQ{}       -> check 1
+    OP_LT{}       -> check 1
+    OP_LE{}       -> check 1
+    OP_LOADKX{}   -> check 1
+    OP_LOADBOOL{} -> check 1
+    OP_TEST{}     -> check 1
+    OP_TESTSET{}  -> check 1
+
+    -- might jump forward or backward
+    OP_FORLOOP  _ x -> check 0 >> check x
+    OP_TFORLOOP _ x -> check 0 >> check x
+
+    -- always jumps by parameter
+    OP_FORPREP _     x -> check x
+    OP_SETLIST _ _ _ x -> check x
+    OP_JMP _         x -> check x
+
+    OP_RETURN{} -> return ()
+
+    _ -> check 0
+  where
+    n = length (BC.funcCode fun)
+    check rel =
+      let pc' = pc + 1 + rel
+      in unless (0 <= pc' && pc' < n)
+           (fail "Invalid target program counter")
+
 cvtOpCode :: Vector Function -> BC.Function -> (Int,BC.OpCode) -> IO OpCode
-cvtOpCode nest fun (pc,op) = extraRegChecks fun =<<
+cvtOpCode nest fun (pc,op) =
+  do op' <- cvtOpCode' nest fun pc op
+     extraRegChecks fun op'
+     extraPcChecks fun pc op'
+     return op'
+
+cvtOpCode' :: Vector Function -> BC.Function -> Int -> BC.OpCode -> IO OpCode
+cvtOpCode' nest fun pc op =
   case op of
     BC.OP_MOVE     r1 r2      -> OP_MOVE <$> cvtReg fun r1 <*> cvtReg fun r2
     BC.OP_LOADK    r1 k       -> OP_LOADK <$> cvtReg fun r1 <*> cvtKst fun k
