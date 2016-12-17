@@ -519,7 +519,7 @@ instance Eq a => Lattice (Lift a) where
         | otherwise       -> Just MultipleValues
 
 
-instance (Eq a, Lattice a) => Lattice (List a) where
+instance Lattice a => Lattice (List a) where
   bottom = ListBottom
 
   addNewInfo newList oldList =

@@ -8,7 +8,7 @@ module Galua.Debugger.View
   , analyze
   ) where
 
-import Galua.CObjInfo(CObjInfo(..),noFunInfo)
+import Galua.CObjInfo(CObjInfo(..))
 import Galua.Debugger
 import Galua.Debugger.PrettySource (omittedLine,lineToJSON)
 import Galua.Debugger.Trie
@@ -35,7 +35,6 @@ import qualified Galua.Micro.Type.Value  as Analysis
 import qualified Galua.Micro.Type.Eval   as Analysis
 import qualified Galua.Micro.Translate   as Analysis
 
-import Language.Lua.Bytecode.FunId
 import Language.Lua.StringLiteral (constructStringLiteral)
 
 import qualified Data.Aeson as JS
@@ -696,30 +695,6 @@ exportChunkFuns :: Int -> Function -> [JS.Value]
 exportChunkFuns chunkId fun0 =
   [ JS.object [ "id" .= exportFID fid, "name" .= nm ]
                               | (fid,nm) <- computeFunNames chunkId fun0 ]
-
-
-
-exportFunName :: Chunks -> FunName -> JS.Value
-exportFunName funs cl =
-  JS.object $
-  case cl of
-    CFID CFunName { cfunName } ->
-      [ "type" .= str "C"
-      , "name" .= fromMaybe (cObjAddr cfunName) (cObjName cfunName)
-      , "file" .= cObjFile cfunName
-      , "line" .= cObjLine cfunName
-      ]
-
-    LuaFID fid ->
-      let vn = Map.lookup fid (allFunNames funs)
-      in
-      [ "type" .= str "Lua"
-      , "name" .= (renderVisName <$> vn)
-      , "file" .= join (funVisFile <$> vn)
-      , "fid"  .= exportFID fid
-      ]
-
-  where str x = x :: String
 
 
 
