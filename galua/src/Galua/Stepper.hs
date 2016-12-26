@@ -85,7 +85,7 @@ performApiStart c vm apiCall next =
 {-# INLINE performGoto #-}
 performGoto :: Cont r -> VM -> Int -> IO r
 performGoto c vm pc =
-  do setThreadField stPC (vmCurThread vm) pc
+  do setThreadPC (vmCurThread vm) pc
      running c vm =<< execute vm pc
 
 {-# INLINE performTailCall #-}
@@ -120,7 +120,7 @@ performFunCall c vm f vs mb k =
 
      let th = vmCurThread vm
 
-     pc       <- getThreadField stPC th
+     pc       <- getThreadPC th
      let eenv = vmCurExecEnv vm
      stack    <- getThreadField stStack th
      handlers <- getThreadField stHandlers th
@@ -171,7 +171,7 @@ performFunReturn c vm vs =
            CallFrame pc fenv errK k ->
              do setThreadField stExecEnv  th fenv
                 setThreadField stStack    th fs
-                setThreadField stPC       th pc
+                setThreadPC               th pc
 
                 handlers <- getThreadField stHandlers th
                 setThreadField stHandlers th (case errK of
@@ -300,7 +300,7 @@ performErrorReturn c vm e =
                setThreadField stExecEnv  th fenv
                setThreadField stHandlers th . tail =<< getThreadField stHandlers th
                setThreadField stStack    th s'
-               setThreadField stPC       th pc
+               setThreadPC               th pc
 
                running c vm { vmCurExecEnv = fenv } =<< k e
 
@@ -308,7 +308,7 @@ performErrorReturn c vm e =
             do let th = vmCurThread vm
                setThreadField stExecEnv th eenv
                setThreadField stStack   th s'
-               setThreadField stPC      th pc
+               setThreadPC              th pc
 
                running c vm { vmCurExecEnv = eenv } (ErrorReturn e)
 

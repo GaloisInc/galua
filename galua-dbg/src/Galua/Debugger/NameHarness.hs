@@ -20,7 +20,7 @@ import qualified Data.Set as Set
 import qualified Data.Vector as Vector
 import           Galua.FunValue (funValueCode, luaFunction, FunCode(..))
 import           Galua.LuaString (fromByteString)
-import           Galua.Mach (HandlerType(DefaultHandler), MachineEnv(..), NextStep(Goto), StackFrame(CallFrame), Thread(..), VM(..), ApiCallStatus(NoApiCall), ExecEnv(..), parseLua, getThreadField, setThreadField)
+import           Galua.Mach
 import qualified Galua.Util.SizedVector as SV
 import           Galua.Util.SizedVector (SizedVector)
 import qualified Galua.Util.Stack as Stack
@@ -187,7 +187,7 @@ executeCompiledStatment vm cenv cs resume =
      let th = vmCurThread vm
 
      let thEnv = vmCurExecEnv vm
-     thPc       <- getThreadField stPC th
+     thPc       <- getThreadPC th
      thStack    <- getThreadField stStack th
      thHandlers <- getThreadField stHandlers th
 

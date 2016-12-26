@@ -51,6 +51,7 @@ library
                        Galua.Util.Stack
                        Galua.Util.SizedVector
                        Galua.Util.Weak
+                       Galua.Util.IOURef
 
   other-modules:       CMath
                        Process

@@ -1300,7 +1300,7 @@ findExecEnv :: Int -> Reference Thread -> IO (Maybe (Int,ExecEnv))
 findExecEnv level thread =
   case compare level 0 of
     LT -> return Nothing
-    EQ -> do pc <- getThreadField stPC thread
+    EQ -> do pc <- getThreadPC thread
              eenv <- getThreadField stExecEnv thread
              return (Just (pc, eenv))
     GT -> do stack <- getThreadField stStack thread
@@ -1357,7 +1357,7 @@ lua_getinfo_hs l r whatPtr ar out =
 
      (pc,execEnv) <- if '>'`elem` what
                        then do th <- extToThreadRef vm =<< deRefLuaState l
-                               pc <- getThreadField stPC th
+                               pc <- getThreadPC th
                                eenv <- getThreadField stExecEnv th
                                return (pc,eenv)
                        else importExecEnv =<< peekLuaDebugCallInfo ar

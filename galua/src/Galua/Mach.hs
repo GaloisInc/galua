@@ -44,6 +44,7 @@ import qualified Galua.Util.Stack as Stack
 import qualified Galua.Util.SizedVector as SV
 import           Galua.Util.Cache
 import           Galua.Util.Weak (MakeWeak(..), mkWeakIORef')
+import           Galua.Util.IOURef
 
 
 import           GHC.Exts (inline)
@@ -177,13 +178,13 @@ data Thread = MkThread
   , stExecEnv   :: {-# UNPACK #-} !(IORef ExecEnv)
   , stHandlers  :: {-# UNPACK #-} !(IORef [HandlerType])
   , stStack     :: {-# UNPACK #-} !(IORef (Stack StackFrame))
-  , stPC        :: {-# UNPACK #-} !(IORef Int)
+  , stPC        :: {-# UNPACK #-} !(IOURef Int)
 
   }
 
 
 instance MakeWeak Thread where
-  makeWeak th = mkWeakIORef' (stPC th) th
+  makeWeak th = mkWeakIORef' (stStack th) th
 
 
 data ThreadStatus
@@ -225,6 +226,14 @@ getThreadField :: MonadIO m => (Thread -> IORef a) -> Reference Thread -> m a
 getThreadField sel = \ref ->
   liftIO (readIORef (sel (referenceVal ref)))
 {-# INLINE setThreadField #-}
+
+{-# INLINE getThreadPC #-}
+getThreadPC :: MonadIO m => Reference Thread -> m Int
+getThreadPC = liftIO . readIOURef . stPC . referenceVal
+
+{-# INLINE setThreadPC #-}
+setThreadPC :: MonadIO m => Reference Thread -> Int -> m ()
+setThreadPC r x = liftIO (writeIOURef (stPC (referenceVal r)) x)
 
 type TypeMetatables = Map ValueType (Reference Table)
 
@@ -429,7 +438,7 @@ allocNewThread aref refLoc luaTMVar cMVar st =
      stExecEnv    <- newIORef =<< newThreadExecEnv
      stHandlers   <- newIORef []
      stStack      <- newIORef Stack.empty
-     stPC         <- newIORef 0
+     stPC         <- newIOURef 0
 
      let th = MkThread{..}
      ref <- newRefWithId aref refId refLoc th
@@ -440,7 +449,7 @@ allocNewThread aref refLoc luaTMVar cMVar st =
 machRefLoc :: VM -> IO RefLoc
 machRefLoc vm =
   do let tref = vmCurThread vm
-     pc    <- getThreadField stPC tref
+     pc    <- getThreadPC tref
      let eenv = vmCurExecEnv vm
      stack <- getThreadField stStack tref
      return RefLoc { refLocCaller = getCaller stack
