@@ -478,7 +478,7 @@ exportThread funs mbNext th =
      stat  <- io $ getThreadField threadStatus th
      pc    <- case mbNext of
                 Just (Goto pc) -> return pc
-                _              -> io $ getThreadField stPC th
+                _              -> io $ getThreadPC th
      hdlrs <- io $ getThreadField stHandlers th
      stack <- io $ getThreadField stStack th
 
