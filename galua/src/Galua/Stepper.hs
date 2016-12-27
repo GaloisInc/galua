@@ -46,7 +46,7 @@ oneStep = oneStep'
 
 {-# INLINE oneStep' #-}
 oneStep' :: Cont r -> VM -> NextStep -> IO r
-oneStep' c !vm instr = do
+oneStep' c !vm instr =
   case instr of
     Goto pc             -> performGoto          c vm pc
     FunCall f vs mb k   -> performFunCall       c vm f vs mb k
@@ -103,7 +103,7 @@ performTailCall c vm f vs =
      setThreadField stExecEnv th newEnv
      let newVM = vm { vmCurExecEnv = newEnv }
 
-     running c newVM =<< next newVM
+     running c newVM =<< next (machCServer (vmMachineEnv newVM))
 
 
 {-# INLINE performFunCall #-}
@@ -132,7 +132,7 @@ performFunCall c vm f vs mb k =
      setThreadField stStack th (Stack.push frame stack)
 
      let newVM = vm { vmCurExecEnv = newEnv }
-     running c newVM =<< next newVM
+     running c newVM =<< next (machCServer (vmMachineEnv newVM))
 
 
 
@@ -348,7 +348,7 @@ consMb Nothing xs = xs
 consMb (Just x) xs = x : xs
 
 
-enterClosure :: Reference Closure -> [Value] -> IO (ExecEnv, VM -> IO NextStep)
+enterClosure :: Reference Closure -> [Value] -> IO (ExecEnv, MVar CNextStep -> IO NextStep)
 enterClosure c vs =
   do let MkClosure { cloFun, cloUpvalues } = referenceVal c
          (stackElts, vas, start, code) =
@@ -365,7 +365,7 @@ enterClosure c vs =
 
                   in (stack, varargs, \_ -> return (Goto 0), funcCode f)
 
-             CCode cfun -> (vs, [], \vm -> execCFunction vm cfun, mempty)
+             CCode cfun -> (vs, [], \m -> execCFunction m cfun, mempty)
 
      stack    <- SV.new
      traverse_ (SV.push stack <=< newIORef) stackElts

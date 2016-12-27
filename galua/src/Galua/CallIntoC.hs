@@ -11,10 +11,9 @@ import           Control.Concurrent
 import           Data.Traversable
 import           Data.IORef
 
-execCFunction :: VM -> CFunName -> IO NextStep
-execCFunction !vm cfun =
-  do let mvar = machCServer (vmMachineEnv vm)
-     putMVar mvar (CCallback (cfunAddr cfun))
+execCFunction :: MVar CNextStep -> CFunName -> IO NextStep
+execCFunction mvar cfun =
+  do putMVar mvar (CCallback (cfunAddr cfun))
      return WaitForC
 
 handleCCallState :: VM -> CCallState -> IO NextStep
