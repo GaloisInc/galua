@@ -54,6 +54,7 @@ import           Galua.Debugger.PrettySource
 import           Galua.Debugger.Options
 import           Galua.Debugger.NameHarness
 import           Galua.Debugger.Console(recordConsoleInput,recordConsoleValues)
+import           Galua.Debugger.CommandQueue
 
 import           Galua.Code
 import           Galua.Mach
@@ -64,6 +65,7 @@ import           Galua.FunValue
 import           Galua.Names.Eval
 import           Galua.Names.Find(LocatedExprName(..),ppExprName)
 import qualified Galua.Util.SizedVector as SV
+import           Galua.Util.IOURef
 
 import qualified Galua.Spec.AST as Spec
 import qualified Galua.Spec.Parser as Spec
@@ -99,9 +101,8 @@ import            Control.Concurrent
                     ( MVar, newEmptyMVar, putMVar, takeMVar, forkIO )
 import           Control.Applicative ((<|>))
 import           Control.Concurrent (killThread, ThreadId)
-import           Control.Concurrent.STM (STM, atomically, takeTMVar)
-import           Control.Concurrent.STM.TQueue (TQueue, newTQueue, writeTQueue, readTQueue, isEmptyTQueue)
-import           Control.Monad(join, when,forever)
+import           Control.Concurrent.STM (atomically, takeTMVar)
+import           Control.Monad(when,forever)
 import           Control.Exception
 import           MonadLib(ExceptionT,runExceptionT,raise,lift)
 import           System.Timeout(timeout)
@@ -117,18 +118,7 @@ data Debugger = Debugger
           The functions are also in the VM state, but that's only available
           while the machine is running. -}
 
-
-  , dbgCommand   :: !(TQueue (DebuggerCommand,Bool))
-    {- ^ Commands from the outside world, telling the debugger what to do next.
-         The boolean indicates if this command modifis the state, and as such
-         should modify `dbgCommandCounter` -}
-
-  , dbgCommandCounter :: !(IORef Word64)
-    {- ^ Every time we do a command, we should increment this counter.
-    This is useful to implement polling from the outside world,
-    where the client can know if there have been any commands executed
-    since last time they looked. -}
-
+  , dbgCommand   :: {-# UNPACK #-} !(CommandQueue DebuggerCommand)
 
 
   , dbgClients   :: !(IORef [MVar ()]) --
@@ -145,7 +135,7 @@ data Debugger = Debugger
     -- the value is an optional condition.  The breakpoint will only
     -- be active if the condition is true.
 
-  , dbgBreakOnError :: !(IORef Bool)
+  , dbgBreakOnError :: !(IOURef Bool)
     -- ^ Should we stop automatically, when we encounter an error.
 
   , dbgBrkAddOnLoad :: !(IORef CommandLineBreakPoints)
@@ -162,6 +152,7 @@ data Debugger = Debugger
     -- ^ Types
   , dbgDeclaredTypes :: !(IORef GlobalTypeMap)
   }
+
 
 type SpecType = Spec.ValDecl Spec.Parsed
 type SpecDecl = Spec.Decl Spec.Parsed
@@ -729,9 +720,7 @@ newEmptyDebugger threadVar opts =
   do let chunks = Chunks { topLevelChunks = Map.empty
                          , allFunNames    = Map.empty
                          }
-     dbgCommand <- atomically newTQueue
-     dbgCommandCounter <- newIORef 0
-
+     dbgCommand <- newCommandQueue
 
      dbgClients <- newIORef []
      dbgSources <- newIORef chunks
@@ -758,7 +747,7 @@ newEmptyDebugger threadVar opts =
      dbgStateVM      <- newIORef (Running vm next)
 
      dbgExportable   <- newIORef newExportableState
-     dbgBreakOnError <- newIORef (optBreakOnError opts)
+     dbgBreakOnError <- newIOURef (optBreakOnError opts)
 
      dbgDeclaredTypes <-
         (newIORef . makeGlobalTypeMap) =<<
@@ -768,7 +757,7 @@ newEmptyDebugger threadVar opts =
 
      let dbg = Debugger { dbgSources, dbgIdleReason
                         , dbgBreaks, dbgWatches
-                        , dbgCommand, dbgCommandCounter, dbgClients
+                        , dbgCommand, dbgClients
                         , dbgExportable, dbgStateVM
                         , dbgBreakOnError, dbgBrkAddOnLoad
                         , dbgDeclaredTypes
@@ -873,9 +862,9 @@ executeStatement dbg frame statement =
 poll :: Debugger -> Word64 -> Int {- ^ Timeout in seconds -} -> IO Word64
 poll dbg _ secs =
   do mvar <- newEmptyMVar
-     sendCommand dbg (AddClient mvar) False
+     sendCommand (dbgCommand dbg) (AddClient mvar) False
      _ <- timeout (secs * 1000000) (takeMVar mvar)
-     readIORef (dbgCommandCounter dbg)
+     getCommandCount (dbgCommand dbg)
 
 
 --------------------------------------------------------------------------------
@@ -973,7 +962,7 @@ data StepMode
 runDebugger :: Debugger -> IO ()
 runDebugger dbg =
   forever $
-    do cmd    <- waitForCommand dbg
+    do cmd    <- waitForCommand (dbgCommand dbg)
        mbMode <- handleCommand dbg True cmd
        case mbMode of
          Nothing   -> return ()
@@ -1016,7 +1005,7 @@ doStepMode dbg vm next mode = oneStep' Cont { .. } vm next
   where
   runningInC !vm' =
     do let luaTMVar = machLuaServer (vmMachineEnv vm')
-       res <- atomically $ Left  <$> waitForCommandSTM dbg
+       res <- atomically $ Left  <$> waitForCommandSTM (dbgCommand dbg)
                        <|> Right <$> takeTMVar luaTMVar
        case res of
          Left m ->
@@ -1039,7 +1028,7 @@ doStepMode dbg vm next mode = oneStep' Cont { .. } vm next
            then doStepMode dbg vm' next' mode'
            else checkStop dbg mode' (Running vm' next') $
                 checkBreakPoint dbg mode' vm' next' $
-                do mb <- peekCmd dbg
+                do mb <- peekCmd (dbgCommand dbg)
                    case mb of
                      Nothing      -> doStepMode dbg vm' next' mode'
                      Just command ->
@@ -1065,7 +1054,7 @@ checkStopError :: Debugger -> VM -> NextStep -> IO VMState -> IO VMState
 checkStopError dbg vm next k =
   case next of
     ThrowError e ->
-      do stopOnErr <- readIORef (dbgBreakOnError dbg)
+      do stopOnErr <- readIOURef (dbgBreakOnError dbg)
          if stopOnErr
             then do setIdleReason dbg (ThrowingError e)
                     return (Running vm next)
@@ -1231,28 +1220,6 @@ data DebuggerCommand =
 
 
 
-peekCmd :: Debugger -> IO (Maybe DebuggerCommand)
-peekCmd dbg@Debugger { dbgCommand } =
-  join $ atomically $
-         do notready <- isEmptyTQueue dbgCommand
-            if notready
-              then return (return Nothing)
-              else fmap Just <$> waitForCommandSTM dbg
-
-waitForCommand :: Debugger -> IO DebuggerCommand
-waitForCommand = join . atomically . waitForCommandSTM
-
-waitForCommandSTM :: Debugger -> STM (IO DebuggerCommand)
-waitForCommandSTM Debugger { dbgCommand, dbgCommandCounter } =
-  do (c,vis) <- readTQueue dbgCommand
-     return (c <$ when vis (modifyIORef' dbgCommandCounter (+ 1)))
-
-
-{- | The boolan indicates if the command should contribute towards the
-global command counter.  Generally, commands that might change something
-in the state should affect this, while "read-only" commands may be invisible. -}
-sendCommand :: Debugger -> DebuggerCommand -> Bool {-^Visible?-} -> IO ()
-sendCommand Debugger { dbgCommand } c vis = atomically (writeTQueue dbgCommand (c,vis))
 
 {- | Switch the debugger to the given execution mode.
 The boolean indicates if we should block:  if it is 'True', then
@@ -1261,7 +1228,7 @@ then we return immediately. -}
 startExec :: Debugger -> Bool -> StepMode -> IO ()
 startExec dbg blocking mode =
   do mvar <- newEmptyMVar
-     sendCommand dbg (StartExec mode mvar) True
+     sendCommand (dbgCommand dbg) (StartExec mode mvar) True
      when blocking (takeMVar mvar)
 
 -- | Execute the function, only if the debugger has not finished.
@@ -1284,7 +1251,7 @@ whenRunning dbg a io =
 
 
 whenIdle :: Debugger -> IO () -> IO ()
-whenIdle dbg io = sendCommand dbg (WhenIdle io) True
+whenIdle dbg io = sendCommand (dbgCommand dbg) (WhenIdle io) True
   -- The 'True' Is conservative, but generally if we are going to be doing
   -- something when we have to be idle, it probably affects the state.
 
@@ -1295,7 +1262,7 @@ about the debugger state, or update some sort of internal state.  -}
 whenStable :: Debugger -> Bool -> IO a -> IO a
 whenStable dbg vis io =
   do mvar <- newEmptyMVar
-     sendCommand dbg (TemporaryStop (putMVar mvar =<< io)) vis
+     sendCommand (dbgCommand dbg) (TemporaryStop (putMVar mvar =<< io)) vis
      takeMVar mvar
 
 --------------------------------------------------------------------------------

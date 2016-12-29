@@ -26,7 +26,9 @@ import Galua.Debugger.Console
 import Galua.Debugger.View.Analysis(exportResult)
 import qualified Galua.Util.Table as Tab
 import qualified Galua.Util.SizedVector as SV
+import Galua.Util.IOURef
 import Galua.Code
+import Galua.Debugger.CommandQueue
 
 import qualified Galua.Micro.AST         as Analysis
 import qualified Galua.Micro.Type.Primitives  as Analysis
@@ -141,7 +143,7 @@ exportDebugger dbg =
      funs    <- readIORef dbgSources
      outs    <- getConsoleLines
      watches <- readIORef dbgWatches
-     brkErr  <- readIORef dbgBreakOnError
+     brkErr  <- readIOURef dbgBreakOnError
      idle    <- readIORef dbgIdleReason
      brks    <- exportBreaks dbg
      modifyIORef' dbgExportable $ \r -> newExportableState
@@ -155,7 +157,7 @@ exportDebugger dbg =
             jsLines <- mapM (exportPrintedLine funs) outs
             return (jsWatches, jsSt, jsIdle, jsLines)
 
-     cnt <- readIORef dbgCommandCounter
+     cnt <- getCommandCount dbgCommand
      return $ JS.object [ "sources" .= exportSources
                                           (Map.toList (topLevelChunks funs))
                         , "breakPoints" .= brks
@@ -168,7 +170,7 @@ exportDebugger dbg =
                         ]
   where Debugger { dbgSources, dbgExportable, dbgIdleReason,
                    dbgStateVM, dbgWatches, dbgBreakOnError,
-                   dbgCommandCounter } = dbg
+                   dbgCommand } = dbg
 
 exportV :: Debugger -> ValuePath -> Value -> IO JS.Value
 exportV dbg path v =

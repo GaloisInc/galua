@@ -18,6 +18,7 @@ import qualified Galua.Value as G
 import           Galua.Number(parseNumber)
 import           Galua.LuaString
 import           Galua.Names.Eval(NotFound(..))
+import           Galua.Util.IOURef
 
 import           Config
 import           Config.Lens
@@ -173,7 +174,7 @@ sendFileBytes name bs =
 snapBreakOnError :: Debugger -> Snap ()
 snapBreakOnError dbg =
   do on <- boolParam "enabled"
-     liftIO (writeIORef (dbgBreakOnError dbg) on)
+     liftIO (writeIOURef (dbgBreakOnError dbg) on)
 
 snapWatch :: Debugger -> Snap ()
 snapWatch dbg =

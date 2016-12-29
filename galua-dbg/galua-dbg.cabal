@@ -25,6 +25,7 @@ library
   ghc-options:      -Wall -O2
 
   exposed-modules:  Galua.Debugger,
+                    Galua.Debugger.CommandQueue,
                     Galua.Debugger.Server,
                     Galua.Debugger.EmbedDirectory,
                     Galua.Debugger.Tree,
