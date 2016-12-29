@@ -14,6 +14,10 @@ cabal-version:       >=1.10
 custom-setup
   setup-depends: base, containers, Cabal, filepath, template-haskell
 
+flag dump-core
+  description: Dump HTML for the core generated vy GHC during compilation
+  default:     False
+
 library
   ghc-prof-options: -fprof-auto-top
   ghc-options:      -Wall -O2
@@ -101,6 +105,11 @@ library
   if os(darwin)
     cc-options:        -DLUA_USE_MACOSX
     cpp-options:       -DLUA_USE_MACOSX
+
+  if flag(dump-core)
+    build-depends: dump-core
+    ghc-options: -fplugin=DumpCore -fplugin-opt DumpCore:core-html
+
 
   include-dirs:        include
   install-includes:    lprefix.h

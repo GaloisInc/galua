@@ -7,6 +7,7 @@ packages:
 - location: galua-spec
 - location: lib/dwarf-tools
 - location: lib/language-lua
+- location: https://github.com/yav/dump-core/archive/master.zip
 
 resolver: lts-7.13
 extra-deps:
@@ -15,3 +16,9 @@ extra-deps:
 - elf-0.27
 - alex-tools-0.1.1.0
 - lua-bc-0.1.1
+
+flags:
+  galua:
+    dump-core: false
+  galua-dbg:
+    dump-core: false
