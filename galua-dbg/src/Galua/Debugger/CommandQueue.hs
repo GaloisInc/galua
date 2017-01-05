@@ -9,7 +9,6 @@ module Galua.Debugger.CommandQueue
 
 import Control.Concurrent
 import Control.Concurrent.STM
-import Control.Concurrent.STM.TQueue
 import Control.Monad
 import Data.Word
 
@@ -60,8 +59,8 @@ sendCommand CommandQueue { cmdLen, cmdQueue, cmdCheck } a vis =
 
 peekCmd :: CommandQueue a -> IO (Maybe a)
 peekCmd cmd@CommandQueue { cmdQueue, cmdCheck } =
-  do check <- readIOURef cmdCheck
-     if check
+  do ready <- readIOURef cmdCheck
+     if ready
       then join $ atomically $
              do notready <- isEmptyTQueue cmdQueue
                 if notready
