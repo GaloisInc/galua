@@ -9,7 +9,7 @@ packages:
 - location: lib/language-lua
 - location: https://github.com/yav/dump-core/archive/master.zip
 
-resolver: lts-7.13
+resolver: lts-7.14
 extra-deps:
 - config-value-0.5
 - config-value-getopt-0.1.0.0
