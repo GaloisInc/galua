@@ -57,7 +57,7 @@ parseLuaBytecode :: Maybe String -> L.ByteString -> IO (Either String Chunk)
 parseLuaBytecode name bytesL =
   case BC.parseLuaBytecode name bytesL of
     Right (BC.Chunk x f) ->
-      do f' <- cvtFunction (BC.propagateSources f)
+      do f' <- cvtFunction Nothing (BC.propagateSources f)
          return $! Right $! Chunk x f'
     Left err -> return (Left err)
 
@@ -185,11 +185,11 @@ data OpCode
 
 --------------------------------------------------------------------------------
 
-cvtFunction :: BC.Function -> IO Function
-cvtFunction fun =
-  do nest <- mapM cvtFunction (BC.funcProtos fun)
+cvtFunction :: Maybe BC.Function -> BC.Function -> IO Function
+cvtFunction parent fun =
+  do nest <- mapM (cvtFunction (Just fun)) (BC.funcProtos fun)
      code <- mapM (cvtOpCode nest fun) (Vector.indexed (BC.funcCode fun))
-     ups' <- mapM (cvtUpvalue fun) (BC.funcUpvalues fun)
+     ups' <- mapM (cvtUpvalue parent) (BC.funcUpvalues fun)
      return Function
       { funcSource          = BC.funcSource fun
       , funcLineDefined     = BC.funcLineDefined fun
@@ -215,14 +215,25 @@ cvtReg fun (BC.Reg r)
   | 0 <= r, r < BC.funcMaxStackSize fun = return (Reg r)
   | otherwise = fail "cvtReg: Register out of range"
 
+cvtUpReg :: Maybe BC.Function -> BC.Reg -> IO Reg
+cvtUpReg Nothing r
+  | r == BC.Reg 0 = return (Reg 0)
+  | otherwise     = fail "cvtUpReg: UpReg out of range."
+cvtUpReg (Just f) r = cvtReg f r
+
 cvtUpIx :: BC.Function -> BC.UpIx -> IO UpIx
 cvtUpIx fun (BC.UpIx u)
   | 0 <= u, u < length (BC.funcUpvalues fun) = return (UpIx u)
-  | otherwise = fail "cvtReg: Upvalue index out of range"
+  | otherwise = fail ("cvtUpIx: Upvalue index out of range " ++
+                          show (u, length (BC.funcUpvalues fun)))
 
-cvtUpvalue :: BC.Function -> BC.Upvalue -> IO Upvalue
-cvtUpvalue fun (BC.UpUp  u) = UpUp  <$> cvtUpIx fun u
-cvtUpvalue fun (BC.UpReg r) = UpReg <$> cvtReg  fun r
+cvtUpUpIx :: Maybe BC.Function -> BC.UpIx -> IO UpIx
+cvtUpUpIx Nothing _ = fail "cvtUpUpIx: UpUpIx at the top level."
+cvtUpUpIx (Just f) u = cvtUpIx f u
+
+cvtUpvalue :: Maybe BC.Function -> BC.Upvalue -> IO Upvalue
+cvtUpvalue parent (BC.UpUp  u) = UpUp  <$> cvtUpUpIx  parent u
+cvtUpvalue parent (BC.UpReg r) = UpReg <$> cvtUpReg   parent r
 
 extraRegChecks :: BC.Function -> OpCode -> IO ()
 extraRegChecks fun op =
