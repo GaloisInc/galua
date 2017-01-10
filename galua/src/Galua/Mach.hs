@@ -14,6 +14,7 @@ import           Control.Monad (when)
 import           Control.Monad.IO.Class
 import           Data.IORef
 import           Data.Foldable (for_)
+import           Data.List (intercalate)
 import           Data.Map (Map)
 import qualified Data.Map as Map
 import           Data.Maybe (fromMaybe)
@@ -23,9 +24,10 @@ import           Data.Vector.Mutable (IOVector)
 import qualified Data.Vector.Mutable as IOVector
 import           Data.ByteString (ByteString)
 import           Foreign (ForeignPtr, Ptr, nullPtr, newForeignPtr, FunPtr
-                         , castFunPtr )
+                         , castFunPtr, newForeignPtr_ )
 import           Foreign.StablePtr
                    (newStablePtr, freeStablePtr, castStablePtrToPtr)
+import           Foreign.ForeignPtr.Unsafe
 import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString as B
 import           System.Exit
@@ -92,7 +94,7 @@ data CCallState
   = CReturned Int
   | CReEntry ApiCall (VM -> IO NextStep)
 
-data CNextStep = CAbort | CResume | CCallback CFun
+data CNextStep = CAbort | CResume
 
 
 -- | Machine instructions to do with control flow.
@@ -116,10 +118,6 @@ data NextStep
   | ThrowError Value
     -- ^ An error occured
 
-  | WaitForC
-    -- ^ Yield to C, wait for a response from the C reentry thread
-    -- See 'CCallState' for possible responses
-
   | Resume !(Reference Thread) (ThreadResult -> IO NextStep)
     -- ^ Resume the given suspended thread
 
@@ -138,13 +136,12 @@ dumpNextStep next =
   case next of
     Goto n          -> "goto " ++ show n
     FunCall r _ _ _ -> "call " ++ show (prettyRef r)
-    FunReturn _     -> "return"
+    FunReturn vs    -> "return [" ++ intercalate ", " (map prettyValue vs) ++ "]"
     ThreadExit _    -> "thread exit"
     ThreadFail _    -> "thread fail"
     ErrorReturn _   -> "error return"
     FunTailcall r _ -> "tailcall " ++ show (prettyRef r)
     ThrowError _    -> "throw"
-    WaitForC        -> "waitforC"
     Resume r _      -> "resume " ++ show (prettyRef r)
     Yield _         -> "yield"
     ApiStart api _  -> "apistart " ++ apiCallMethod api
@@ -170,7 +167,7 @@ data StackFrame
 data Thread = MkThread
   { threadStatus :: {-# UNPACK #-} !(IORef ThreadStatus)
 
-  , threadCPtr   :: {-# UNPACK #-} !(ForeignPtr ())
+  , threadForeignPtr :: {-# UNPACK #-} !(ForeignPtr ())
     {- ^ The representation of thread used in C.
          This contains space for the setjmp/longjmp buffer, and a reference
          back to this object. -}
@@ -181,6 +178,13 @@ data Thread = MkThread
   , stPC        :: {-# UNPACK #-} !(IOURef Int)
 
   }
+
+
+-- NOTE: This function does not guarantee that the foreign pointer
+-- will be kept alive, a thread should be kept in scope by being
+-- on the Lua stack somewhere or by being the main thread.
+threadCPtr :: Reference Thread -> Ptr ()
+threadCPtr = unsafeForeignPtrToPtr . threadForeignPtr . referenceVal
 
 
 instance MakeWeak Thread where
@@ -250,19 +254,13 @@ data MachineEnv = MachineEnv
 
   , machMainThreadRef :: !(Reference Thread)
 
+  , machVMRef         :: {-# UNPACK #-} !(IORef VM)
+
   , machNextChunkId   :: {-# UNPACK #-} !(IORef Int)
     -- ^ Used to generate identities when we load new chunks.
 
   , machConfig        :: !MachConfig
     -- ^ Callbacks for interesting events.
-
-  , machLuaServer     :: !(TMVar CCallState)
-    -- ^ The Lua interpreter listens on this MVar for messages
-    -- coming in from the C threads
-
-  , machCServer       :: !(MVar CNextStep)
-    -- ^ The currently available C thread listens on this MVar
-    -- for messages coming from the Lua interpreter
 
   , machGarbage       :: {-# UNPACK #-} !(IORef [Value])
     -- ^ These things need to be garbage collected.
@@ -345,8 +343,8 @@ luaError' str =
      return (ThrowError (String s))
 
 
-newMachineEnv :: AllocRef -> MachConfig -> IO MachineEnv
-newMachineEnv aref machConfig =
+newMachineEnv :: IORef VM -> AllocRef -> MachConfig -> IO MachineEnv
+newMachineEnv machVMRef aref machConfig =
   do let refLoc = RefLoc { refLocCaller = MachSetup
                          , refLocSite   = MachSetup
                          }
@@ -354,11 +352,8 @@ newMachineEnv aref machConfig =
      machRegistry      <- newTable aref refLoc 0 0
      machNextChunkId   <- newIORef 0
      machMetatablesRef <- newIORef Map.empty
-     machLuaServer     <- atomically newEmptyTMVar
-     machCServer       <- newEmptyMVar
      machGarbage       <- newIORef []
-     machMainThreadRef <- allocNewThread aref refLoc
-                                      machLuaServer machCServer ThreadRunning
+     machMainThreadRef <- allocNewThread machVMRef aref refLoc ThreadRunning
      setTableRaw machRegistry (Number 1) (Thread machMainThreadRef)
      setTableRaw machRegistry (Number 2) (Table machGlobals)
 
@@ -378,7 +373,7 @@ newCPtr initialToken =
   do luastate <- allocateLuaState initialToken
      when (nullPtr == luastate)
        (fail "lua_State allocation failed")
-     newForeignPtr freeLuaState luastate
+     newForeignPtr_ luastate
 
 
 
@@ -413,25 +408,24 @@ machNewThread :: VM -> IO (Reference Thread)
 machNewThread vm =
   do let aref = vmAllocRef vm
      loc     <- machRefLoc vm
-     let menv    = vmMachineEnv vm
-         luaMVar = machLuaServer menv
-         cMVar   = machCServer menv
-     allocNewThread aref loc luaMVar cMVar ThreadNew
+     allocNewThread (machVMRef (vmMachineEnv vm)) aref loc ThreadNew
 
 allocNewThread ::
+  IORef VM ->
   AllocRef ->
   RefLoc ->
-  TMVar CCallState -> MVar CNextStep -> ThreadStatus -> IO (Reference Thread)
-allocNewThread aref refLoc luaTMVar cMVar st =
+  ThreadStatus -> IO (Reference Thread)
+allocNewThread vmref aref refLoc st =
   do refId <- newRefId aref
 
+     -- It's important that the argument of newStablePtr isn't forced
+     -- because this breaks a dependency cycle for vm in setupLuaState
      sptr <- newStablePtr ExternalLuaState
-               { extLuaStateLuaServer = luaTMVar
-               , extLuaStateCServer   = cMVar
+               { extLuaStateVMRef     = vmref
                , extLuaStateThreadId  = refId
                }
 
-     threadCPtr <- newCPtr (castStablePtrToPtr sptr)
+     threadForeignPtr <- newCPtr (castStablePtrToPtr sptr)
 
 
      threadStatus <- newIORef st
@@ -443,7 +437,8 @@ allocNewThread aref refLoc luaTMVar cMVar st =
      let th = MkThread{..}
      ref <- newRefWithId aref refId refLoc th
 
-     addRefFinalizer ref (freeStablePtr sptr)
+     -- XXX setup finalizers
+     -- addRefFinalizer ref (freeStablePtr sptr)
      return ref
 
 machRefLoc :: VM -> IO RefLoc
@@ -473,8 +468,7 @@ machRefLoc vm =
 --------------------------------------------------------------------------------
 
 data ExternalLuaState = ExternalLuaState
-  { extLuaStateLuaServer   :: TMVar CCallState
-  , extLuaStateCServer     :: MVar CNextStep
+  { extLuaStateVMRef       :: {-# UNPACK #-} !(IORef VM)
   , extLuaStateThreadId    :: Int
   }
 

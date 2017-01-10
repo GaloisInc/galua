@@ -1,47 +1,43 @@
 {-# LANGUAGE ForeignFunctionInterface, BangPatterns #-}
-module Galua.CallIntoC (execCFunction, handleCCallState) where
+module Galua.CallIntoC where
 
 import           Galua.Mach
 import           Galua.Value
 import           Galua.Overloading
+import           Galua.CObjInfo
 
 import qualified Galua.Util.SizedVector as SV
 
 import           Control.Concurrent
 import           Data.Traversable
 import           Data.IORef
+import           Foreign.Ptr
+import           Foreign.C.Types
+import           System.IO
+import           Data.Maybe
 
-execCFunction :: MVar CNextStep -> CFunName -> IO NextStep
-execCFunction mvar cfun =
-  do putMVar mvar (CCallback (cfunAddr cfun))
-     return WaitForC
+callC :: VM -> CFun -> IO NextStep
+callC vm cfun =
+  do let l = threadCPtr (vmCurThread vm)
 
-handleCCallState :: VM -> CCallState -> IO NextStep
-handleCCallState !vm cResult =
-  case cResult of
-    CReturned n           -> returnFromC vm n
-    CReEntry apiCall impl -> handleGC vm (ApiStart apiCall (impl vm))
+     getFunInfo <- cfunInfoFun -- :: IO (FunPtr () -> IO CObjInfo)
+     objInfo    <- getFunInfo (castFunPtr cfun)
+     let name = fromMaybe "unknown" (cObjName objInfo)
 
-handleGC :: VM -> NextStep -> IO NextStep
-handleGC vm next =
-  do let menv       = vmMachineEnv vm
-         garbageRef = machGarbage menv
-         tabsRef    = machMetatablesRef menv
-     garbage    <- atomicModifyIORef garbageRef (\xs -> ([], xs))
-     let collect []       = return next
-         collect (v : vs) = m__gc tabsRef (collect vs) v
-     collect garbage
+     writeIORef (machVMRef (vmMachineEnv vm)) vm
+     res <- call_c cfun l
 
--- | Clean up memory allocations during handling of C call, extract results
--- from the stack, and return from the current call frame.
-returnFromC ::
-  VM ->
-  Int  {- ^ Number of values returned from the C call -} ->
-  IO NextStep
-returnFromC vm n =
-  do let stack = execStack (vmCurExecEnv vm)
-     FunReturn <$>
-       do sz <- SV.size stack
-          for [ sz - n .. sz - 1 ] $ \i ->
-             readIORef =<< SV.get stack i
+     case res of
+       -1 -> return (ThrowError undefined) -- XXX which error??
+       -2 -> fail "C functions called from Lua must return non-negative number"
+       _ | res < 0 -> fail "Panic: capi_entry had invalid return value"
+         | otherwise ->
+             do let n     = fromIntegral res
+                stack <- execStack <$> getThreadField stExecEnv (vmCurThread vm)
+                FunReturn <$>
+                  do sz <- SV.size stack
+                     for [ sz - n .. sz - 1 ] $ \i ->
+                        readIORef =<< SV.get stack i
 
+foreign import ccall "galua_call_c" call_c ::
+  CFun -> Ptr () -> IO CInt

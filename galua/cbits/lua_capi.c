@@ -763,7 +763,7 @@ lua_State *galua_allocate_luaState(void *token) {
  * behavior into the C call.
  */
 extern
-int galua_capi_entry(int (*cfun)(void *), lua_State *L) {
+int galua_call_c(int (*cfun)(void *), lua_State *L) {
         lua_State old_state;
         memcpy(&old_state, L, sizeof(lua_State));
 

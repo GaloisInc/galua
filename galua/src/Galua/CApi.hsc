@@ -39,6 +39,7 @@ import Language.Lua.Bytecode.FunId
 import qualified Galua.Util.SizedVector as SV
 
 import Galua.Code
+import Galua.Stepper
 import Galua.Arguments
 import Galua.Mach
 import Galua.Number
@@ -74,6 +75,13 @@ type EntryPoint a =
 
 type SF = SV.SizedVector (IORef Value)
 
+exportCArg a =
+  case a of
+    PrimCStringArg ptr
+      | ptr == nullPtr -> return "NULL"
+      | otherwise      -> peekCString ptr
+    _ -> return (show a)
+
 -- | Resume execution of the machine upon entry from the C API
 -- ^ Do IO, has access to both VM and continuation
 reentryG ::
@@ -85,7 +93,8 @@ reentryG ::
                     {- ^ operation continuation producing optional C return -} ->
   IO CInt
 reentryG label args l r impl =
-  do res <- try body
+  do args' <- traverse exportCArg args
+     res <- try body
      case res of
        Right x -> return x
        Left (SomeException e) ->
@@ -102,18 +111,30 @@ reentryG label args l r impl =
                                , apiCallArgs = args
                                }
 
-         atomically $ putTMVar (extLuaStateLuaServer ext)
-                    $ CReEntry apiCall
-                    $ \vm -> do let threadId = extLuaStateThreadId ext
-                                Just threadRef <- machLookupRef vm threadId
-                                eenv           <- getThreadField stExecEnv threadRef
-                                let stack = execStack eenv
-                                impl vm stack `catch` \(LuaX str) ->
-                                    do s <- fromByteString (packUtf8 str)
-                                       return (ThrowError (String s))
+         vm <- readIORef (extLuaStateVMRef ext)
+         let threadId = extLuaStateThreadId ext
 
-         cServiceLoop l (extLuaStateCServer ext) (extLuaStateLuaServer ext)
+         Just threadRef <- machLookupRef vm threadId
+         eenv           <- getThreadField stExecEnv threadRef
+         let stack = execStack eenv
+         next <- impl vm stack `catch` \(LuaX str) ->
+                            do s <- fromByteString (packUtf8 str)
+                               return (ThrowError (String s))
+                                -- XXX handleGC
+         res <- runAllSteps vm next -- don't use vm after this!
+         case res of
+           CAbort  -> return 1
+           CResume -> return 0
 
+handleGC :: VM -> NextStep -> IO NextStep
+handleGC vm next =
+  do let menv       = vmMachineEnv vm
+         garbageRef = machGarbage menv
+         tabsRef    = machMetatablesRef menv
+     garbage    <- atomicModifyIORef garbageRef (\xs -> ([], xs))
+     let collect []       = return next
+         collect (v : vs) = m__gc tabsRef (collect vs) v
+     collect garbage
 
 
 
@@ -159,27 +180,6 @@ stackFromList stack vs =
   do n <- SV.size stack
      SV.shrink stack n
      for_ vs $ push stack
-
-cServiceLoop :: Ptr () -> MVar CNextStep -> TMVar CCallState -> IO CInt
-cServiceLoop l resultMVar interpMVar =
-  do res <- takeMVar resultMVar
-                `catch` \SomeException{} -> return CAbort
-     case res of
-       CAbort  -> return 1
-       CResume -> return 0
-       CCallback cfun ->
-         do resultN <- capi_entry cfun l
-
-            case resultN of
-              -1 -> return () -- normal error unwind
-              -2 -> fail "C functions called from Lua must return non-negative number"
-              _ | resultN < 0 -> fail "Panic: capi_entry had invalid return value"
-                | otherwise -> atomically (putTMVar interpMVar (CReturned (fromIntegral resultN)))
-
-            cServiceLoop l resultMVar interpMVar
-
-foreign import ccall "galua_capi_entry" capi_entry ::
-  CFun -> Ptr () -> IO CInt
 
 deRefLuaState :: Ptr () -> IO ExternalLuaState
 deRefLuaState statePtr =
@@ -1126,7 +1126,7 @@ lua_tothread_hs l r n out =
     do v <- valueArgument vm (fromIntegral n) args
        result out $
          case v of
-           Thread t -> unsafeForeignPtrToPtr (threadCPtr (referenceVal t))
+           Thread t -> threadCPtr t
            _        -> nullPtr
 
 foreign export ccall
@@ -1229,7 +1229,7 @@ lua_newthread_hs l r out =
   reentryG "lua_newthread" [] l r $ \vm args ->
     do threadRef <- machNewThread vm
        push args (Thread threadRef)
-       result out (unsafeForeignPtrToPtr (threadCPtr (referenceVal threadRef)))
+       result out (threadCPtr threadRef)
 
 foreign export ccall
   lua_isyieldable_hs :: EntryPoint (Ptr CInt -> IO CInt)

@@ -227,6 +227,7 @@ data PrimArgument
   | PrimCStringLenArg CStringLen
   | PrimPtrArg (Ptr ())
   | PrimFunPtrArg (FunPtr ())
+  deriving Show
 
 newClosure ::
   AllocRef ->

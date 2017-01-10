@@ -741,10 +741,10 @@ newEmptyDebugger threadVar opts =
                  , machOnQuery    = query
                  }
 
-     (cptr, vm, next) <- setupLuaState cfg
+     (cptr, vm) <- setupLuaState cfg
 
      dbgIdleReason   <- newIORef Ready
-     dbgStateVM      <- newIORef (Running vm next)
+     dbgStateVM      <- newIORef (Running vm WaitForC)
 
      dbgExportable   <- newIORef newExportableState
      dbgBreakOnError <- newIOURef (optBreakOnError opts)
