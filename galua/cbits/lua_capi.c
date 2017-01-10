@@ -15,9 +15,10 @@
 
 struct lua_State
 {
-        // A stable pointer to an `MVar` for communication with the interpreter.
-        // The `MVar` is of type `CCallState`.
+        // StablePtr MachineEnv
         void * const token;
+
+        int thread_id;
 
         // This is used to unwind the C stack, if we encounter an error.
         sigjmp_buf *onerror;
@@ -25,7 +26,7 @@ struct lua_State
 
 #define GET_RETURN_ADDR() __builtin_extract_return_addr(__builtin_return_address(0))
 #define API_ENTRY(method,L,...) \
-  do { if (method##_hs(L, GET_RETURN_ADDR(), ##__VA_ARGS__)) \
+  do { if (method##_hs(L->token, L->thread_id, GET_RETURN_ADDR(), ##__VA_ARGS__)) \
             raise_error(L); \
   } while(0)
 
@@ -534,7 +535,8 @@ int lua_load (lua_State *L, lua_Reader reader, void *data, const char *chunkname
         }
 
         int out;
-        int res = lua_load_hs(L, GET_RETURN_ADDR(), all_data, all_data_n, (char*)chunkname, (char*)mode, &out);
+        int res = lua_load_hs(L->token, L->thread_id, GET_RETURN_ADDR(),
+                              all_data, all_data_n, (char*)chunkname, (char*)mode, &out);
         free(all_data);
         if (res) raise_error(L);
         return out;
@@ -651,7 +653,7 @@ void *lua_upvalueid (lua_State *L, int funcindex, int n) {
 
 LUA_API
 void lua_xmove (lua_State *from, lua_State *to, int n) {
-        API_ENTRY(lua_xmove, from, to, n);
+        API_ENTRY(lua_xmove, from, to->thread_id, n);
 }
 
 LUA_API
@@ -742,9 +744,10 @@ void galua_free_luaState(lua_State *L) {
 
 /* Called from Haskell */
 extern
-lua_State *galua_allocate_luaState(void *token) {
+lua_State *galua_allocate_luaState(void *token, int thread_id) {
         lua_State initL = {
              .token = token,
+             .thread_id = thread_id,
              };
 
         struct LX * lx = malloc(sizeof(struct LX));

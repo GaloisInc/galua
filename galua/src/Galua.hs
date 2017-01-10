@@ -1,5 +1,4 @@
 {-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE RecursiveDo #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ForeignFunctionInterface #-}
 module Galua where
@@ -15,20 +14,15 @@ import           Control.Monad(void)
 
 import           Foreign (Ptr)
 import           Data.IORef
-import           Foreign.ForeignPtr.Unsafe (unsafeForeignPtrToPtr)
-import           Control.Concurrent (forkIO)
-
-
 
 
 setupLuaState :: MachConfig -> IO (Ptr ())
 setupLuaState cfg =
   do allocref <- newAllocRef
 
-     vmref <- newIORef (error "setupLuaState: vmref not initialized")
-     menv  <- newMachineEnv vmref allocref cfg
-     vm    <- emptyVM allocref menv
-     writeIORef vmref vm
+     menv  <- newMachineEnv allocref cfg
+     vm    <- emptyVM menv
+     writeIORef (machVMRef menv) vm
 
      return (threadCPtr (machMainThreadRef menv))
 

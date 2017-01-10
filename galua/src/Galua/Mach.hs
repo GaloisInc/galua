@@ -4,11 +4,10 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE RecursiveDo #-}
 module Galua.Mach where
 
 
-import           Control.Concurrent (MVar, newEmptyMVar)
-import           Control.Concurrent.STM (TMVar, atomically, newEmptyTMVar)
 import           Control.Exception (try)
 import           Control.Monad (when)
 import           Control.Monad.IO.Class
@@ -26,8 +25,9 @@ import           Data.ByteString (ByteString)
 import           Foreign (ForeignPtr, Ptr, nullPtr, newForeignPtr, FunPtr
                          , castFunPtr, newForeignPtr_ )
 import           Foreign.StablePtr
-                   (newStablePtr, freeStablePtr, castStablePtrToPtr)
+                   (StablePtr, newStablePtr, freeStablePtr, castStablePtrToPtr)
 import           Foreign.ForeignPtr.Unsafe
+import           Foreign.C.Types
 import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString as B
 import           System.Exit
@@ -67,19 +67,17 @@ data VM = VM
     -- ^ This is a copy of the current execution environment for
     -- the current thread for quicker access.
 
-  , vmAllocRef    :: {-# UNPACK #-} !AllocRef
-    -- ^ This is used to allocate Lua references.
-
   }
 
+vmAllocRef :: VM -> AllocRef
+vmAllocRef = machAllocRef . vmMachineEnv
 
-emptyVM :: AllocRef -> MachineEnv -> IO VM
-emptyVM aref menv =
+emptyVM :: MachineEnv -> IO VM
+emptyVM menv =
   do let vmCurThread = machMainThreadRef menv
      vmCurExecEnv <- getThreadField stExecEnv vmCurThread
      return VM { vmMachineEnv = menv
                , vmBlocked    = Stack.empty
-               , vmAllocRef   = aref
                , ..
                }
 
@@ -254,8 +252,6 @@ data MachineEnv = MachineEnv
 
   , machMainThreadRef :: !(Reference Thread)
 
-  , machVMRef         :: {-# UNPACK #-} !(IORef VM)
-
   , machNextChunkId   :: {-# UNPACK #-} !(IORef Int)
     -- ^ Used to generate identities when we load new chunks.
 
@@ -270,6 +266,12 @@ data MachineEnv = MachineEnv
     -- information about them.
 
   , machCFunInfo      :: FunPtr () -> IO CObjInfo
+
+  , machAllocRef       :: {-# UNPACK #-} !AllocRef
+    -- ^ This is used to allocate Lua references.
+
+  , machStablePtr     :: {-# UNPACK #-} !(StablePtr MachineEnv)
+  , machVMRef         :: {-# UNPACK #-} !(IORef VM)
   }
 
 
@@ -343,34 +345,40 @@ luaError' str =
      return (ThrowError (String s))
 
 
-newMachineEnv :: IORef VM -> AllocRef -> MachConfig -> IO MachineEnv
-newMachineEnv machVMRef aref machConfig =
+newMachineEnv :: AllocRef -> MachConfig -> IO MachineEnv
+newMachineEnv machAllocRef machConfig =
   do let refLoc = RefLoc { refLocCaller = MachSetup
                          , refLocSite   = MachSetup
                          }
-     machGlobals       <- newTable aref refLoc 0 0
-     machRegistry      <- newTable aref refLoc 0 0
+     machGlobals       <- newTable machAllocRef refLoc 0 0
+     machRegistry      <- newTable machAllocRef refLoc 0 0
      machNextChunkId   <- newIORef 0
      machMetatablesRef <- newIORef Map.empty
      machGarbage       <- newIORef []
-     machMainThreadRef <- allocNewThread machVMRef aref refLoc ThreadRunning
-     setTableRaw machRegistry (Number 1) (Thread machMainThreadRef)
-     setTableRaw machRegistry (Number 2) (Table machGlobals)
+     machVMRef         <- newIORef (error "machVMRef uninitialized")
 
      machNameCache     <- newIORef (cacheEmpty 50000)
      machCFunInfo      <- cfunInfoFun
-     return MachineEnv { .. }
+
+     rec let menv = MachineEnv { .. }
+         machStablePtr     <- newStablePtr menv -- This nonstrict application breaks the rec loop
+         machMainThreadRef <- allocNewThread machStablePtr machAllocRef refLoc ThreadRunning
+
+     setTableRaw machRegistry (Number 1) (Thread machMainThreadRef)
+     setTableRaw machRegistry (Number 2) (Table machGlobals)
+
+     return menv
 
 
 foreign import ccall "galua_allocate_luaState"
-  allocateLuaState :: Ptr () -> IO (Ptr ())
+  allocateLuaState :: Ptr () -> CInt -> IO (Ptr ())
 
 foreign import ccall "&galua_free_luaState"
   freeLuaState :: FunPtr (Ptr () -> IO ())
 
-newCPtr :: Ptr () -> IO (ForeignPtr ())
-newCPtr initialToken =
-  do luastate <- allocateLuaState initialToken
+newCPtr :: Ptr () -> Int -> IO (ForeignPtr ())
+newCPtr initialToken threadId =
+  do luastate <- allocateLuaState initialToken (fromIntegral threadId)
      when (nullPtr == luastate)
        (fail "lua_State allocation failed")
      newForeignPtr_ luastate
@@ -385,7 +393,7 @@ machNewClosure ::
   VM -> FunctionValue -> IOVector (IORef Value) -> IO (Reference Closure)
 machNewClosure vm fun upvals =
   do let aref = vmAllocRef vm
-     loc  <- machRefLoc vm
+     loc  <- vmRefLoc vm
      newClosure aref loc fun upvals
 
 machNewTable ::
@@ -394,39 +402,31 @@ machNewTable ::
   Int {- ^ hashtable size -} ->
   IO (Reference Table)
 machNewTable vm aSz hSz =
-  do let aref = vmAllocRef vm
-     loc <- machRefLoc vm
+  do let aref = machAllocRef (vmMachineEnv vm)
+     loc <- vmRefLoc vm
      newTable aref loc aSz hSz
 
 machNewUserData :: VM -> ForeignPtr () -> Int -> IO (Reference UserData)
 machNewUserData vm fp n =
   do let aref = vmAllocRef vm
-     loc  <- machRefLoc vm
+     loc  <- vmRefLoc vm
      newUserData aref loc fp n
 
 machNewThread :: VM -> IO (Reference Thread)
 machNewThread vm =
   do let aref = vmAllocRef vm
-     loc     <- machRefLoc vm
-     allocNewThread (machVMRef (vmMachineEnv vm)) aref loc ThreadNew
+     loc     <- vmRefLoc vm
+     allocNewThread (machStablePtr (vmMachineEnv vm)) aref loc ThreadNew
 
 allocNewThread ::
-  IORef VM ->
+  StablePtr MachineEnv ->
   AllocRef ->
   RefLoc ->
   ThreadStatus -> IO (Reference Thread)
-allocNewThread vmref aref refLoc st =
+allocNewThread sptr aref refLoc st =
   do refId <- newRefId aref
 
-     -- It's important that the argument of newStablePtr isn't forced
-     -- because this breaks a dependency cycle for vm in setupLuaState
-     sptr <- newStablePtr ExternalLuaState
-               { extLuaStateVMRef     = vmref
-               , extLuaStateThreadId  = refId
-               }
-
-     threadForeignPtr <- newCPtr (castStablePtrToPtr sptr)
-
+     threadForeignPtr <- newCPtr (castStablePtrToPtr sptr) refId
 
      threadStatus <- newIORef st
      stExecEnv    <- newIORef =<< newThreadExecEnv
@@ -441,8 +441,8 @@ allocNewThread vmref aref refLoc st =
      -- addRefFinalizer ref (freeStablePtr sptr)
      return ref
 
-machRefLoc :: VM -> IO RefLoc
-machRefLoc vm =
+vmRefLoc :: VM -> IO RefLoc
+vmRefLoc vm =
   do let tref = vmCurThread vm
      pc    <- getThreadPC tref
      let eenv = vmCurExecEnv vm
@@ -467,20 +467,8 @@ machRefLoc vm =
 -- Mapping from C to Lua
 --------------------------------------------------------------------------------
 
-data ExternalLuaState = ExternalLuaState
-  { extLuaStateVMRef       :: {-# UNPACK #-} !(IORef VM)
-  , extLuaStateThreadId    :: Int
-  }
-
-machLookupRef :: AllocType a => VM -> Int -> IO (Maybe (Reference a))
-machLookupRef vm n = lookupRef (vmAllocRef vm) n
-
-extToThreadRef :: VM -> ExternalLuaState -> IO (Reference Thread)
-extToThreadRef vm ext =
-  do mb <- machLookupRef vm (extLuaStateThreadId ext)
-     case mb of
-       Nothing -> fail "extToThreadRef: Unexpectedly invalid weak thread reference"
-       Just x  -> return x
+machLookupRef :: AllocType a => MachineEnv -> Int -> IO (Maybe (Reference a))
+machLookupRef menv n = lookupRef (machAllocRef menv) n
 
 --------------------------------------------------------------------------------
 
