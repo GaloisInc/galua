@@ -3,32 +3,19 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 module Galua where
 
-import           Galua.Mach( VM, MachConfig(..)
-                           , MachineEnv(..), newMachineEnv
-                           , emptyVM, threadCPtr)
-import           Galua.Reference(newAllocRef)
+import           Galua.Mach( MachConfig(..), MachineEnv(..)
+                           , newMachineEnv, threadCPtr)
 import           Galua.Stepper (runAllSteps)
-import           Galua.Value (Value(Nil), referenceVal)
-
-import           Control.Monad(void)
+import           Galua.Value (Value(Nil))
 
 import           Foreign (Ptr)
-import           Data.IORef
 
 
 setupLuaState :: MachConfig -> IO (Ptr ())
-setupLuaState cfg =
-  do allocref <- newAllocRef
-
-     menv  <- newMachineEnv allocref cfg
-     vm    <- emptyVM menv
-     writeIORef (machVMRef menv) vm
-
-     return (threadCPtr (machMainThreadRef menv))
+setupLuaState cfg = threadCPtr . machMainThreadRef <$> newMachineEnv cfg
 
 
-foreign export ccall "galua_newstate"
-  newLuaState :: IO (Ptr ())
+foreign export ccall "galua_newstate" newLuaState :: IO (Ptr ())
 
 newLuaState :: IO (Ptr ())
 newLuaState = setupLuaState cfg

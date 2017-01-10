@@ -23,7 +23,6 @@ library
   ghc-options:      -Wall -O2
   exposed-modules:     Galua
                        Galua.Arguments
-                       Galua.CallIntoC
                        Galua.DlInfo
                        Galua.OpcodeInterpreter
                        Galua.Mach

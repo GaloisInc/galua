@@ -109,12 +109,16 @@ reentryG label args l tid r impl =
 
          Just threadRef <- machLookupRef menv threadId
          eenv           <- getThreadField stExecEnv threadRef
-         let stack = execStack eenv
-         next <- impl vm stack `catch` \(LuaX str) ->
-                            do s <- fromByteString (packUtf8 str)
-                               return (ThrowError (String s))
-                                -- XXX handleGC
-         res <- runAllSteps vm next -- don't use vm after this!
+
+         -- XXX handleGC
+         res <- runAllSteps vm
+              $ ApiStart apiCall
+              $ impl vm (execStack eenv)
+                   `catch` \(LuaX str) ->
+                       do s <- fromByteString (packUtf8 str)
+                          return (ThrowError (String s))
+         -- don't use vm after this!
+
          case res of
            CAbort  -> return 1
            CResume -> return 0
@@ -1303,9 +1307,8 @@ findExecEnv level thread =
 
   where
   go 0 (CallFrame pc execEnv _ _ : _) = Just (pc, execEnv)
-  go l (CallFrame {} : xs)            = go (l-1) xs
+  go n (_ :xs)                        = go (n-1) xs
   go _ []                             = Nothing
-  go l (ErrorFrame  {} : xs)          = go l xs
 
 
 exportExecEnv :: (Int,ExecEnv) -> IO (Ptr ())

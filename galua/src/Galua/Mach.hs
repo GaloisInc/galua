@@ -23,7 +23,7 @@ import           Data.Vector.Mutable (IOVector)
 import qualified Data.Vector.Mutable as IOVector
 import           Data.ByteString (ByteString)
 import           Foreign (ForeignPtr, Ptr, nullPtr, newForeignPtr, FunPtr
-                         , castFunPtr, newForeignPtr_ )
+                         , castFunPtr )
 import           Foreign.StablePtr
                    (StablePtr, newStablePtr, freeStablePtr, castStablePtrToPtr)
 import           Foreign.ForeignPtr.Unsafe
@@ -155,11 +155,10 @@ data HandlerType = FunHandler (Reference Closure)
                  | DefaultHandler
 
 data StackFrame
-  = ErrorFrame
-  | CallFrame Int -- PC
-              ExecEnv
-              (Maybe (Value -> IO NextStep)) -- Error
-              ([Value] -> IO NextStep) -- Normal
+  = CallFrame {-# UNPACK #-} !Int -- PC
+              !ExecEnv
+              !(Maybe (Value -> IO NextStep)) -- Error
+              !([Value] -> IO NextStep) -- Normal
 
 
 data Thread = MkThread
@@ -307,10 +306,18 @@ execFunId env =
     LuaFID fid -> Just fid
     _          -> Nothing
 
+showApiCallStatus :: ApiCallStatus -> String
+showApiCallStatus x =
+  case x of
+    ApiCallActive  api     -> "ApiCallActive " ++ apiCallMethod api
+    ApiCallAborted  api    -> "ApiCallAborted " ++ apiCallMethod api
+    ApiCallAborting  api _ -> "ApiCallAborting " ++ apiCallMethod api
+    NoApiCall              -> "NoApiCall"
 
 data ApiCallStatus
   = ApiCallActive !ApiCall
   | ApiCallAborted !ApiCall
+  | ApiCallAborting !ApiCall !(IO CNextStep)
   | NoApiCall
 
 data ApiCall = ApiCall
@@ -345,24 +352,28 @@ luaError' str =
      return (ThrowError (String s))
 
 
-newMachineEnv :: AllocRef -> MachConfig -> IO MachineEnv
-newMachineEnv machAllocRef machConfig =
+newMachineEnv :: MachConfig -> IO MachineEnv
+newMachineEnv machConfig =
   do let refLoc = RefLoc { refLocCaller = MachSetup
                          , refLocSite   = MachSetup
                          }
+     machAllocRef      <- newAllocRef
+
      machGlobals       <- newTable machAllocRef refLoc 0 0
      machRegistry      <- newTable machAllocRef refLoc 0 0
      machNextChunkId   <- newIORef 0
      machMetatablesRef <- newIORef Map.empty
      machGarbage       <- newIORef []
-     machVMRef         <- newIORef (error "machVMRef uninitialized")
 
      machNameCache     <- newIORef (cacheEmpty 50000)
      machCFunInfo      <- cfunInfoFun
+     machVMRef         <- newIORef undefined
 
      rec let menv = MachineEnv { .. }
          machStablePtr     <- newStablePtr menv -- This nonstrict application breaks the rec loop
          machMainThreadRef <- allocNewThread machStablePtr machAllocRef refLoc ThreadRunning
+
+     writeIORef machVMRef =<< emptyVM menv
 
      setTableRaw machRegistry (Number 1) (Thread machMainThreadRef)
      setTableRaw machRegistry (Number 2) (Table machGlobals)
@@ -418,6 +429,7 @@ machNewThread vm =
      loc     <- vmRefLoc vm
      allocNewThread (machStablePtr (vmMachineEnv vm)) aref loc ThreadNew
 
+
 allocNewThread ::
   StablePtr MachineEnv ->
   AllocRef ->
@@ -437,8 +449,7 @@ allocNewThread sptr aref refLoc st =
      let th = MkThread{..}
      ref <- newRefWithId aref refId refLoc th
 
-     -- XXX setup finalizers
-     -- addRefFinalizer ref (freeStablePtr sptr)
+     addRefFinalizer ref (freeStablePtr sptr)
      return ref
 
 vmRefLoc :: VM -> IO RefLoc
@@ -452,7 +463,6 @@ vmRefLoc vm =
                    }
   where
   getCaller st = case Stack.pop st of
-                   Just (ErrorFrame, more)       -> getCaller more
                    Just (CallFrame pc env _ _,_) -> mkLoc env pc
                    Nothing -> MachSetup -- XXX: or can this happen?
 

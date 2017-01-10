@@ -11,10 +11,10 @@ module Galua.Stepper
 import           Galua.Mach
 import           Galua.Value
 import           Galua.FunValue(funValueCode,FunCode(..))
-import           Galua.CallIntoC
 import           Galua.OpcodeInterpreter (execute)
 import           Galua.LuaString
 import           Galua.Code
+import           Galua.CObjInfo
 
 import           Galua.Util.Stack (Stack)
 import qualified Galua.Util.Stack as Stack
@@ -26,7 +26,10 @@ import           Control.Concurrent
 import           Control.Concurrent.STM (atomically, takeTMVar)
 import           Data.IORef
 import           Data.Foldable (traverse_)
+import           Data.Traversable (for)
+import           Data.Maybe (fromMaybe)
 import           Foreign.Ptr
+import           Foreign.C.Types
 import           System.IO
 
 
@@ -65,6 +68,7 @@ performApiEnd c vm =
      writeIORef (execApiCall eenv) NoApiCall
      writeIORef (machVMRef (vmMachineEnv vm)) vm
      return CResume
+
 
 {-# INLINE performApiStart #-}
 performApiStart :: Cont -> VM -> ApiCall -> IO NextStep -> IO CNextStep
@@ -142,22 +146,17 @@ performFunReturn c vm vs =
        Nothing ->
           running c vm (ThreadExit vs)
 
-       Just (f, fs) ->
-         case f of
-           ErrorFrame ->
-                performErrorReturn c vm (trimResult1 vs)
+       Just (CallFrame pc fenv errK k, fs) ->
+         do setThreadField stExecEnv  th fenv
+            setThreadField stStack    th fs
+            setThreadPC               th pc
 
-           CallFrame pc fenv errK k ->
-             do setThreadField stExecEnv  th fenv
-                setThreadField stStack    th fs
-                setThreadPC               th pc
+            handlers <- getThreadField stHandlers th
+            setThreadField stHandlers th (case errK of
+                                            Just _  -> tail handlers
+                                            Nothing -> handlers)
 
-                handlers <- getThreadField stHandlers th
-                setThreadField stHandlers th (case errK of
-                                                Just _  -> tail handlers
-                                                Nothing -> handlers)
-
-                running c vm { vmCurExecEnv = fenv } =<< k vs
+            running c vm { vmCurExecEnv = fenv } =<< k vs
 
 
 
@@ -168,7 +167,6 @@ performThreadFail c vm e =
          eenv = vmCurExecEnv vm
      stack <- getThreadField stStack th
 
-     abortApiCall eenv
      -- abortReentryFrames stack
      case Stack.pop (vmBlocked vm) of
 
@@ -186,32 +184,23 @@ performThrowError c vm e =
   do let th = vmCurThread vm
      handlers <- getThreadField stHandlers th
      case handlers of
-       [] -> running c vm (ThreadFail e)
 
-       FunHandler x : _ ->
-         do stack <- getThreadField stStack th
-            setThreadField stStack th (Stack.push ErrorFrame stack)
-            running c vm (FunTailcall x [e])
+       FunHandler f : _ ->
+         do pc       <- getThreadPC th
+            let eenv = vmCurExecEnv vm
+            stack    <- getThreadField stStack th
 
-       DefaultHandler : _ -> running c vm (ErrorReturn e)
+            let frame = CallFrame pc eenv Nothing
+                          (return . ErrorReturn . trimResult1)
+
+            setThreadField stStack th (Stack.push frame stack)
+
+            enterClosure c vm f [e]
+
+       _ -> running c vm (ErrorReturn e)
 
 
-abortReentryFrames :: Stack StackFrame -> IO ()
-abortReentryFrames = traverse_ $ \frame ->
-  case frame of
-    CallFrame _ eenv _ _ -> abortApiCall eenv
-    _                    -> return ()
 
-abortApiCall :: ExecEnv -> IO ()
-abortApiCall eenv =
-  do let ref = execApiCall eenv
-     st <- readIORef ref
-     case st of
-       NoApiCall        -> return ()
-       ApiCallAborted{} -> return ()
-       ApiCallActive api ->
-         do fail "abortApiCall not updated for new execution mode"
-            writeIORef ref (ApiCallAborted api)
 
 performResume ::
   Cont ->
@@ -264,38 +253,39 @@ performYield c vm k =
 {-# INLINE performErrorReturn #-}
 performErrorReturn :: Cont -> VM -> Value -> IO CNextStep
 performErrorReturn c vm e =
-  do let ref = vmCurThread vm
-         eenv = vmCurExecEnv vm
+  do let apiRef = execApiCall (vmCurExecEnv vm)
+     st <- readIORef apiRef
+     case st of
+       NoApiCall        -> doUnwind
+       ApiCallAborted{} -> doUnwind
+       ApiCallAborting{}-> fail "PANIC: performErrorReturn, error while aborting API call"
+       ApiCallActive api ->
+         do writeIORef apiRef (ApiCallAborting api doUnwind)
+            return CAbort -- not saving vm because it's captured in doUnwind
 
-     fail ("error return not updated for new execution path: " ++ prettyValue e)
-     -- abortApiCall (machCServer (vmMachineEnv vm)) eenv
-
-     stack <- getThreadField stStack ref
-     unwind stack
   where
-  unwind s =
-    case Stack.pop s of
-      Nothing -> finishedWithError c e
-      Just (frame, s') ->
-        case frame of
-          CallFrame pc fenv (Just k) _ ->
-            do let th = vmCurThread vm
-               setThreadField stExecEnv  th fenv
-               setThreadField stHandlers th . tail =<< getThreadField stHandlers th
-               setThreadField stStack    th s'
-               setThreadPC               th pc
+    doUnwind =
+      do stack <- getThreadField stStack (vmCurThread vm)
+         case Stack.pop stack of
+           Nothing -> finishedWithError c e
+           Just (frame, s') ->
+             case frame of
+               CallFrame pc fenv (Just k) _ ->
+                 do let th = vmCurThread vm
+                    setThreadField stExecEnv  th fenv
+                    setThreadField stHandlers th . tail =<< getThreadField stHandlers th
+                    setThreadField stStack    th s'
+                    setThreadPC               th pc
 
-               running c vm { vmCurExecEnv = fenv } =<< k e
+                    running c vm { vmCurExecEnv = fenv } =<< k e
 
-          CallFrame pc eenv Nothing _ ->
-            do let th = vmCurThread vm
-               setThreadField stExecEnv th eenv
-               setThreadField stStack   th s'
-               setThreadPC              th pc
+               CallFrame pc eenv Nothing _ ->
+                 do let th = vmCurThread vm
+                    setThreadField stExecEnv th eenv
+                    setThreadField stStack   th s'
+                    setThreadPC              th pc
 
-               running c vm { vmCurExecEnv = eenv } (ErrorReturn e)
-
-          ErrorFrame -> unwind s'
+                    running c vm { vmCurExecEnv = eenv } (ErrorReturn e)
 
 
 runAllSteps :: VM -> NextStep -> IO CNextStep
@@ -383,5 +373,42 @@ enterClosure c vm clos vs =
 
             setThreadField stExecEnv th newEnv
 
-            andthen <- callC newVM (cfunAddr cfun)
-            running c newVM andthen
+            callC c newVM (cfunAddr cfun)
+
+callC :: Cont -> VM -> CFun -> IO CNextStep
+callC c vm cfun =
+  do let l = threadCPtr (vmCurThread vm)
+
+     getFunInfo <- cfunInfoFun -- :: IO (FunPtr () -> IO CObjInfo)
+     objInfo    <- getFunInfo (castFunPtr cfun)
+     let name = fromMaybe "unknown" (cObjName objInfo)
+
+     writeIORef (machVMRef (vmMachineEnv vm)) vm
+     res <- call_c cfun l
+
+     case res of
+       -1 -> abortedReturnFromC vm
+       -2 -> fail "C functions called from Lua must return non-negative number"
+       _ | res < 0   -> fail "Panic: capi_entry had invalid return value"
+         | otherwise -> normalReturnFromC c vm (fromIntegral res)
+
+normalReturnFromC :: Cont -> VM -> Int {- ^ number of values returned -} -> IO CNextStep
+normalReturnFromC c vm n =
+  do stack   <- execStack <$> getThreadField stExecEnv (vmCurThread vm)
+     sz      <- SV.size stack
+     results <- for [ sz - n .. sz - 1 ] $ \i ->
+                  readIORef =<< SV.get stack i
+     running c vm (FunReturn results)
+
+abortedReturnFromC :: VM -> IO CNextStep
+abortedReturnFromC vm =
+  do let ref = execApiCall (vmCurExecEnv vm)
+     st <- readIORef ref
+     case st of
+       ApiCallAborting api resume ->
+         do writeIORef ref (ApiCallAborted api)
+            resume
+       _ -> fail "PANIC: abortedReturnFromC expected API call state to be aborting"
+
+foreign import ccall "galua_call_c" call_c ::
+  CFun -> Ptr () -> IO CInt
