@@ -381,7 +381,7 @@ newCPtr initialToken threadId =
   do luastate <- allocateLuaState initialToken (fromIntegral threadId)
      when (nullPtr == luastate)
        (fail "lua_State allocation failed")
-     newForeignPtr_ luastate
+     newForeignPtr freeLuaState luastate
 
 
 
