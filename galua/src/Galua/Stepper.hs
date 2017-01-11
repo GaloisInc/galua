@@ -14,23 +14,17 @@ import           Galua.FunValue(funValueCode,FunCode(..))
 import           Galua.OpcodeInterpreter (execute)
 import           Galua.LuaString
 import           Galua.Code
-import           Galua.CObjInfo
 
-import           Galua.Util.Stack (Stack)
 import qualified Galua.Util.Stack as Stack
 import qualified Galua.Util.SizedVector as SV
 
 
 import           Control.Monad ((<=<))
-import           Control.Concurrent
-import           Control.Concurrent.STM (atomically, takeTMVar)
 import           Data.IORef
 import           Data.Foldable (traverse_)
 import           Data.Traversable (for)
-import           Data.Maybe (fromMaybe)
 import           Foreign.Ptr
 import           Foreign.C.Types
-import           System.IO
 
 
 data Cont r = Cont
@@ -164,10 +158,7 @@ performFunReturn c vm vs =
 performThreadFail :: Cont r -> VM -> Value -> IO r
 performThreadFail c vm e =
   do let th = vmCurThread vm
-         eenv = vmCurExecEnv vm
-     stack <- getThreadField stStack th
 
-     -- abortReentryFrames stack
      case Stack.pop (vmBlocked vm) of
 
        Nothing -> finishedWithError c e
@@ -231,7 +222,7 @@ performYield c vm k =
          apiRef = execApiCall eenv
      writeIORef apiRef NoApiCall
 
-     fail "yield not updated for new execution path"
+     _ <- fail "yield not updated for new execution path"
      -- putMVar (machCServer (vmMachineEnv vm)) CAbort
 
      case Stack.pop (vmBlocked vm) of
@@ -300,7 +291,7 @@ runAllSteps = oneStep' cont
   cont = Cont
     { running           = oneStep' cont
     , exitToC           = return
-    , finishedWithError = \v -> return CAbort -- Bad error
+    , finishedWithError = \_ -> return CAbort -- Bad error
     }
 
 
@@ -384,10 +375,6 @@ enterClosure c vm clos vs =
 callC :: Cont r -> VM -> CFun -> IO r
 callC c vm cfun =
   do let l = threadCPtr (vmCurThread vm)
-
-     getFunInfo <- cfunInfoFun -- :: IO (FunPtr () -> IO CObjInfo)
-     objInfo    <- getFunInfo (castFunPtr cfun)
-     let name = fromMaybe "unknown" (cObjName objInfo)
 
      writeIORef (machVMRef (vmMachineEnv vm)) vm
      res <- call_c cfun l

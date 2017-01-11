@@ -4,7 +4,6 @@
 
 module Galua.CApi where
 
-import Control.Concurrent.STM (TMVar, atomically, putTMVar)
 import Control.Exception(catch,SomeException(..),throwIO,try,displayException)
 import Control.Monad (replicateM_,when,unless)
 import Control.Monad.IO.Class
@@ -38,7 +37,6 @@ import Language.Lua.Bytecode.FunId
 import qualified Galua.Util.SizedVector as SV
 
 import Galua.Code
-import Galua.Stepper
 import Galua.Arguments
 import Galua.Mach
 import Galua.Number
@@ -177,10 +175,9 @@ stackFromList stack vs =
      SV.shrink stack n
      for_ vs $ push stack
 
-deRefThread :: Ptr () -> CInt -> IO (Reference Thread)
-deRefThread l threadId =
-  do menv <- deRefStablePtr (castPtrToStablePtr l :: StablePtr MachineEnv)
-     mb   <- machLookupRef menv (fromIntegral threadId)
+deRefThread :: VM -> CInt -> IO (Reference Thread)
+deRefThread vm threadId =
+  do mb <- machLookupRef (vmMachineEnv vm) (fromIntegral threadId)
      case mb of
        Just t -> return t
        Nothing -> throwIO (LuaX "unknown thread id")
@@ -1145,7 +1142,7 @@ foreign export ccall
 lua_status_hs :: EntryPoint (Ptr CInt -> IO CInt)
 lua_status_hs l tid r out =
   reentryG "lua_status" [] l tid r $ \vm _ ->
-     do thread <- deRefThread l tid
+     do thread <- deRefThread vm tid
         st     <- getThreadField threadStatus thread
 
         result out $
@@ -1162,7 +1159,7 @@ foreign export ccall
 lua_resume_hs :: EntryPoint (Ptr () -> CInt -> Ptr CInt -> IO CInt)
 lua_resume_hs l tid r from nargs out =
   reentryG "lua_resume" [cArg from, cArg nargs] l tid r $ \vm args ->
-    do tRef <- deRefThread l tid
+    do tRef <- deRefThread vm tid
 
        st <- getThreadField threadStatus tRef
        case st of
@@ -1207,7 +1204,7 @@ lua_yieldk_hs l tid r nResults ctx func =
   reentryG "lua_yieldk" [cArg nResults, cArg ctx, cArg func] l tid r $ \vm args ->
     do outputs <- popN args (fromIntegral nResults)
 
-       tRef  <- deRefThread l tid
+       tRef  <- deRefThread vm tid
        stack <- execStack <$> getThreadField stExecEnv tRef
        n <- SV.size stack
        SV.shrink stack n
@@ -1235,7 +1232,7 @@ foreign export ccall
 lua_isyieldable_hs :: EntryPoint (Ptr CInt -> IO CInt)
 lua_isyieldable_hs l tid r out =
   reentryG "lua_isyieldable" [] l tid r $ \vm _ ->
-    do tRef <- deRefThread l tid
+    do tRef <- deRefThread vm tid
 
        let isMain = machIsMainThread vm tRef
        isYieldable <- if isMain
@@ -1325,7 +1322,7 @@ lua_getstack_hs :: EntryPoint (CInt -> Ptr LuaDebug -> Ptr CInt -> IO CInt)
 lua_getstack_hs l tid r level ar out =
   reentryG "lua_getstack" [cArg level, cArg (castPtr ar :: Ptr ())] l tid r $ \vm _ ->
 
-  do tRef <- deRefThread l tid
+  do tRef <- deRefThread vm tid
      mbExecEnv <- findExecEnv (fromIntegral level) tRef
 
      case mbExecEnv of
@@ -1353,7 +1350,7 @@ lua_getinfo_hs l tid r whatPtr ar out =
   do what         <- peekCString whatPtr
 
      (pc,execEnv) <- if '>'`elem` what
-                       then do th <- deRefThread l tid
+                       then do th <- deRefThread vm tid
                                pc <- getThreadPC th
                                eenv <- getThreadField stExecEnv th
                                return (pc,eenv)
@@ -1570,8 +1567,8 @@ lua_xmove_hs :: EntryPoint (CInt -> CInt -> IO CInt)
 lua_xmove_hs l tid r to n =
   reentryG "lua_xmove" [cArg to, cArg n] l tid r $ \vm fromArgs ->
 
-    do fromRef <- deRefThread l tid
-       toRef   <- deRefThread l to
+    do fromRef <- deRefThread vm tid
+       toRef   <- deRefThread vm to
 
        unless (fromRef == toRef) $
          do transfer <- popN fromArgs (fromIntegral n)

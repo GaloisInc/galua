@@ -236,6 +236,8 @@ isBool val =
 runStmt :: AllocRef -> Frame -> Int -> BlockStmt -> IO Next
 runStmt aref f@Frame { .. } pc stmt =
   case stmtCode stmt of
+    NewClosure{} -> error "runStmt: NewClosure not supported"
+
     Assign r e    -> do setReg f r =<< getExpr f e
                         return Continue
 
