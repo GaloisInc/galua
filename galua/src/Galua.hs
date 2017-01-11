@@ -24,4 +24,5 @@ newLuaState = setupLuaState cfg
                 { machOnChunkLoad = \_ _ _ _ -> return ()
                 , machOnShutdown  = return () -- TODO: free stable pointers
                 , machOnQuery     = \_ -> return Nil
+                , machRunner      = runAllSteps
                 }

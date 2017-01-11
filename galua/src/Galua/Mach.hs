@@ -280,6 +280,7 @@ data MachConfig = MachConfig
     -- ^ Invoke this when loading a chunk
   , machOnShutdown  :: IO ()
   , machOnQuery     :: String -> IO Value
+  , machRunner      :: VM -> NextStep -> IO CNextStep
   }
 
 
@@ -309,15 +310,16 @@ execFunId env =
 showApiCallStatus :: ApiCallStatus -> String
 showApiCallStatus x =
   case x of
-    ApiCallActive  api     -> "ApiCallActive " ++ apiCallMethod api
-    ApiCallAborted  api    -> "ApiCallAborted " ++ apiCallMethod api
-    ApiCallAborting  api _ -> "ApiCallAborting " ++ apiCallMethod api
-    NoApiCall              -> "NoApiCall"
+    ApiCallActive  api       -> "ApiCallActive " ++ apiCallMethod api
+    ApiCallAborted  api      -> "ApiCallAborted " ++ apiCallMethod api
+    ApiCallErrorReturn api v ->
+      unwords ["ApiCallErrorReturn", apiCallMethod api, prettyValue v ]
+    NoApiCall                -> "NoApiCall"
 
 data ApiCallStatus
   = ApiCallActive !ApiCall
   | ApiCallAborted !ApiCall
-  | ApiCallAborting !ApiCall !(IO CNextStep)
+  | ApiCallErrorReturn !ApiCall !Value
   | NoApiCall
 
 data ApiCall = ApiCall

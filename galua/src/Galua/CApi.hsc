@@ -111,13 +111,12 @@ reentryG label args l tid r impl =
          eenv           <- getThreadField stExecEnv threadRef
 
          -- XXX handleGC
-         res <- runAllSteps vm
+         res <- machRunner (machConfig menv) vm
               $ ApiStart apiCall
               $ impl vm (execStack eenv)
                    `catch` \(LuaX str) ->
                        do s <- fromByteString (packUtf8 str)
                           return (ThrowError (String s))
-         -- don't use vm after this!
 
          case res of
            CAbort  -> return 1
