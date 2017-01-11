@@ -92,7 +92,8 @@ data CCallState
   = CReturned Int
   | CReEntry ApiCall (VM -> IO NextStep)
 
-data CNextStep = CAbort | CResume
+data CNextStep = CError | CYield | CReturn
+  deriving Show
 
 
 -- | Machine instructions to do with control flow.
@@ -119,7 +120,7 @@ data NextStep
   | Resume !(Reference Thread) (ThreadResult -> IO NextStep)
     -- ^ Resume the given suspended thread
 
-  | Yield (IO NextStep)
+  | Yield [Value]
 
   | ThreadExit [Value]
   | ThreadFail Value
@@ -141,7 +142,7 @@ dumpNextStep next =
     FunTailcall r _ -> "tailcall " ++ show (prettyRef r)
     ThrowError _    -> "throw"
     Resume r _      -> "resume " ++ show (prettyRef r)
-    Yield _         -> "yield"
+    Yield vs        -> "yield [" ++ intercalate ", " (map prettyValue vs) ++ "]"
     ApiStart api _  -> "apistart " ++ apiCallMethod api
     ApiEnd _        -> "apiend"
     Interrupt {}    -> "interrupt"
@@ -314,12 +315,15 @@ showApiCallStatus x =
     ApiCallAborted  api      -> "ApiCallAborted " ++ apiCallMethod api
     ApiCallErrorReturn api v ->
       unwords ["ApiCallErrorReturn", apiCallMethod api, prettyValue v ]
+    ApiCallYielding api vs ->
+      unwords ("ApiCallYielding" : apiCallMethod api : map prettyValue vs)
     NoApiCall                -> "NoApiCall"
 
 data ApiCallStatus
   = ApiCallActive !ApiCall
   | ApiCallAborted !ApiCall
   | ApiCallErrorReturn !ApiCall !Value
+  | ApiCallYielding !ApiCall [Value]
   | NoApiCall
 
 data ApiCall = ApiCall

@@ -26,11 +26,12 @@ struct lua_State
 
 #define GET_RETURN_ADDR() __builtin_extract_return_addr(__builtin_return_address(0))
 #define API_ENTRY(method,L,...) \
-  do { if (method##_hs(L->token, L->thread_id, GET_RETURN_ADDR(), ##__VA_ARGS__)) \
-            raise_error(L); \
+  do { \
+     int result = method##_hs(L->token, L->thread_id, GET_RETURN_ADDR(), ##__VA_ARGS__); \
+     if (result) raise_error(L, result); \
   } while(0)
 
-__attribute__((noreturn)) static void raise_error(lua_State *L);
+__attribute__((noreturn)) static void raise_error(lua_State *L, int);
 
 LUA_API
 int lua_error (lua_State *L) {
@@ -538,7 +539,7 @@ int lua_load (lua_State *L, lua_Reader reader, void *data, const char *chunkname
         int res = lua_load_hs(L->token, L->thread_id, GET_RETURN_ADDR(),
                               all_data, all_data_n, (char*)chunkname, (char*)mode, &out);
         free(all_data);
-        if (res) raise_error(L);
+        if (res) raise_error(L, res);
         return out;
 }
 
@@ -720,12 +721,12 @@ void lua_close (lua_State *L) {
 }
 
 __attribute__((noreturn))
-static void raise_error(lua_State *L) {
+static void raise_error(lua_State *L, int result) {
   if (L->onerror == NULL) {
           fprintf(stderr, "Galua: Unhandled error\n");
           abort();
   }
-  siglongjmp(*L->onerror,1);
+  siglongjmp(*L->onerror,result);
 }
 
 struct LX {
@@ -773,10 +774,9 @@ int galua_call_c(int (*cfun)(void *), lua_State *L) {
         sigjmp_buf new_buf;
         L->onerror = &new_buf;
 
-        int jumpresult = sigsetjmp(new_buf,0/* ignore signals */);
-        int result;
+        int result = sigsetjmp(new_buf,0/* ignore signals */);
 
-        if (jumpresult == 0) {
+        if (result == 0) {
                 /* normal control flow */
                 result = cfun(L);
 
@@ -785,11 +785,8 @@ int galua_call_c(int (*cfun)(void *), lua_State *L) {
                  * and reserved for Galua error signaling.
                  */
                 if (result < 0) {
-                        result = -2;
+                        result = -3;
                 }
-        } else {
-                /* exceptional control flow */
-                result = -1;
         }
 
         memcpy(L, &old_state, sizeof(lua_State));

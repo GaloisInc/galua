@@ -117,8 +117,9 @@ reentryG label args l tid r impl =
                           return (ThrowError (String s))
 
          case res of
-           CAbort  -> return 1
-           CResume -> return 0
+           CYield  -> return (-2)
+           CError  -> return (-1)
+           CReturn -> return 0
 
 handleGC :: VM -> NextStep -> IO NextStep
 handleGC vm next =
@@ -162,12 +163,6 @@ popN stack n = liftIO $
              readIORef =<< SV.get stack i
      SV.shrink stack n'
      return vs
-
-stackToList :: SV.SizedVector (IORef a) -> IO [a]
-stackToList stack =
-  do n  <- SV.size stack
-     for [0 .. n-1 ] $ \i -> readIORef =<< SV.get stack i
-
 
 stackFromList :: SV.SizedVector (IORef a) -> [a] -> IO ()
 stackFromList stack vs =
@@ -1202,18 +1197,7 @@ foreign export ccall
 lua_yieldk_hs :: EntryPoint (CInt -> Lua_KContext -> Lua_KFunction -> IO CInt)
 lua_yieldk_hs l tid r nResults ctx func =
   reentryG "lua_yieldk" [cArg nResults, cArg ctx, cArg func] l tid r $ \vm args ->
-    do outputs <- popN args (fromIntegral nResults)
-
-       tRef  <- deRefThread vm tid
-       stack <- execStack <$> getThreadField stExecEnv tRef
-       n <- SV.size stack
-       SV.shrink stack n
-       traverse_ (push stack) outputs
-       return $ Yield $
-         do inputs <- stackToList stack
-            if func == nullFunPtr
-              then return (FunReturn inputs)
-              else fail "Panic: lua_yieldk with continuation not implemented" -- XXX
+    Yield <$> popN args (fromIntegral nResults)
 
 
 foreign export ccall
