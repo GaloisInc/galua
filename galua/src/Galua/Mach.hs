@@ -82,11 +82,6 @@ emptyVM menv =
                }
 
 
-data VMState  = FinishedOk ![Value]
-              | FinishedWithError !Value
-              | Running !VM !NextStep
-              | RunningInC !VM
-
 
 data CCallState
   = CReturned Int
