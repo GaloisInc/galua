@@ -1196,7 +1196,7 @@ foreign export ccall
 
 lua_yieldk_hs :: EntryPoint (CInt -> Lua_KContext -> Lua_KFunction -> IO CInt)
 lua_yieldk_hs l tid r nResults ctx func =
-  reentryG "lua_yieldk" [cArg nResults, cArg ctx, cArg func] l tid r $ \vm args ->
+  reentryG "lua_yieldk" [cArg nResults, cArg ctx, cArg func] l tid r $ \_ args ->
     Yield <$> popN args (fromIntegral nResults)
 
 
