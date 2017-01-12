@@ -29,8 +29,8 @@ import           Foreign.C.Types
 
 data Cont r = Cont
   { running           :: VM -> NextStep -> IO r
-  , exitToC           :: CNextStep -> IO r
-  , finishedWithError :: Value -> IO r
+  , returnToC         :: CNextStep -> IO r
+  , leavingRTS        :: VM -> IO ()  -- Used to save state
   }
 
 {-# INLINE oneStep' #-}
@@ -60,8 +60,8 @@ performApiEnd ::
 performApiEnd c vm =
   do let eenv = vmCurExecEnv vm
      writeIORef (execApiCall eenv) NoApiCall
-     writeIORef (machVMRef (vmMachineEnv vm)) vm
-     exitToC c CReturn
+     leavingRTS c vm
+     returnToC c CReturn
 
 
 {-# INLINE performApiStart #-}
@@ -161,7 +161,8 @@ performThreadFail c vm e =
 
      case Stack.pop (vmBlocked vm) of
 
-       Nothing -> finishedWithError c e
+       Nothing ->
+         fail "PANIC: the main thread exited with failure"
 
        Just (t, ts) ->
          do setThreadField threadStatus th ThreadCrashed
@@ -225,7 +226,7 @@ performYield c vm vs =
      case st of
        ApiCallActive api ->
          do writeIORef apiRef (ApiCallYielding api vs)
-            exitToC c CYield
+            returnToC c CYield
        _ -> finishYield c vm vs
 
 
@@ -273,15 +274,14 @@ performErrorReturn c vm e =
           fail "PANIC: performErrorReturn, yield while aborting API call"
        ApiCallActive api ->
          do writeIORef apiRef (ApiCallErrorReturn api e)
-            writeIORef (machVMRef (vmMachineEnv vm)) vm
-            exitToC c CError
-
+            leavingRTS c vm
+            returnToC c CError
 
 doUnwind :: Cont r -> VM -> Value -> IO r
 doUnwind c vm e =
   do stack <- getThreadField stStack (vmCurThread vm)
      case Stack.pop stack of
-       Nothing -> finishedWithError c e
+       Nothing -> fail "PANIC: returned before returning from API call"
        Just (frame, s') ->
          case frame of
            CallFrame pc fenv (Just k) _ ->
@@ -310,8 +310,8 @@ runAllSteps = oneStep' cont
   where
   cont = Cont
     { running           = oneStep' cont
-    , exitToC           = return
-    , finishedWithError = \_ -> return CError -- Bad error
+    , returnToC         = return
+    , leavingRTS        = \vm -> writeIORef (machVMRef (vmMachineEnv vm)) vm
     }
 
 
@@ -399,7 +399,7 @@ callC :: Cont r -> VM -> CFun -> IO r
 callC c vm cfun =
   do let l = threadCPtr (vmCurThread vm)
 
-     writeIORef (machVMRef (vmMachineEnv vm)) vm
+     leavingRTS c vm
      res <- call_c cfun l
 
      case res of
@@ -408,6 +408,10 @@ callC c vm cfun =
        -3 -> fail "C functions called from Lua must return non-negative number"
        _ | res < 0   -> fail "Panic: capi_entry had invalid return value"
          | otherwise -> normalReturnFromC c vm (fromIntegral res)
+           -- This does not reload the VM, because executing in C
+           -- should not change anything important: it should
+           -- just modify the values in the registers which
+           -- are accessed through references.
 
 normalReturnFromC ::
   Cont r -> VM -> Int {- ^ number of values returned -} -> IO r
