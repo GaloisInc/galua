@@ -14,6 +14,7 @@ import           Galua.FunValue(funValueCode,FunCode(..))
 import           Galua.OpcodeInterpreter (execute)
 import           Galua.LuaString
 import           Galua.Code
+import           Galua.CApi.Types
 
 import qualified Galua.Util.Stack as Stack
 import qualified Galua.Util.SizedVector as SV
@@ -58,8 +59,8 @@ performApiEnd ::
   VM                 {- ^ virtual machine state -} ->
   IO r
 performApiEnd c vm =
-  do let eenv = vmCurExecEnv vm
-     writeIORef (execApiCall eenv) NoApiCall
+  do let ref = execApiCall (vmCurExecEnv vm)
+     writeIORef ref NoApiCall
      leavingRTS c vm
      returnToC c CReturn
 
@@ -212,7 +213,8 @@ performResume c vm tRef finishK =
                          , vmBlocked   = Stack.push oldThread (vmBlocked vm)
                          , vmCurExecEnv = newEnv
                          }
-            running c vm' =<< resumeK
+            (vm'', next) <- resumeK vm'
+            running c vm'' next
 
        _ -> error "performResume: Thread not suspended"
 
@@ -225,35 +227,40 @@ performYield c vm vs =
      st <- readIORef apiRef
      case st of
        ApiCallActive api ->
-         do writeIORef apiRef (ApiCallYielding api vs)
-            returnToC c CYield
-       _ -> finishYield c vm vs
+         do writeIORef apiRef NoApiCall
+            case Stack.pop (vmBlocked vm) of
+              Nothing -> do str <- fromByteString "yield to no one"
+                            running c vm (ThrowError (String str))
+              Just (t, ts) ->
+                do setThreadField threadStatus (vmCurThread vm)
+                     (ThreadSuspended (restartFromYield c (apiContinuation api)))
+                   newEnv <- getThreadField stExecEnv t
+                   traverse_ (SV.push (execStack newEnv) <=< newIORef) vs
+                   let vm' = vm { vmCurThread = t
+                                , vmBlocked = ts
+                                , vmCurExecEnv = newEnv
+                                }
+                   leavingRTS c vm'
+                   returnToC c CYield
+       _ -> fail "performYield: Not in API call?"
 
 
-finishYield :: Cont r -> VM -> [Value] -> IO r
-finishYield c vm vs =
-     case Stack.pop (vmBlocked vm) of
-       Nothing -> do str <- fromByteString "yield to no one"
-                     running c vm (ThrowError (String str))
-       Just (t, ts) ->
-         do setThreadField threadStatus (vmCurThread vm)
-              (ThreadSuspended (restartFromYield (vmCurThread vm)))
-            newEnv <- getThreadField stExecEnv t
-            traverse_ (SV.push (execStack newEnv) <=< newIORef) vs
-            vmSwitchToNormal c vm { vmCurThread = t
-                                  , vmBlocked = ts
-                                  , vmCurExecEnv = newEnv
-                                  } ThreadYield
-
+restartFromYield :: Cont r -> Maybe (Lua_KFunction, Lua_KContext) -> VM -> IO (VM,NextStep)
+restartFromYield c mbK vm =
+  case mbK of
+    Just (k,ctx) ->
+      do leavingRTS c vm
+         callCK k luaYIELD ctx vm
+    Nothing ->
+      do let th = vmCurThread vm
+         eenv <- getThreadField stExecEnv th
+         xs <- stackToList (execStack eenv)
+         return (vm, FunReturn xs)
   where
     stackToList :: SV.SizedVector (IORef a) -> IO [a]
     stackToList stack =
       do n  <- SV.size stack
          for [0 .. n-1 ] $ \i -> readIORef =<< SV.get stack i
-
-    restartFromYield th =
-        do eenv <- getThreadField stExecEnv th
-           FunReturn <$> stackToList (execStack eenv)
 
 
 
@@ -266,8 +273,10 @@ performErrorReturn c vm e =
   do let apiRef = execApiCall (vmCurExecEnv vm)
      st <- readIORef apiRef
      case st of
-       NoApiCall        -> doUnwind c vm e
-       ApiCallAborted{} -> doUnwind c vm e
+       NoApiCall        -> do (vm',next) <- doUnwind vm e
+                              running c vm' next
+       ApiCallAborted{} -> do (vm',next) <- doUnwind vm e
+                              running c vm' next
        ApiCallErrorReturn {}->
           fail "PANIC: performErrorReturn, error while aborting API call"
        ApiCallYielding {}->
@@ -277,8 +286,8 @@ performErrorReturn c vm e =
             leavingRTS c vm
             returnToC c CError
 
-doUnwind :: Cont r -> VM -> Value -> IO r
-doUnwind c vm e =
+doUnwind :: VM -> Value -> IO (VM, NextStep)
+doUnwind vm e =
   do stack <- getThreadField stStack (vmCurThread vm)
      case Stack.pop stack of
        Nothing -> fail "PANIC: returned before returning from API call"
@@ -293,7 +302,8 @@ doUnwind c vm e =
                 setThreadPC               th pc
 
                 let newVM = vm { vmCurExecEnv = fenv }
-                running c newVM =<< k e
+                next <- k e
+                return (newVM, next)
 
            CallFrame pc eenv Nothing _ ->
              do let th = vmCurThread vm
@@ -302,7 +312,7 @@ doUnwind c vm e =
                 setThreadPC              th pc
 
                 let newVM = vm { vmCurExecEnv = eenv }
-                running c newVM (ErrorReturn e)
+                return (newVM, ErrorReturn e)
 
 
 runAllSteps :: VM -> NextStep -> IO CNextStep
@@ -316,16 +326,21 @@ runAllSteps = oneStep' cont
 
 
 vmSwitchToNormal :: Cont r -> VM -> ThreadResult -> IO r
-vmSwitchToNormal c vm res =
+vmSwitchToNormal c vm res = running c vm =<< vmSwitchToNormal' vm res
+
+vmSwitchToNormal' :: VM -> ThreadResult -> IO NextStep
+vmSwitchToNormal' vm res =
   do let th = vmCurThread vm
      st <- getThreadField threadStatus th
      case st of
        ThreadNormal k ->
          do setThreadField threadStatus th ThreadRunning
-            running c vm =<< k res
+            k res
 
-       _ -> error "[BUG] vmSwitchToNormal: not a normal thread."
-
+       ThreadSuspended{} -> fail ("PANIC: resuming suspended thread " ++ show (referenceId th))
+       ThreadNew     -> fail ("PANIC: resuming new thread " ++ show (referenceId th))
+       ThreadRunning -> fail ("PANIC: resuming running thread " ++ show (referenceId th))
+       ThreadCrashed -> fail ("PANIC: resuming crashed thread " ++ show (referenceId th))
 
 
 
@@ -390,54 +405,59 @@ enterClosure c vm clos vs =
 
             setThreadField stExecEnv th newEnv
 
-            callC c newVM (cfunAddr cfun)
+            leavingRTS c newVM
+            (vm', next) <- callC (cfunAddr cfun) newVM
+            running c vm' next
 
 
 foreign import ccall "galua_call_c" call_c :: CFun -> Ptr () -> IO CInt
+foreign import ccall "galua_call_c_k" call_c_k ::
+  Lua_KFunction -> CInt -> Lua_KContext -> Ptr () -> IO CInt
 
-callC :: Cont r -> VM -> CFun -> IO r
-callC c vm cfun =
+callC :: CFun -> VM -> IO (VM,NextStep)
+callC f = callC' (call_c f)
+
+callCK :: Lua_KFunction -> CInt -> Lua_KContext -> VM -> IO (VM,NextStep)
+callCK f st ctx = callC' (call_c_k f st ctx)
+
+callC' :: (Ptr () -> IO CInt) -> VM -> IO (VM,NextStep)
+callC' f vm =
   do let l = threadCPtr (vmCurThread vm)
 
-     leavingRTS c vm
-     res <- call_c cfun l
+     res <- f l
+     vm' <- readIORef (machVMRef (vmMachineEnv vm))
 
      case res of
-       -1 -> errorReturnFromC c vm
-       -2 -> yieldReturnFromC c vm
+       -1 -> errorReturnFromC vm'
+       -2 -> yieldReturnFromC vm'
        -3 -> fail "C functions called from Lua must return non-negative number"
        _ | res < 0   -> fail "Panic: capi_entry had invalid return value"
-         | otherwise -> normalReturnFromC c vm (fromIntegral res)
+         | otherwise -> normalReturnFromC vm' (fromIntegral res)
            -- This does not reload the VM, because executing in C
            -- should not change anything important: it should
            -- just modify the values in the registers which
            -- are accessed through references.
 
 normalReturnFromC ::
-  Cont r -> VM -> Int {- ^ number of values returned -} -> IO r
-normalReturnFromC c vm n =
+  VM -> Int {- ^ number of values returned -} -> IO (VM,NextStep)
+normalReturnFromC vm n =
   do stack   <- execStack <$> getThreadField stExecEnv (vmCurThread vm)
      sz      <- SV.size stack
      results <- for [ sz - n .. sz - 1 ] $ \i ->
                   readIORef =<< SV.get stack i
-     running c vm (FunReturn results)
+     return (vm, FunReturn results)
 
-errorReturnFromC :: Cont r -> VM -> IO r
-errorReturnFromC c vm =
+errorReturnFromC :: VM -> IO (VM,NextStep)
+errorReturnFromC vm =
   do let ref = execApiCall (vmCurExecEnv vm)
      st <- readIORef ref
      case st of
        ApiCallErrorReturn api e ->
          do writeIORef ref (ApiCallAborted api)
-            doUnwind c vm e
-       _ -> fail "PANIC: abortedReturnFromC expected API call state to be aborting"
+            doUnwind vm e
+       _ -> fail ("PANIC: errorReturnFromC expected API call state to be aborting, "
+                      ++ showApiCallStatus st)
 
-yieldReturnFromC :: Cont r -> VM -> IO r
-yieldReturnFromC c vm =
-  do let ref = execApiCall (vmCurExecEnv vm)
-     st <- readIORef ref
-     case st of
-       ApiCallYielding api vs ->
-         do writeIORef ref (ApiCallAborted api)
-            finishYield c vm vs
-       _ -> fail "PANIC: abortedReturnFromC expected API call state to be aborting"
+yieldReturnFromC :: VM -> IO (VM,NextStep)
+yieldReturnFromC vm = do next <- vmSwitchToNormal' vm ThreadYield
+                         return (vm,next)

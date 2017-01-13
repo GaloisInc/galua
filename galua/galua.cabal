@@ -59,6 +59,7 @@ library
   other-modules:       CMath
                        Process
                        Galua.CApi
+                       Galua.CApi.Types
                        Galua.Util.IOVector
 
   other-extensions:    RecordWildCards

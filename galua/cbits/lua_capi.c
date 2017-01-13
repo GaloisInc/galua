@@ -498,7 +498,7 @@ void lua_callk (lua_State *L, int nargs, int nresults, lua_KContext ctx, lua_KFu
 LUA_API
 int lua_pcallk (lua_State *L, int nargs, int nresults, int msgh, lua_KContext ctx, lua_KFunction k) {
         int out;
-        API_ENTRY(lua_pcallk, L, nargs, nresults, msgh, &out);
+        API_ENTRY(lua_pcallk, L, nargs, nresults, msgh, ctx, k, &out);
         return out;
 }
 
@@ -795,30 +795,22 @@ int galua_call_c(int (*cfun)(void *), lua_State *L) {
 }
 
 extern
-int galua_capi_entryk(lua_KFunction k, lua_KContext ctx, int status, lua_State *L) {
-        lua_State old_state;
-        memcpy(&old_state, L, sizeof(lua_State));
+int galua_call_c_k(
+    lua_KFunction cfun, int status, lua_KContext ctx,
+    lua_State *L
+   ) {
+    lua_State old_state;
+    memcpy(&old_state, L, sizeof(lua_State));
 
         sigjmp_buf new_buf;
         L->onerror = &new_buf;
 
-        int jumpresult = sigsetjmp(new_buf,0/* ignore signals */);
-        int result;
+        int result = sigsetjmp(new_buf,0/* ignore signals */);
 
-        if (jumpresult == 0) {
+        if (result == 0) {
                 /* normal control flow */
-                result = k(L, status, ctx);
-
-                /* Lua C functions return value is number of returned
-                 * values on the Lua stack. Negative numbers are invalid
-                 * and reserved for Galua error signaling.
-                 */
-                if (result < 0) {
-                        result = -2;
-                }
-        } else {
-                /* exceptional control flow */
-                result = -1;
+                result = cfun(L,status,ctx);
+                if (result < 0) { result = -3; }
         }
 
         memcpy(L, &old_state, sizeof(lua_State));

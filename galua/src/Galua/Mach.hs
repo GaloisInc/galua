@@ -36,6 +36,7 @@ import           System.IO.Error (isDoesNotExistError)
 import           System.Environment (lookupEnv)
 
 import           Galua.Code
+import           Galua.CApi.Types
 import           Galua.Reference
 import           Galua.Value
 import           Galua.FunValue(cFunction,luaFunction)
@@ -80,12 +81,6 @@ emptyVM menv =
                , vmBlocked    = Stack.empty
                , ..
                }
-
-
-
-data CCallState
-  = CReturned Int
-  | CReEntry ApiCall (VM -> IO NextStep)
 
 data CNextStep = CError | CYield | CReturn
   deriving Show
@@ -135,10 +130,10 @@ dumpNextStep next =
     ThreadFail _    -> "thread fail"
     ErrorReturn _   -> "error return"
     FunTailcall r _ -> "tailcall " ++ show (prettyRef r)
-    ThrowError _    -> "throw"
+    ThrowError e    -> "throw " ++ prettyValue e
     Resume r _      -> "resume " ++ show (prettyRef r)
     Yield vs        -> "yield [" ++ intercalate ", " (map prettyValue vs) ++ "]"
-    ApiStart api _  -> "apistart " ++ apiCallMethod api
+    ApiStart api xs -> "apistart " ++ apiCallMethod api
     ApiEnd _        -> "apiend"
     Interrupt {}    -> "interrupt"
 
@@ -186,7 +181,7 @@ instance MakeWeak Thread where
 
 data ThreadStatus
 
-  = ThreadSuspended (IO NextStep)
+  = ThreadSuspended (VM -> IO (VM, NextStep))
     -- ^ A thread that yielded. Call continuation with result to resume with.
 
   | ThreadNew
@@ -209,7 +204,7 @@ isThreadRunning _             = False
 
 data ThreadResult
   = ThreadYield                 -- ^ The resumed thread yielded back to us.
-  | ThreadReturn [Value]        -- ^ The resuemd thread completed normally.
+  | ThreadReturn [Value]        -- ^ The resumed thread completed normally.
   | ThreadError Value           -- ^ The resumed thread crashed.
 
 
@@ -325,6 +320,7 @@ data ApiCall = ApiCall
   { apiCallMethod :: !String
   , apiCallReturn :: CObjInfo -- ^ lazily generated location information
   , apiCallArgs   :: ![PrimArgument]
+  , apiContinuation :: Maybe (Lua_KFunction, Lua_KContext)
   }
 
 -- | Make a blank exec env to be used when creating threads.
@@ -551,7 +547,7 @@ chunkToClosure vm name bytes env =
 activateThread :: Reference Closure -> [Value] -> Reference Thread -> IO ()
 activateThread cRef vs tRef =
   setThreadField threadStatus tRef
-      (ThreadSuspended (return (FunCall cRef vs Nothing (return . FunReturn))))
+      (ThreadSuspended (\vm -> return (vm, FunCall cRef vs Nothing (return . FunReturn))))
 
 parseLua :: Maybe String -> L.ByteString -> IO (Either String Chunk)
 parseLua mbName src =
