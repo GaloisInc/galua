@@ -498,7 +498,7 @@ void lua_callk (lua_State *L, int nargs, int nresults, lua_KContext ctx, lua_KFu
 LUA_API
 int lua_pcallk (lua_State *L, int nargs, int nresults, int msgh, lua_KContext ctx, lua_KFunction k) {
         int out;
-        API_ENTRY(lua_pcallk, L, nargs, nresults, msgh, ctx, k, &out);
+        API_ENTRY(lua_pcallk, L, nargs, nresults, msgh, ctx, (HsFunPtr)k, &out);
         return out;
 }
 
