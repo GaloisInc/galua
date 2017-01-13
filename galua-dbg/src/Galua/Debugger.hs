@@ -2,6 +2,7 @@
 {-# LANGUAGE NamedFieldPuns, RecordWildCards, BangPatterns, OverloadedStrings #-}
 module Galua.Debugger
   ( Debugger(..)
+  , VMState(..)
   , IdleReason(..)
   , Chunks(..)
   , ChunkInfo(..)
@@ -48,7 +49,6 @@ module Galua.Debugger
   ) where
 
 import           Galua(setupLuaState)
-import           Galua.CallIntoC (handleCCallState)
 import           Galua.Debugger.PrettySource
                   (lexChunk,Line,NameId,LocatedExprName)
 import           Galua.Debugger.Options
@@ -99,9 +99,7 @@ import           Data.IORef(IORef,readIORef,writeIORef,
 
 import            Control.Concurrent
                     ( MVar, newEmptyMVar, putMVar, takeMVar, forkIO )
-import           Control.Applicative ((<|>))
 import           Control.Concurrent (killThread, ThreadId)
-import           Control.Concurrent.STM (atomically, takeTMVar)
 import           Control.Monad(when,forever)
 import           Control.Exception
 import           MonadLib(ExceptionT,runExceptionT,raise,lift)
@@ -128,7 +126,14 @@ data Debugger = Debugger
   , dbgIdleReason :: !(IORef IdleReason)
     -- ^ Why are we not running
 
-  , dbgStateVM   :: !(IORef VMState)                -- ^ The interpreter state
+    -- Used 
+  , dbgStateVM   :: !(IORef VMState)
+
+  -- Execution state
+  , dbgPaused    :: !(MVar (VM,NextStep))  -- ^ Debugger uses this to pause
+  , dbgModeRef   :: !(IORef StepMode)      -- ^ Current execution mode
+
+
 
   , dbgBreaks    :: !(IORef (Map (Int,FunId) (Maybe BreakCondition)))
     -- ^ Static break points.  The key of the map is the break point,
@@ -501,7 +506,7 @@ resolveName :: Debugger -> ExecEnvId -> Maybe Int -> NameId ->
                 IO (Either NotFound (String,Value,Maybe GlobalTypeEntry))
 resolveName dbg eid pc nid =
   whenStable dbg False $
-  whenNotFinishied dbg (Left $ NotFound "Not executing") $ \vm _ ->
+  whenNotFinishied dbg $ \vm ->
   try $
   do (fid, resEnv) <- findNameResolveEnv dbg vm eid
      chunks        <- readIORef (dbgSources dbg)
@@ -728,6 +733,7 @@ newEmptyDebugger threadVar opts =
      dbgBrkAddOnLoad <- newIORef (optBreakPoints opts)
      dbgBreaks       <- newIORef Map.empty
 
+
      let query "port" = return (Number 8000)
          query _      = return Nil
 
@@ -739,12 +745,15 @@ newEmptyDebugger threadVar opts =
                      do a <- takeMVar threadVar
                         killThread a
                  , machOnQuery    = query
+                 , machRunner     = handleAPICall (undefined "XXX: self")
                  }
 
-     (cptr, vm) <- setupLuaState cfg
+     cptr <- setupLuaState cfg
 
      dbgIdleReason   <- newIORef Ready
-     dbgStateVM      <- newIORef (Running vm WaitForC)
+     dbgStateVM      <- newIORef RunningInC
+     dbgModeRef      <- newIORef Run
+     dbgPaused       <- newEmptyMVar
 
      dbgExportable   <- newIORef newExportableState
      dbgBreakOnError <- newIOURef (optBreakOnError opts)
@@ -759,6 +768,9 @@ newEmptyDebugger threadVar opts =
                         , dbgBreaks, dbgWatches
                         , dbgCommand, dbgClients
                         , dbgExportable, dbgStateVM
+ 
+                        , dbgPaused, dbgModeRef
+
                         , dbgBreakOnError, dbgBrkAddOnLoad
                         , dbgDeclaredTypes
                         }
@@ -766,6 +778,9 @@ newEmptyDebugger threadVar opts =
      _ <- forkIO (runDebugger dbg)
 
      return (cptr, dbg)
+
+data VMState  = Running !VM !NextStep
+              | RunningInC
 
 
 
@@ -785,7 +800,7 @@ setPathValue dbg vid newVal =
   -- open tabs, etc.
   -- XXX: One day we should probalby do something smarter, where we
   -- can compute exactly what changed, and only redraw those things...
-  whenStable dbg False $ whenNotFinishied dbg Nothing $ \_ _ ->
+  whenStable dbg False $ whenNotFinishied dbg $ \_ ->
     do ExportableState { expClosed } <- readIORef dbgExportable
        case Map.lookup vid expClosed of
          Just (ExportableValue path _) ->
@@ -932,7 +947,7 @@ data StepMode
     -- returns, or something else causes us to stop.
 
   | StepOutOp
-    -- ^ Finish evaluating the current code, step over function calls
+    -- ^ Finish evaluating the current function, step over function calls
 
   | Stop
     -- ^ Evaluate until the closest safe place to stop.
@@ -960,7 +975,7 @@ data StepMode
   deriving (Eq, Show)
 
 runDebugger :: Debugger -> IO ()
-runDebugger dbg =
+runDebugger dbg = undefined {-
   forever $
     do cmd    <- waitForCommand (dbgCommand dbg)
        mbMode <- handleCommand dbg True cmd
@@ -978,7 +993,7 @@ runDebugger dbg =
                 _ -> return ()
               clients  <- readIORef (dbgClients dbg)
               writeIORef (dbgClients dbg) []
-              mapM_ (\client -> putMVar client ()) clients
+              mapM_ (\client -> putMVar client ()) clients -}
 
 
 handleCommand :: Debugger -> Bool -> DebuggerCommand -> IO (Maybe StepMode)
@@ -1000,34 +1015,34 @@ getLineNumberForCurFunPC vm pc =
 
 
 
-doStepMode :: Debugger -> VM -> NextStep -> StepMode -> IO VMState
-doStepMode dbg vm next mode = oneStep' Cont { .. } vm next
+handleAPICall :: Debugger -> VM -> NextStep -> IO CNextStep
+handleAPICall dbg vm next =
+  do mode <- readIORef (dbgModeRef dbg)
+     doStepMode dbg vm next (nextMode vm next mode)
+
+
+-- The `mode` is computed from `vm`, `next`, and the previous mode
+-- (i.e., it is based on the `next` that we are about to do)
+doStepMode :: Debugger -> VM -> NextStep -> StepMode -> IO CNextStep
+doStepMode dbg vm next !mode =
+  do when (nextCallsC next) (writeIORef (dbgModeRef dbg) mode)
+     oneStep' Cont { .. } vm next
+
   where
-  runningInC !vm' =
-    do let luaTMVar = machLuaServer (vmMachineEnv vm')
-       res <- atomically $ Left  <$> waitForCommandSTM (dbgCommand dbg)
-                       <|> Right <$> takeTMVar luaTMVar
-       case res of
-         Left m ->
-           do command <- m
-              mbNewMode <- handleCommand dbg False command
-              doStepMode dbg vm' WaitForC (fromMaybe mode mbNewMode)
+  leavingRTS vm' = writeIORef (machVMRef (vmMachineEnv vm)) vm'
 
-         Right cResult ->
-           do next' <- handleCCallState vm' cResult
-              let mode' = nextMode vm' next' mode
-              checkStop dbg mode' (Running vm' next') $
-                doStepMode dbg vm' next' mode'
-
-
+  returnToC st =
+    do writeIORef (dbgStateVM dbg) RunningInC
+       writeIORef (dbgModeRef dbg) mode
+       return st
 
   running !vm' !next' =
     do mode' <- return $! nextMode vm' next' mode
-       checkStopError dbg vm' next' $
+       checkStopError dbg vm' next' mode' $
          if not (mayPauseBefore next')
            then doStepMode dbg vm' next' mode'
-           else checkStop dbg mode' (Running vm' next') $
-                checkBreakPoint dbg mode' vm' next' $
+           else checkStop dbg vm' next' mode' $
+                checkBreakPoint dbg vm' next' mode' $
                 do mb <- peekCmd (dbgCommand dbg)
                    case mb of
                      Nothing      -> doStepMode dbg vm' next' mode'
@@ -1036,36 +1051,42 @@ doStepMode dbg vm next mode = oneStep' Cont { .. } vm next
                           let mode'' = fromMaybe mode' mbNewMode
                           -- external stop directive and we're already
                           -- at a safe point
-                          checkStop dbg mode'' (Running vm' next') $
+                          checkStop dbg vm' next' mode'' $
                             doStepMode dbg vm' next' mode''
 
-  finishedOk vs = return $! FinishedOk vs
-  finishedWithError v = return $! FinishedWithError v
 
+doPause :: Debugger -> VM -> NextStep -> StepMode -> IdleReason -> IO CNextStep
+doPause dbg vm next mode reason =
+  do setIdleReason dbg reason
+     writeIORef (dbgModeRef dbg) mode
+     writeIORef (dbgStateVM dbg) (Running vm next) -- actually, we are paused
+     (vm,next) <- takeMVar (dbgPaused dbg)
+     mode      <- readIORef (dbgModeRef dbg)
+     doStepMode dbg vm next mode
 
-checkStop :: Debugger -> StepMode -> VMState -> IO VMState -> IO VMState
-checkStop dbg mode vms k =
+checkStop :: Debugger -> VM -> NextStep -> StepMode ->
+                                                IO CNextStep -> IO CNextStep
+checkStop dbg vm next mode k =
   case mode of
-    Stop -> do setIdleReason dbg Ready
-               return vms
+    Stop -> doPause dbg vm next mode Ready
     _    -> k
 
-checkStopError :: Debugger -> VM -> NextStep -> IO VMState -> IO VMState
-checkStopError dbg vm next k =
+checkStopError :: Debugger -> VM -> NextStep -> StepMode ->
+                                                  IO CNextStep -> IO CNextStep
+checkStopError dbg vm next mode k =
   case next of
     ThrowError e ->
       do stopOnErr <- readIOURef (dbgBreakOnError dbg)
          if stopOnErr
-            then do setIdleReason dbg (ThrowingError e)
-                    return (Running vm next)
+            then doPause dbg vm next mode (ThrowingError e)
             else k
     _ -> k
 
 
 
-checkBreakPoint :: Debugger -> StepMode -> VM -> NextStep ->
-                                                    IO VMState -> IO VMState
-checkBreakPoint dbg mode vm nextStep k =
+checkBreakPoint :: Debugger -> VM -> NextStep -> StepMode ->
+                                               IO CNextStep -> IO CNextStep
+checkBreakPoint dbg vm nextStep mode k =
   do let eenv = vmCurExecEnv vm
          curFun = funValueName (execFunction eenv)
      case (nextStep, curFun) of
@@ -1097,8 +1118,7 @@ checkBreakPoint dbg mode vm nextStep k =
        _ -> k
 
   where
-  atBreak = do setIdleReason dbg ReachedBreakPoint
-               return (Running vm nextStep)
+  atBreak = doPause dbg vm nextStep mode ReachedBreakPoint
 
 
 -- | Before executing this "step" we may pause execution.
@@ -1232,13 +1252,12 @@ startExec dbg blocking mode =
      when blocking (takeMVar mvar)
 
 -- | Execute the function, only if the debugger has not finished.
-whenNotFinishied :: Debugger -> a -> (VM -> NextStep -> IO a) -> IO a
-whenNotFinishied dbg a io =
+whenNotFinishied :: Debugger -> (VM -> IO a) -> IO a
+whenNotFinishied dbg io =
   do state <- readIORef (dbgStateVM dbg)
      case state of
-       Running vm next -> io vm next
-       RunningInC vm   -> io vm WaitForC
-       _               -> return a
+       Running vm _   -> io vm
+       RunningInC     -> io undefined
 
 -- | Execute the function, only if the debugger is running in Lua
 -- rather than waiting for C.

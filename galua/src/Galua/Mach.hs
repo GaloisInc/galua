@@ -120,6 +120,11 @@ data NextStep
 
   | Interrupt NextStep
 
+nextCallsC :: NextStep -> Bool
+nextCallsC (FunTailcall clo _) = isCClosure clo
+nextCallsC (FunCall clo _ _ _) = isCClosure clo
+nextCallsC _ = False
+
 dumpNextStep :: NextStep -> String
 dumpNextStep next =
   case next of
@@ -133,7 +138,7 @@ dumpNextStep next =
     ThrowError e    -> "throw " ++ prettyValue e
     Resume r _      -> "resume " ++ show (prettyRef r)
     Yield vs        -> "yield [" ++ intercalate ", " (map prettyValue vs) ++ "]"
-    ApiStart api xs -> "apistart " ++ apiCallMethod api
+    ApiStart api _  -> "apistart " ++ apiCallMethod api
     ApiEnd _        -> "apiend"
     Interrupt {}    -> "interrupt"
 

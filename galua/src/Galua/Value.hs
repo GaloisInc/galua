@@ -25,6 +25,7 @@ module Galua.Value
 
   -- * Closures
   , Closure(..)
+  , isCClosure
   , FunctionValue
   , PrimArgument(..)
   , newClosure
@@ -233,6 +234,9 @@ newClosure ::
   RefLoc -> FunctionValue -> IOVector (IORef Value) -> IO (Reference Closure)
 newClosure aref refLoc f us =
   newRef aref refLoc MkClosure { cloFun = f, cloUpvalues = us }
+
+isCClosure :: Reference Closure -> Bool
+isCClosure c = isCFunction (cloFun (closureReferenceVal c))
 
 
 ------------------------------------------------------------------------

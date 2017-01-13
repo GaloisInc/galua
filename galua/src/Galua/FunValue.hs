@@ -5,6 +5,7 @@ module Galua.FunValue
   , luaOpCodes
   , funValueCode
   , FunCode(..)
+  , isCFunction
 
   , funValueName
   , FunName(..)
@@ -27,6 +28,9 @@ data FunctionValue
   = CFunction CFunName
   | LuaFunction FunId Function
 
+isCFunction :: FunctionValue -> Bool
+isCFunction (CFunction _) = True
+isCFunction (LuaFunction {}) = False
 
 cFunction :: CFunName -> FunctionValue
 cFunction = CFunction

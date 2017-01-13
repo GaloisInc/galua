@@ -87,8 +87,7 @@ runExportM Debugger { dbgStateVM, dbgExportable } (ExportM m) =
      mms    <- readIORef dbgStateVM
      let vm = case mms of
                 Running vm' _  -> Just vm'
-                RunningInC vm' -> Just vm'
-                _              -> Nothing
+                RunningInC     -> undefined
 
      (a,s1) <- runStateT s $ runReaderT (vmAllocRef <$> vm) m
      writeIORef dbgExportable s1
@@ -390,21 +389,13 @@ exportVMState :: Chunks -> VMState -> ExportM JS.Value
 exportVMState funs vms =
   case vms of
 
-    FinishedOk vs       ->
-      do js <- mapM (exportValue funs VP_None) vs
-         return $ JS.object [ tag "finished", "result" .= js ]
-
-    FinishedWithError v ->
-      do js <- exportValue funs VP_None v
-         return $ JS.object [ tag "error", "error"  .= js ]
-
     Running vm next ->
       do jsVM <- exportVM funs vm next
          return $ JS.object [ tag "running", "vm" .= jsVM ]
 
-    RunningInC vm ->
+    RunningInC -> undefined {-
       do jsVM <- exportVM funs vm WaitForC
-         return $ JS.object [ tag "running", "vm" .= jsVM ]
+         return $ JS.object [ tag "running", "vm" .= jsVM ] -}
 
 
 
@@ -602,7 +593,6 @@ exportHandler funs h =
 exportStackFrameShort :: Chunks -> StackFrame -> ExportM JS.Value
 exportStackFrameShort funs sf =
   case sf of
-    ErrorFrame -> return (JS.object [ tag "throw_error" ])
     CallFrame pc env _ _ -> exportCallStackFrameShort funs pc env Nothing
 
 exportCallStackFrameShort :: Chunks -> Int -> ExecEnv -> Maybe NextStep -> ExportM JS.Value
@@ -621,6 +611,7 @@ exportCallStackFrameShort funs pc env mbnext =
                          NoApiCall -> pure []
                          ApiCallAborted api  -> exportApiCall api phase
                          ApiCallActive api   -> exportApiCall api phase
+                         ApiCallErrorReturn api _ -> exportApiCall api phase
      return (JS.object ( apiInfo ++
                          tag "call"
                        : "ref"    .= ref

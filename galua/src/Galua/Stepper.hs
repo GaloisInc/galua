@@ -31,12 +31,11 @@ import           Foreign.C.Types
 data Cont r = Cont
   { running           :: VM -> NextStep -> IO r
   , returnToC         :: CNextStep -> IO r
-  , leavingRTS        :: VM -> IO ()  -- Used to save state
   }
 
 {-# INLINE oneStep' #-}
 oneStep' :: Cont r -> VM -> NextStep -> IO r
-oneStep' c !vm instr =
+oneStep' !c = \ (!vm) instr ->
   case instr of
     Goto pc             -> performGoto          c vm pc
     FunCall f vs mb k   -> performFunCall       c vm f vs mb k
@@ -61,7 +60,7 @@ performApiEnd ::
 performApiEnd c vm =
   do let ref = execApiCall (vmCurExecEnv vm)
      writeIORef ref NoApiCall
-     leavingRTS c vm
+     leavingRTS vm
      returnToC c CReturn
 
 
@@ -85,7 +84,7 @@ performTailCall ::
   Reference Closure {- ^ closure to enter -} ->
   [Value]           {- ^ arguments        -} ->
   IO r
-performTailCall = enterClosure
+performTailCall a b c d = enterClosure a b c d
 
 
 {-# INLINE performFunCall #-}
@@ -172,6 +171,7 @@ performThreadFail c vm e =
                                  , vmCurExecEnv = newEnv }
                                (ThreadError e)
 
+{-# INLINE performThrowError #-}
 performThrowError :: Cont r -> VM -> Value -> IO r
 performThrowError c vm e =
   do let th = vmCurThread vm
@@ -195,6 +195,7 @@ performThrowError c vm e =
 
 
 
+{-# INLINE performResume #-}
 performResume ::
   Cont r ->
   VM ->
@@ -219,6 +220,7 @@ performResume c vm tRef finishK =
        _ -> error "performResume: Thread not suspended"
 
 
+{-# INLINE performYield #-}
 performYield :: Cont r -> VM -> [Value] -> IO r
 performYield c vm vs =
   do let eenv   = vmCurExecEnv vm
@@ -233,23 +235,23 @@ performYield c vm vs =
                             running c vm (ThrowError (String str))
               Just (t, ts) ->
                 do setThreadField threadStatus (vmCurThread vm)
-                     (ThreadSuspended (restartFromYield c (apiContinuation api)))
+                     (ThreadSuspended (restartFromYield (apiContinuation api)))
                    newEnv <- getThreadField stExecEnv t
                    traverse_ (SV.push (execStack newEnv) <=< newIORef) vs
                    let vm' = vm { vmCurThread = t
                                 , vmBlocked = ts
                                 , vmCurExecEnv = newEnv
                                 }
-                   leavingRTS c vm'
+                   leavingRTS vm'
                    returnToC c CYield
        _ -> fail "performYield: Not in API call?"
 
 
-restartFromYield :: Cont r -> Maybe (Lua_KFunction, Lua_KContext) -> VM -> IO (VM,NextStep)
-restartFromYield c mbK vm =
+restartFromYield :: Maybe (Lua_KFunction, Lua_KContext) -> VM -> IO (VM,NextStep)
+restartFromYield mbK vm =
   case mbK of
     Just (k,ctx) ->
-      do leavingRTS c vm
+      do leavingRTS vm
          callCK k luaYIELD ctx vm
     Nothing ->
       do let th = vmCurThread vm
@@ -283,7 +285,7 @@ performErrorReturn c vm e =
           fail "PANIC: performErrorReturn, yield while aborting API call"
        ApiCallActive api ->
          do writeIORef apiRef (ApiCallErrorReturn api e)
-            leavingRTS c vm
+            leavingRTS vm
             returnToC c CError
 
 doUnwind :: VM -> Value -> IO (VM, NextStep)
@@ -316,14 +318,16 @@ doUnwind vm e =
 
 
 runAllSteps :: VM -> NextStep -> IO CNextStep
-runAllSteps = oneStep' cont
+runAllSteps = go
   where
+  go = oneStep' cont
   cont = Cont
-    { running           = oneStep' cont
+    { running           = go
     , returnToC         = return
-    , leavingRTS        = \vm -> writeIORef (machVMRef (vmMachineEnv vm)) vm
     }
 
+leavingRTS :: VM -> IO ()
+leavingRTS vm = writeIORef (machVMRef (vmMachineEnv vm)) vm
 
 vmSwitchToNormal :: Cont r -> VM -> ThreadResult -> IO r
 vmSwitchToNormal c vm res = running c vm =<< vmSwitchToNormal' vm res
@@ -349,6 +353,7 @@ consMb Nothing xs = xs
 consMb (Just x) xs = x : xs
 
 
+{-# INLINE enterClosure #-}
 enterClosure ::
   Cont r ->
   VM ->
@@ -405,7 +410,7 @@ enterClosure c vm clos vs =
 
             setThreadField stExecEnv th newEnv
 
-            leavingRTS c newVM
+            leavingRTS newVM
             (vm', next) <- callC (cfunAddr cfun) newVM
             running c vm' next
 

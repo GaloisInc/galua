@@ -16,9 +16,10 @@ extra-deps:
 - elf-0.27
 - alex-tools-0.1.1.0
 - lua-bc-0.1.1
+- dump-core-0.1.3
 
 flags:
   galua:
-    dump-core: false
+    dump-core: true
   galua-dbg:
     dump-core: false
