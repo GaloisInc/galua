@@ -35,7 +35,7 @@ data Cont r = Cont
 
 {-# INLINE oneStep' #-}
 oneStep' :: Cont r -> VM -> NextStep -> IO r
-oneStep' !c = \ (!vm) instr ->
+oneStep' c = \ (!vm) instr ->
   case instr of
     Goto pc             -> performGoto          c vm pc
     FunCall f vs mb k   -> performFunCall       c vm f vs mb k
@@ -114,7 +114,7 @@ performFunCall c vm f vs mb k =
 
 
 performThreadExit :: Cont r -> VM -> [Value] -> IO r
-performThreadExit c vm vs =
+performThreadExit !c vm vs =
   case Stack.pop (vmBlocked vm) of
     Nothing      -> fail "PANIC: Last stack frame disappeared."
     Just (t, ts) ->
