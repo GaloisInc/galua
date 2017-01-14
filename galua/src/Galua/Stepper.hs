@@ -353,66 +353,55 @@ consMb Nothing xs = xs
 consMb (Just x) xs = x : xs
 
 
-{-# INLINE enterClosure #-}
 enterClosure ::
   Cont r ->
   VM ->
   Reference Closure ->
   [Value] ->
   IO r
-enterClosure c vm clos vs =
+enterClosure !c vm clos vs =
   do let MkClosure { cloFun, cloUpvalues } = referenceVal clos
-         th = vmCurThread vm
 
-     case funValueCode cloFun of
-       LuaOpCodes f ->
-         do let n = funcMaxStackSize f
-                (normalArgs,extraArgs) = splitAt (funcNumParams f) vs
+     let (args,vargs,opcodes,k) =
+            case funValueCode cloFun of
+              LuaOpCodes lfun ->
+                ( take (funcMaxStackSize lfun) (normalArgs ++ repeat Nil)
+                , if funcIsVararg lfun then extraArgs  else []
+                , funcCode lfun
+                , \newVM -> running c newVM (Goto 0)
+                )
+                where
+                (normalArgs,extraArgs) = splitAt (funcNumParams lfun) vs
 
-                varargs
-                  | funcIsVararg f = extraArgs
-                  | otherwise      = []
+              CCode cfun  ->
+                ( vs
+                , []
+                , mempty
+                , \newVM -> do leavingRTS newVM
+                               (vm', next) <- callC (cfunAddr cfun) newVM
+                               running c vm' next
+                )
 
-            stack    <- SV.new
-            traverse_ (SV.push stack <=< newIORef) (take n (normalArgs ++ repeat Nil))
-            vasRef   <- newIORef varargs
-            apiRef   <- newIORef NoApiCall
+     stack    <- SV.new
+     traverse_ (SV.push stack <=< newIORef) args
+     vasRef   <- newIORef vargs
+     apiRef   <- newIORef NoApiCall
 
-            let newVM  = vm { vmCurExecEnv = newEnv }
-                newEnv = ExecEnv { execStack    = stack
-                                 , execUpvals   = cloUpvalues
-                                 , execFunction = cloFun
-                                 , execVarargs  = vasRef
-                                 , execApiCall  = apiRef
-                                 , execClosure  = Closure clos
-                                 , execInstructions  = funcCode f
-                                 }
+     let newVM  = vm { vmCurExecEnv = newEnv }
+         newEnv = ExecEnv { execStack         = stack
+                          , execUpvals        = cloUpvalues
+                          , execFunction      = cloFun
+                          , execVarargs       = vasRef
+                          , execApiCall       = apiRef
+                          , execClosure       = Closure clos
+                          , execInstructions  = opcodes
+                          }
 
-            setThreadField stExecEnv th newEnv
+     setThreadField stExecEnv (vmCurThread vm) newEnv
+     k newVM
 
-            running c newVM (Goto 0)
 
-       CCode cfun ->
-         do stack    <- SV.new
-            traverse_ (SV.push stack <=< newIORef) vs
-            vasRef   <- newIORef []
-            apiRef   <- newIORef NoApiCall
 
-            let newVM  = vm { vmCurExecEnv = newEnv }
-                newEnv = ExecEnv { execStack    = stack
-                                 , execUpvals   = cloUpvalues
-                                 , execFunction = cloFun
-                                 , execVarargs  = vasRef
-                                 , execApiCall  = apiRef
-                                 , execClosure  = Closure clos
-                                 , execInstructions  = mempty
-                                 }
-
-            setThreadField stExecEnv th newEnv
-
-            leavingRTS newVM
-            (vm', next) <- callC (cfunAddr cfun) newVM
-            running c vm' next
 
 
 foreign import ccall "galua_call_c" call_c :: CFun -> Ptr () -> IO CInt
