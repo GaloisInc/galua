@@ -13,7 +13,6 @@ module Galua.Debugger
   , stepIntoLine
   , stepOverLine
   , stepOutOf
-  , whenStable
   , run
   , runNonBlock
   , pause
@@ -49,48 +48,39 @@ module Galua.Debugger
   ) where
 
 import           Galua(setupLuaState)
-import           Galua.Debugger.PrettySource
-                  (lexChunk,Line,NameId,LocatedExprName)
+import           Galua.Debugger.PrettySource (NameId)
 import           Galua.Debugger.Options
 import           Galua.Debugger.NameHarness
 import           Galua.Debugger.Console(recordConsoleInput,recordConsoleValues)
 import           Galua.Debugger.CommandQueue
+import           Galua.Debugger.Types
+import           Galua.Debugger.Execute
 
 import           Galua.Code
 import           Galua.Mach
-import           Galua.Stepper
 import           Galua.Reference
 import           Galua.Value
 import           Galua.FunValue
 import           Galua.Names.Eval
 import           Galua.Names.Find(LocatedExprName(..),ppExprName)
 import qualified Galua.Util.SizedVector as SV
-import           Galua.Util.IOURef
 
 import qualified Galua.Spec.AST as Spec
 import qualified Galua.Spec.Parser as Spec
 
-import           Data.Maybe (catMaybes,mapMaybe,fromMaybe,maybeToList)
+import           Data.Maybe (catMaybes,mapMaybe,maybeToList)
 import           Data.Map (Map)
 import qualified Data.Map as Map
-import           Data.IntMap (IntMap)
-import qualified Data.IntMap as IntMap
-import           Data.Set ( Set )
-import qualified Data.Set as Set
 import           Data.Word(Word64)
 import           Data.Text(Text)
 import qualified Data.Text as Text
-import           Data.Text.Read(decimal)
-import           Data.Text.Encoding(decodeUtf8,encodeUtf8)
+import           Data.Text.Encoding(encodeUtf8)
 
 import           Data.ByteString (ByteString)
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Char8 as B
 
 import           Foreign (Ptr)
 import           Data.Ord(comparing)
-import           Data.List(unfoldr,minimumBy)
-import           Data.Vector (Vector)
+import           Data.List(minimumBy)
 import qualified Data.Vector as Vector
 import qualified Data.Vector.Mutable as IOVector
 import           Data.IORef(IORef,readIORef,writeIORef,
@@ -100,161 +90,12 @@ import           Data.IORef(IORef,readIORef,writeIORef,
 import            Control.Concurrent
                     ( MVar, newEmptyMVar, putMVar, takeMVar, forkIO )
 import           Control.Concurrent (killThread, ThreadId)
-import           Control.Monad(when,forever)
+import           Control.Monad(when)
 import           Control.Exception
 import           MonadLib(ExceptionT,runExceptionT,raise,lift)
 import           System.Timeout(timeout)
 
 
-{- The fields in this are mutable, so that the interpreter can modify them
-easily, without having to pass the state aroud.  For example, when we
-load a new module, the interpreter uses an IO action, which modifies 
-dbgSource. -}
-data Debugger = Debugger
-  { dbgSources   :: !(IORef Chunks)
-    {- ^ Source code for chunks and corresponding parsed functions.
-          The functions are also in the VM state, but that's only available
-          while the machine is running. -}
-
-  , dbgCommand   :: {-# UNPACK #-} !(CommandQueue DebuggerCommand)
-
-
-  , dbgClients   :: !(IORef [MVar ()]) --
-    -- ^ Notify these when we stop
-
-
-  , dbgIdleReason :: !(IORef IdleReason)
-    -- ^ Why are we not running
-
-    -- Used 
-  , dbgStateVM   :: !(IORef VMState)
-
-  -- Execution state
-  , dbgPaused    :: !(MVar (VM,NextStep))  -- ^ Debugger uses this to pause
-  , dbgModeRef   :: !(IORef StepMode)      -- ^ Current execution mode
-
-
-
-  , dbgBreaks    :: !(IORef (Map (Int,FunId) (Maybe BreakCondition)))
-    -- ^ Static break points.  The key of the map is the break point,
-    -- the value is an optional condition.  The breakpoint will only
-    -- be active if the condition is true.
-
-  , dbgBreakOnError :: !(IOURef Bool)
-    -- ^ Should we stop automatically, when we encounter an error.
-
-  , dbgBrkAddOnLoad :: !(IORef CommandLineBreakPoints)
-    {- ^ When a chunk is loaded, we added a break point at the beginning
-         of each of the functions in the corresponding entry in the map.
-         The break points at key 'Nothing' are added to the first chunk
-         tath is loaded. -}
-
-  , dbgWatches   :: !(IORef WatchList)
-
-  , dbgExportable :: !(IORef ExportableState)
-    -- ^ Things that may be expanded further.
-
-    -- ^ Types
-  , dbgDeclaredTypes :: !(IORef GlobalTypeMap)
-  }
-
-
-type SpecType = Spec.ValDecl Spec.Parsed
-type SpecDecl = Spec.Decl Spec.Parsed
-
-
-data IdleReason = Ready
-                | ReachedBreakPoint
-                | ThrowingError Value
-                | Executing
-
-data BreakCondition = BreakCondition
-  { brkCond :: CompiledStatment
-    -- ^ Use this to evaluate the condition
-  , brkText :: Text
-    -- ^ Use this to display the condition
-  , brkActive :: IORef (Maybe Bool)
-    -- ^ Did we alerady check this condition.
-  }
-
-
---------------------------------------------------------------------------------
--- The watch list
-
-data WatchList = WatchList
-  { wlNextId :: !Int
-  , wlItems  :: !(IntMap ValuePath)
-  }
-
-watchListEmpty :: WatchList
-watchListEmpty = WatchList { wlNextId = 0, wlItems = IntMap.empty }
-
-watchListToList :: WatchList -> [(Int,ValuePath)]
-watchListToList WatchList { .. } = IntMap.toList wlItems
-
-watchListExtend :: ValuePath -> WatchList -> (Int,WatchList)
-watchListExtend vp WatchList { .. } =
-  (wlNextId, WatchList { wlNextId = 1 + wlNextId
-                       , wlItems  = IntMap.insert wlNextId vp wlItems
-                       })
-
-watchListRemove :: Int -> WatchList -> WatchList
-watchListRemove n WatchList { .. } =
-  WatchList { wlItems = IntMap.delete n wlItems, .. }
-
-
-
---------------------------------------------------------------------------------
-
---------------------------------------------------------------------------------
--- Keeping track of expand/collapsed state of references
-
-data ExportableState = ExportableState
-  { expNextThing    :: !Integer
-  , expClosed       :: Map Integer Exportable
-  , openThreads     :: !(Set Int)
-    -- ^ Reference ids of the threads that have been expended.
-    -- We keep an int instead of the actual reference, so that the reference
-    -- can be garbage collected if it finished.
-  }
-
-newExportableState :: ExportableState
-newExportableState = ExportableState { expNextThing = 0
-                                     , expClosed = Map.empty
-                                     , openThreads = Set.empty
-                                     }
-
-data Exportable = ExportableValue ValuePath Value
-                    -- ^ a collapsed value that may be
-
-                | ExportableStackFrame Int ExecEnv
-                  -- ^ A collapse stack frame for a function call
-
-data ValuePath
-  = VP_Field ValuePath Value -- ^ path to value indexed by given key
-  | VP_Key   ValuePath Value -- ^ path to actual key
-  | VP_CUpvalue ValuePath Int -- ^ path to upvalues of a closure
-  | VP_MetaTable ValuePath
-  | VP_Register ExecEnv Int
-  | VP_Upvalue ExecEnv Int
-  | VP_Varargs ExecEnv Int
-  | VP_Registry Value
-  | VP_None
-
-
-
-showValuePath :: ValuePath -> String
-showValuePath = flip go ""
-  where
-  go (VP_Key p v) = go p . showChar '{' . showString (prettyValue v) . showChar '}'
-  go (VP_Field p v) = go p . showChar '[' . showString (prettyValue v) . showChar ']'
-  go (VP_MetaTable p) = go p . showString ".MT"
-  go (VP_Register _env n)= showString ("R["++show (n+1)++"]")
-  go (VP_CUpvalue p n) = go p . showString (".U["++show (n+1)++"]")
-  go (VP_Upvalue _env n) = showString ("U["++show (n+1)++"]")
-  go (VP_Varargs _env n) = showString ("{...}["++show (n+1)++"]")
-  go VP_Registry{}       = showString "REGISTRY"
-  go VP_None    = showString "none"
 
 
 -- | Get the value referenced by the given path, if any.
@@ -407,40 +248,6 @@ setValue vp v =
 
 --------------------------------------------------------------------------------
 
--- | Identifies an execution environment>
--- This is used when we resolve name references.
-
-data ExecEnvId = StackFrameExecEnv !Integer
-                 -- ^ Exportable id of a stack frame
-
-               | ThreadExecEnv !Int
-                 -- ^ Reference id of a thread object
-
-               | ClosureEnvId !Int
-                 -- ^ Reference id of a closure object
-
-                 deriving Show
-
-exportExecEnvId :: ExecEnvId -> Text
-exportExecEnvId eid =
-  Text.pack $
-  case eid of
-    StackFrameExecEnv n -> "s_" ++ show n
-    ThreadExecEnv n     -> "t_" ++ show n
-    ClosureEnvId n      -> "c_" ++ show n
-
-importExecEnvId :: Text -> Maybe ExecEnvId
-importExecEnvId txt =
-  case Text.splitAt 2 txt of
-    ("s_", s) | Just n <- num s -> Just (StackFrameExecEnv n)
-    ("t_", s) | Just n <- num s -> Just (ThreadExecEnv n)
-    ("c_", s) | Just n <- num s -> Just (ClosureEnvId n)
-    _                           -> Nothing
-  where
-  num s = case decimal s of
-            Right (a,"") -> Just a
-            _            -> Nothing
-
 findNameResolveEnv :: Debugger -> VM -> ExecEnvId -> IO (FunId, NameResolveEnv)
 findNameResolveEnv dbg vm eid =
   do metaTabs <- readIORef $ machMetatablesRef $ vmMachineEnv vm
@@ -501,14 +308,13 @@ execEnvToNameResolveEnv metaTabs eenv =
 
      return (fid, nre)
 
-
 resolveName :: Debugger -> ExecEnvId -> Maybe Int -> NameId ->
                 IO (Either NotFound (String,Value,Maybe GlobalTypeEntry))
 resolveName dbg eid pc nid =
-  whenStable dbg False $
-  whenNotFinishied dbg $ \vm ->
+  whenIdle dbg False $
   try $
-  do (fid, resEnv) <- findNameResolveEnv dbg vm eid
+  do let vm = undefined
+     (fid, resEnv) <- findNameResolveEnv dbg vm eid
      chunks        <- readIORef (dbgSources dbg)
 
      chunk <- case getRoot fid of
@@ -532,11 +338,6 @@ resolveName dbg eid pc nid =
                 do ds <- readIORef (dbgDeclaredTypes dbg)
                    return (lookupGlobal ds g (reverse revSel))
      return (ppExprName en, v, mbT)
-
-
-
-newtype GlobalTypeMap = GTM (Map ByteString GlobalTypeEntry)
-data GlobalTypeEntry  = GlobalType [SpecType] | GlobalNamespace GlobalTypeMap
 
 
 makeGlobalTypeMap :: [SpecDecl] -> GlobalTypeMap
@@ -582,92 +383,6 @@ lookupGlobal (GTM mp) x ls =
 
 
 --------------------------------------------------------------------------------
-
--- | All loaded top-level functions.
-data Chunks = Chunks
-  { topLevelChunks :: Map Int ChunkInfo
-    -- ^ The key is the chunk id.  The top-level id for chunk @k@ is @[k]@.
-  , allFunNames    :: Map FunId FunVisName
-  }
-
-data FunVisName = FunVisName
-                    { funVisName        :: !(Maybe Text)
-                    , funVisLineStart   :: !Int
-                    , funVisLineEnd     :: !Int
-                    , funVisFile        :: !(Maybe Text)
-                    }
-
-
-data ChunkInfo = ChunkInfo
-  { chunkSource   :: Source
-  , chunkFunction :: Function
-  , chunkLineInfo :: Map Int [(FunId,[Int])]
-    -- ^ Map line numbers to the (function & pc) pair that occupies it.
-  }
-
-
-
-addTopLevel ::
-  Maybe String -> ByteString -> Int -> Function -> Chunks -> Chunks
-addTopLevel mbName bytes cid fun Chunks { .. } =
-  Chunks { topLevelChunks = Map.insert cid newChunk topLevelChunks
-         , allFunNames = foldr (uncurry Map.insert)
-                               (Map.insert (rootFun cid) chunkName allFunNames)
-                             $ concat
-                             $ unfoldr nextFun [(rootFun cid,fun)]
-         }
-  where
-  bytes'
-    | B.isPrefixOf "\ESCLua" bytes = B.empty
-    | otherwise                    = bytes
-
-  newChunk =
-    ChunkInfo { chunkSource   = lexSourceFile cid mbName bytes'
-              , chunkFunction = fun
-              , chunkLineInfo = fmap (\xs -> [ (subFun path cid,n) | (path,n) <- xs ])
-                                       $ deepLineNumberMap fun
-              }
-
-  chunkName = FunVisName { funVisName      = Just "(top level)"
-                         , funVisLineStart = 1
-                         , funVisLineEnd   = length (B.lines bytes)
-                         , funVisFile      = Text.pack <$> mbName
-                         }
-
-
-  nextFun todo =
-    case todo of
-      []             -> Nothing
-      ((fid,f) : fs) -> Just (out,new ++ fs)
-        where
-        protos    = zip [ 0 .. ] (Vector.toList (funcNested f))
-        subNames  = Map.fromList (inferSubFunctionNames f)
-        out       = [ (subFun fid i, funVisName (Map.lookup i subNames) sf)
-                                         | (i,sf) <- protos ]
-        new       = [ (subFun fid i, sf) | (i,sf) <- protos ]
-
-
-  funVisName mb f = FunVisName
-    { funVisName      = decodeUtf8 <$> mb
-    , funVisLineStart = funcLineDefined f
-    , funVisLineEnd   = funcLastLineDefined f
-    , funVisFile      = fmap Text.pack mbName
-    }
-
-
-
-
--- | Source code for a chunk.
-data Source = Source { srcName  :: Maybe String
-                     , srcLines :: Vector Line
-                     , srcNames :: Map NameId LocatedExprName
-                     }
-
-
--- | Syntax high-lighting for a source file.
-lexSourceFile :: Int -> Maybe String -> ByteString -> Source
-lexSourceFile chunkId srcName bytes = Source { srcName, srcLines, srcNames }
-  where (srcLines,srcNames) = lexChunk chunkId (fromMaybe "" srcName) bytes
 
 -- | Keep track of the source code for loaded modules.
 addSourceFile :: IORef CommandLineBreakPoints ->
@@ -725,38 +440,32 @@ newEmptyDebugger threadVar opts =
   do let chunks = Chunks { topLevelChunks = Map.empty
                          , allFunNames    = Map.empty
                          }
-     dbgCommand <- newCommandQueue
 
-     dbgClients <- newIORef []
      dbgSources <- newIORef chunks
      dbgWatches <- newIORef watchListEmpty
      dbgBrkAddOnLoad <- newIORef (optBreakPoints opts)
-     dbgBreaks       <- newIORef Map.empty
 
+     dbgExec         <- newExecState opts
 
      let query "port" = return (Number 8000)
          query _      = return Nil
 
          cfg = MachConfig
                  { machOnChunkLoad = addSourceFile dbgBrkAddOnLoad
-                                                   dbgBreaks
+                                                   (dbgBreaks dbgExec)
                                                    dbgSources
                  , machOnShutdown =
                      do a <- takeMVar threadVar
                         killThread a
                  , machOnQuery    = query
-                 , machRunner     = handleAPICall (undefined "XXX: self")
+                 , machRunner     = handleAPICall dbgExec
                  }
 
      cptr <- setupLuaState cfg
 
-     dbgIdleReason   <- newIORef Ready
-     dbgStateVM      <- newIORef RunningInC
-     dbgModeRef      <- newIORef Run
-     dbgPaused       <- newEmptyMVar
+     dbgStateVM <- newIORef undefined -- XXX
 
      dbgExportable   <- newIORef newExportableState
-     dbgBreakOnError <- newIOURef (optBreakOnError opts)
 
      dbgDeclaredTypes <-
         (newIORef . makeGlobalTypeMap) =<<
@@ -764,14 +473,12 @@ newEmptyDebugger threadVar opts =
               return (Spec.specDecls s)
             `catch` \SomeException {} -> return [])
 
-     let dbg = Debugger { dbgSources, dbgIdleReason
-                        , dbgBreaks, dbgWatches
-                        , dbgCommand, dbgClients
+     let dbg = Debugger { dbgSources, dbgWatches
                         , dbgExportable, dbgStateVM
- 
-                        , dbgPaused, dbgModeRef
 
-                        , dbgBreakOnError, dbgBrkAddOnLoad
+                        , dbgExec
+
+                        , dbgBrkAddOnLoad
                         , dbgDeclaredTypes
                         }
 
@@ -779,13 +486,6 @@ newEmptyDebugger threadVar opts =
 
      return (cptr, dbg)
 
-data VMState  = Running !VM !NextStep
-              | RunningInC
-
-
-
-setIdleReason :: Debugger -> IdleReason -> IO ()
-setIdleReason Debugger { .. } x = writeIORef dbgIdleReason x
 
 
 --------------------------------------------------------------------------------
@@ -800,7 +500,7 @@ setPathValue dbg vid newVal =
   -- open tabs, etc.
   -- XXX: One day we should probalby do something smarter, where we
   -- can compute exactly what changed, and only redraw those things...
-  whenStable dbg False $ whenNotFinishied dbg $ \_ ->
+  whenIdle dbg False $
     do ExportableState { expClosed } <- readIORef dbgExportable
        case Map.lookup vid expClosed of
          Just (ExportableValue path _) ->
@@ -850,14 +550,14 @@ stepOutOf dbg = startExec dbg True (StepOut Stop)
 
 goto :: Int -> Debugger -> IO ()
 goto pc dbg =
-  whenIdle dbg $
-  whenRunning dbg () $ \vm _ ->
-    writeIORef (dbgStateVM dbg) (Running vm (Goto pc))
+  whenIdle dbg True $
+    let vm = undefined
+    in writeIORef (dbgStateVM dbg) (Running vm (Goto pc))
 
 
 executeStatement :: Debugger -> Integer -> Text -> IO ()
 executeStatement dbg frame statement =
-  whenIdle dbg $
+  whenIdle dbg True $
     do things <- expClosed <$> readIORef (dbgExportable dbg)
        case Map.lookup frame things of
          Just (ExportableStackFrame pc env) ->
@@ -877,22 +577,21 @@ executeStatement dbg frame statement =
 poll :: Debugger -> Word64 -> Int {- ^ Timeout in seconds -} -> IO Word64
 poll dbg _ secs =
   do mvar <- newEmptyMVar
-     sendCommand (dbgCommand dbg) (AddClient mvar) False
+     sendDbgCommand dbg (AddClient mvar) False
      _ <- timeout (secs * 1000000) (takeMVar mvar)
-     getCommandCount (dbgCommand dbg)
-
+     getCommandCount (dbgCommand (dbgExec dbg))
 
 --------------------------------------------------------------------------------
 
 
 addBreakPoint ::
   Debugger -> (Int,FunId) -> Maybe Text -> IO (Maybe BreakCondition)
-addBreakPoint dbg@Debugger { dbgBreaks } loc txtCon =
-  whenStable dbg True $
+addBreakPoint dbg loc txtCon =
+  whenIdle dbg True $
     do mb <- case txtCon of
                Nothing  -> return Nothing
                Just txt -> prepareCondition dbg loc txt
-       modifyIORef dbgBreaks (Map.insert loc mb)
+       modifyIORef (dbgBreaks (dbgExec dbg)) (Map.insert loc mb)
        return mb
 
 prepareCondition :: Debugger -> (Int,FunId) -> Text -> IO (Maybe BreakCondition)
@@ -923,59 +622,18 @@ lookupFID dbg fid =
       x : xs -> go xs =<< (funcNested fun Vector.!? x)
 
 removeBreakPoint :: Debugger -> (Int,FunId) -> IO ()
-removeBreakPoint dbg@Debugger { dbgBreaks } loc =
-  whenStable dbg True $ modifyIORef' dbgBreaks (Map.delete loc)
+removeBreakPoint dbg loc =
+  whenIdle dbg True $ modifyIORef' (dbgBreaks (dbgExec dbg)) (Map.delete loc)
 
 clearBreakPoints :: Debugger -> IO ()
-clearBreakPoints dbg@Debugger { dbgBreaks } =
-  whenStable dbg True $ writeIORef dbgBreaks Map.empty
+clearBreakPoints dbg =
+  whenIdle dbg True $ writeIORef (dbgBreaks (dbgExec dbg)) Map.empty
 
 
 
-data StepMode
-  = Run
-    -- ^ Evaluate until something causes us to stop.
-
-  | StepIntoOp
-    -- ^ Evaluate one op-code.
-    -- If the op-code is a function call, stop at the beginning of the
-    -- function.
-
-  | StepOverOp
-    -- ^ Evaluate one op-code.
-    -- If the op-code is a function call, do not stop until the function
-    -- returns, or something else causes us to stop.
-
-  | StepOutOp
-    -- ^ Finish evaluating the current function, step over function calls
-
-  | Stop
-    -- ^ Evaluate until the closest safe place to stop.
-
-  | StepOut StepMode
-    -- ^ Evaluate until we return from the current function.
-    -- After that, procdeed with the given mode.
-
-
-  | StepOverLine {-# UNPACK #-} !Int
-    -- ^ Evaluate while we are on this line number.
-    -- If we encoutner functions, do not stop until they return
-    -- or some other condition caused us to stop.
-
-  | StepIntoLine {-# UNPACK #-} !Int
-    -- ^ Evaluate while we are on this line number.
-    -- ^ If we encoutner a function-call, then we stop at the beginning
-    -- of the called function.
-
-  | StepOutYield StepMode
-    -- ^ Evaluate until the current thread yeilds (or something else
-    -- causes us to stop).
-    -- After that, proceed with the given mode.
-
-  deriving (Eq, Show)
 
 runDebugger :: Debugger -> IO ()
-runDebugger dbg = undefined {-
+runDebugger = undefined {-
   forever $
     do cmd    <- waitForCommand (dbgCommand dbg)
        mbMode <- handleCommand dbg True cmd
@@ -996,247 +654,11 @@ runDebugger dbg = undefined {-
               mapM_ (\client -> putMVar client ()) clients -}
 
 
-handleCommand :: Debugger -> Bool -> DebuggerCommand -> IO (Maybe StepMode)
-handleCommand dbg isIdle cmd =
-  case cmd of
-    WhenIdle io        -> Nothing <$ when isIdle io
-    TemporaryStop m    -> Nothing <$ m
-    AddClient client   -> Nothing <$ modifyIORef (dbgClients dbg) (client :)
-    StartExec m client -> Just m  <$ modifyIORef (dbgClients dbg) (client :)
 
 
--- | Returns 0 if there was no line number associated with this PC getLineNumberForCurFunPC :: VM -> Int -> Int
-getLineNumberForCurFunPC :: VM -> Int -> Int
-getLineNumberForCurFunPC vm pc =
-  fromMaybe 0 $
-  do (_,func) <- luaOpCodes (execFunction (vmCurExecEnv vm))
-     lookupLineNumber func pc
+sendDbgCommand :: Debugger -> DebuggerCommand -> Bool -> IO ()
+sendDbgCommand dbg = sendCommand (dbgCommand (dbgExec dbg))
 
-
-
-
-handleAPICall :: Debugger -> VM -> NextStep -> IO CNextStep
-handleAPICall dbg vm next =
-  do mode <- readIORef (dbgModeRef dbg)
-     doStepMode dbg vm next (nextMode vm next mode)
-
-
--- The `mode` is computed from `vm`, `next`, and the previous mode
--- (i.e., it is based on the `next` that we are about to do)
-doStepMode :: Debugger -> VM -> NextStep -> StepMode -> IO CNextStep
-doStepMode dbg vm next !mode =
-  do when (nextCallsC next) (writeIORef (dbgModeRef dbg) mode)
-     oneStep' Cont { .. } vm next
-
-  where
-  leavingRTS vm' = writeIORef (machVMRef (vmMachineEnv vm)) vm'
-
-  returnToC st =
-    do writeIORef (dbgStateVM dbg) RunningInC
-       writeIORef (dbgModeRef dbg) mode
-       return st
-
-  running !vm' !next' =
-    do mode' <- return $! nextMode vm' next' mode
-       checkStopError dbg vm' next' mode' $
-         if not (mayPauseBefore next')
-           then doStepMode dbg vm' next' mode'
-           else checkStop dbg vm' next' mode' $
-                checkBreakPoint dbg vm' next' mode' $
-                do mb <- peekCmd (dbgCommand dbg)
-                   case mb of
-                     Nothing      -> doStepMode dbg vm' next' mode'
-                     Just command ->
-                       do mbNewMode <- handleCommand dbg False command
-                          let mode'' = fromMaybe mode' mbNewMode
-                          -- external stop directive and we're already
-                          -- at a safe point
-                          checkStop dbg vm' next' mode'' $
-                            doStepMode dbg vm' next' mode''
-
-
-doPause :: Debugger -> VM -> NextStep -> StepMode -> IdleReason -> IO CNextStep
-doPause dbg vm next mode reason =
-  do setIdleReason dbg reason
-     writeIORef (dbgModeRef dbg) mode
-     writeIORef (dbgStateVM dbg) (Running vm next) -- actually, we are paused
-     (vm,next) <- takeMVar (dbgPaused dbg)
-     mode      <- readIORef (dbgModeRef dbg)
-     doStepMode dbg vm next mode
-
-checkStop :: Debugger -> VM -> NextStep -> StepMode ->
-                                                IO CNextStep -> IO CNextStep
-checkStop dbg vm next mode k =
-  case mode of
-    Stop -> doPause dbg vm next mode Ready
-    _    -> k
-
-checkStopError :: Debugger -> VM -> NextStep -> StepMode ->
-                                                  IO CNextStep -> IO CNextStep
-checkStopError dbg vm next mode k =
-  case next of
-    ThrowError e ->
-      do stopOnErr <- readIOURef (dbgBreakOnError dbg)
-         if stopOnErr
-            then doPause dbg vm next mode (ThrowingError e)
-            else k
-    _ -> k
-
-
-
-checkBreakPoint :: Debugger -> VM -> NextStep -> StepMode ->
-                                               IO CNextStep -> IO CNextStep
-checkBreakPoint dbg vm nextStep mode k =
-  do let eenv = vmCurExecEnv vm
-         curFun = funValueName (execFunction eenv)
-     case (nextStep, curFun) of
-       (Goto pc, LuaFID fid) ->
-         do let loc = (pc,fid)
-            breaks <- readIORef (dbgBreaks dbg)
-            case Map.lookup loc breaks of
-              Just mbCond ->
-                case mbCond of
-                  Nothing -> atBreak
-                  Just c ->
-                    do act <- readIORef (brkActive c)
-                       case act of
-                         -- Already checked if active
-                         Just active ->
-                           do writeIORef (brkActive c) Nothing
-                              if active then atBreak else k
-
-                         -- Start evaluating the breakpoint condition
-                         Nothing ->
-                           do (nextStep',vm') <-
-                                 executeCompiledStatment vm eenv (brkCond c)
-                                   $ \vs -> do writeIORef (brkActive c)
-                                                 $! Just
-                                                 $! valueBool (trimResult1 vs)
-                                               return nextStep
-                              doStepMode dbg vm' nextStep' (StepOut mode)
-              _ -> k
-       _ -> k
-
-  where
-  atBreak = doPause dbg vm nextStep mode ReachedBreakPoint
-
-
--- | Before executing this "step" we may pause execution.
-mayPauseBefore :: NextStep -> Bool
-mayPauseBefore nextStep =
-  case nextStep of
-    Goto{}        -> True
-    ApiStart{}    -> True
-    ApiEnd{}      -> True
-    _             -> False
-
-
-{-# INLINE nextMode #-}
-nextMode :: VM -> NextStep -> StepMode -> StepMode
-
-nextMode _ (Interrupt _) _ = Stop
-
-nextMode vm step mode =
-  case mode of
-
-    Stop                -> Stop
-
-    StepIntoOp ->
-      case step of
-        Goto    {}      -> Stop
-        ApiStart{}      -> Stop
-        ApiEnd {}       -> Stop
-        _               -> mode
-
-    StepOverOp ->
-      case step of
-        Goto    {}      -> StepOutOp
-        ApiStart{}      -> StepOutOp
-        ApiEnd {}       -> StepOutOp
-        FunCall {}      -> StepOut StepOutOp      -- shouldn't happen
-        Resume  {}      -> StepOutYield StepOutOp -- shouldn't happen
-        _               -> mode
-
-    StepOutOp ->
-      case step of
-        Goto    {}      -> Stop
-        ApiStart{}      -> Stop
-        ApiEnd {}       -> Stop
-        FunCall {}      -> StepOut StepOutOp
-        Resume  {}      -> StepOutYield StepOutOp
-        _               -> mode
-
-    StepOut m ->
-      case step of
-        FunCall   {}    -> StepOut mode
-        ApiStart  {}    -> StepOut mode
-        Resume    {}    -> StepOutYield mode
-        FunReturn {}    -> m
-        ErrorReturn {}  -> m
-        ApiEnd    {}    -> m
-
-        -- ThreadExit and ThreadFail can't happen, because we should have
-        -- first reached the end of the function that we are trying to exit,
-        -- and stopped at that point
-
-        _               -> mode
-
-    StepIntoLine n ->
-      case step of
-        FunCall {}      -> Stop
-        FunTailcall {}  -> Stop
-        FunReturn {}    -> Stop
-        ErrorReturn {}  -> Stop
-        ApiStart {}     -> Stop
-        ApiEnd {}       -> Stop
-        Goto pc
-          | n >= 0 && n /= l -> Stop
-          | otherwise        -> StepIntoLine l
-          where l = getLineNumberForCurFunPC vm pc
-
-        _ -> mode
-
-    StepOverLine n ->
-      case step of
-        FunCall {}      -> StepOut mode
-        FunTailcall {}  -> StepOut mode
-        FunReturn {}    -> Stop
-        ErrorReturn {}  -> Stop
-        ApiStart {}     -> StepOut mode
-        ApiEnd {}       -> Stop
-        Resume {}       -> StepOutYield mode
-        Goto pc
-          | n >= 0 && n /= l -> Stop
-          | otherwise        -> StepOverLine l
-          where l = getLineNumberForCurFunPC vm pc
-
-        _ -> mode
-
-    StepOutYield m ->
-      case step of
-        Yield {}        -> m
-        ThreadExit {}   -> m
-        ThreadFail {}   -> m
-        Resume {}       -> StepOutYield mode
-        _               -> mode
-
-    Run                 -> Run
-
-
-
-data DebuggerCommand =
-    StartExec StepMode (MVar ())
-    -- ^ Switch exetion to the given mode, or start executing if we were idle.
-
-  | AddClient (MVar ())
-
-  | TemporaryStop (IO ())
-    -- ^ Pause the debugger---if it was executing---and execute the
-    -- given IO action.  Once the action completes, the debugger will resume.
-
-  | WhenIdle (IO ())
-    -- ^ Execute the IO action, but only if the debugger is currently
-    -- not doing anything else.
 
 
 
@@ -1248,16 +670,8 @@ then we return immediately. -}
 startExec :: Debugger -> Bool -> StepMode -> IO ()
 startExec dbg blocking mode =
   do mvar <- newEmptyMVar
-     sendCommand (dbgCommand dbg) (StartExec mode mvar) True
+     sendDbgCommand dbg (StartExec mode mvar) True
      when blocking (takeMVar mvar)
-
--- | Execute the function, only if the debugger has not finished.
-whenNotFinishied :: Debugger -> (VM -> IO a) -> IO a
-whenNotFinishied dbg io =
-  do state <- readIORef (dbgStateVM dbg)
-     case state of
-       Running vm _   -> io vm
-       RunningInC     -> io undefined
 
 -- | Execute the function, only if the debugger is running in Lua
 -- rather than waiting for C.
@@ -1269,23 +683,10 @@ whenRunning dbg a io =
        _               -> return a
 
 
-whenIdle :: Debugger -> IO () -> IO ()
-whenIdle dbg io = sendCommand (dbgCommand dbg) (WhenIdle io) True
-  -- The 'True' Is conservative, but generally if we are going to be doing
-  -- something when we have to be idle, it probably affects the state.
-
-{- | Execute an IO action as soon as the debugger is in a stable state.
-This IO action should not block or take too long, otherwise the debugger
-will be unresponsive.  Generally, the IO action should compute something
-about the debugger state, or update some sort of internal state.  -}
-whenStable :: Debugger -> Bool -> IO a -> IO a
-whenStable dbg vis io =
-  do mvar <- newEmptyMVar
-     sendCommand (dbgCommand dbg) (TemporaryStop (putMVar mvar =<< io)) vis
-     takeMVar mvar
+whenIdle :: Debugger -> Bool -> IO () -> IO ()
+whenIdle dbg vis io = undefined -- sendDbgCommand dbg (WhenIdle io) vis
 
 --------------------------------------------------------------------------------
-
 
 
 
