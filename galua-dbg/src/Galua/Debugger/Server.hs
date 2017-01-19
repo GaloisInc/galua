@@ -6,6 +6,8 @@ import           Language.Lua.Bytecode.FunId
 import           Galua.Debugger.Options(Options(..), defaultOptions)
 import           Galua.Debugger.PrettySource(NameId(..))
 import           Galua.Debugger
+import           Galua.Debugger.Types(ValuePath(VP_None),ExecEnvId(..)
+                                     ,importExecEnvId)
 import           Galua.Debugger.View.Spec(exportT)
 import           Galua.Debugger.View
                   ( exportDebugger
@@ -18,7 +20,6 @@ import qualified Galua.Value as G
 import           Galua.Number(parseNumber)
 import           Galua.LuaString
 import           Galua.Names.Eval(NotFound(..))
-import           Galua.Util.IOURef
 
 import           Config
 import           Config.Lens
@@ -28,13 +29,13 @@ import           Snap.Http.Server (httpServe)
 import           Snap.Http.Server.Config (Config, optDescrs, defaultConfig
                                          , setPort, getPort )
 import           Snap.Util.FileServe(serveDirectory, defaultMimeTypes)
-import           Snap.Core (Snap)
+import           Snap.Core (Snap,bracketSnap)
 import qualified Snap.Core as Snap
 import           Control.Monad.IO.Class(liftIO)
 
 import           Control.Applicative((<|>))
 import           Control.Exception
-import           Control.Concurrent(forkIO, newEmptyMVar, putMVar)
+import           Control.Concurrent
 import           Data.ByteString(ByteString)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as B8
@@ -71,15 +72,16 @@ startServerC :: CInt {- offset for port -} -> IO (Ptr ())
 startServerC portOffset =
   do res <- try (startServer (fromIntegral portOffset))
      case res of
-       Left (SomeException ex) -> nullPtr <$ hPutStrLn stderr (displayException ex)
-       Right ptr               -> return ptr
+       Left (SomeException ex) ->
+         nullPtr <$ hPutStrLn stderr (displayException ex)
+       Right ptr -> return ptr
 
 startServer :: Int -> IO (Ptr ())
 startServer portOffset =
-  do config      <- getConfig
-     mvar        <- newEmptyMVar
-     (cptr, dbg) <- newEmptyDebugger mvar (dbgGaluaOptions config)
-     st          <- newIORef dbg
+  do config       <- getConfig
+     serverThread <- newEmptyMVar
+     (cptr, dbg)  <- newEmptyDebugger serverThread (dbgGaluaOptions config)
+     st           <- newMVar dbg
 
      let routes = apiRoutes st
          snapConfig = incrementPort portOffset
@@ -91,9 +93,7 @@ startServer portOffset =
           <|> Snap.route [(path, sendFileBytes (B8.unpack path) content)
                                              | (path,content) <- staticContent]
           <|> Snap.path "" (Snap.redirect "index.html")
-     putMVar mvar httpThread
-
-     runNonBlock dbg
+     putMVar serverThread httpThread
 
      return cptr
 
@@ -125,10 +125,10 @@ staticContent =
                             ".." </> ".." </>
                             ".." </> ".." </> "ui"))
 
-apiRoutes :: IORef Debugger -> [(ByteString, Snap ())]
+apiRoutes :: MVar Debugger -> [(ByteString, Snap ())]
 apiRoutes st =
-  let cmd f   = f =<< liftIO (readIORef st)
-      ioCmd f = liftIO (f =<< readIORef st)
+  let cmd f   = bracketSnap (takeMVar st) (putMVar st) f
+      ioCmd f = liftIO (withMVar st f)
   in [ ("/function", cmd snapGetFunction)
      , ("/closure",  cmd snapGetClosure)
      , ("/view",     cmd snapGetState)
@@ -174,7 +174,7 @@ sendFileBytes name bs =
 snapBreakOnError :: Debugger -> Snap ()
 snapBreakOnError dbg =
   do on <- boolParam "enabled"
-     liftIO (writeIOURef (dbgBreakOnError dbg) on)
+     liftIO (setBreakOnError dbg on)
 
 snapWatch :: Debugger -> Snap ()
 snapWatch dbg =

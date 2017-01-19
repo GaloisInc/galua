@@ -29,15 +29,14 @@ handleAPICall dbg vm next =
 
 newExecState :: Options -> IO ExecState
 newExecState opts =
-  do dbgPaused       <- newEmptyMVar
+  do dbgStatus       <- newIORef NotYetRunning
      dbgResume       <- newEmptyMVar
-     dbgIdleReason   <- newIORef Ready
      dbgStepMode     <- newIORef Run
      dbgBreaks       <- newIORef Map.empty
      dbgBreakOnError <- newIOURef (optBreakOnError opts)
      dbgCommand      <- newCommandQueue
      dbgClients      <- newIORef []
-     return $! ExecState { dbgPaused, dbgResume, dbgIdleReason
+     return $! ExecState { dbgStatus, dbgResume
                          , dbgStepMode
                          , dbgBreaks, dbgBreakOnError
                          , dbgCommand, dbgClients
@@ -82,8 +81,8 @@ stepRun dbg vm0 next0 mode0 =
 handleCommand :: ExecState -> Bool -> DebuggerCommand -> IO (Maybe StepMode)
 handleCommand dbg isIdle cmd =
   case cmd of
-    WhenIdle io        -> Nothing <$ when isIdle io
-    TemporaryStop m    -> Nothing <$ m
+--    WhenIdle io        -> Nothing <$ when isIdle io
+--    TemporaryStop m    -> Nothing <$ m
     AddClient client   -> Nothing <$ modifyIORef (dbgClients dbg) (client :)
     StartExec m client -> Just m  <$ modifyIORef (dbgClients dbg) (client :)
 
@@ -147,8 +146,7 @@ checkBreakPoint dbg vm nextStep mode k =
 
 doPause :: ExecState -> VM -> NextStep -> IdleReason -> IO CNextStep
 doPause dbg vm next reason =
-  do writeIORef (dbgIdleReason dbg) reason
-     putMVar (dbgPaused dbg) (vm,next)
+  do writeIORef (dbgStatus dbg) (PausedInLua vm next reason)
      (newVM, newNext, newMode) <- takeMVar (dbgResume dbg)
      stepRun dbg newVM newNext newMode
 
@@ -255,7 +253,7 @@ nextMode vm step mode =
     Run                 -> Run
 
 
--- | Returns 0 if there was no line number associated with this PC getLineNumberForCurFunPC :: VM -> Int -> Int
+-- | Returns 0 if there was no line number associated with this PC
 getLineNumberForCurFunPC :: VM -> Int -> Int
 getLineNumberForCurFunPC vm pc =
   fromMaybe 0 $

@@ -3,7 +3,7 @@ module Galua.Debugger.View.Spec where
 
 import Galua.Spec.AST
 import Galua.Spec.Parser(Parsed)
-import Galua.Debugger(GlobalTypeEntry(..))
+import Galua.Debugger.Types(GlobalTypeEntry(..))
 
 import qualified Data.Aeson as JS
 import           Data.Aeson ((.=))

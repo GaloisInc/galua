@@ -9,7 +9,8 @@ module Galua.Debugger.View
   ) where
 
 import Galua.CObjInfo(CObjInfo(..))
-import Galua.Debugger
+import Galua.Debugger(getValue)
+import Galua.Debugger.Types
 import Galua.Debugger.PrettySource (omittedLine,lineToJSON)
 import Galua.Debugger.Trie
 import Galua.Debugger.View.Utils
@@ -73,7 +74,7 @@ import           HexFloatFormat (doubleToHex)
 tableChunk :: Int
 tableChunk = 20
 
-newtype ExportM a = ExportM (ReaderT (Maybe AllocRef)
+newtype ExportM a = ExportM (ReaderT AllocRef
                             (StateT ExportableState IO) a)
                     deriving (Functor,Applicative,Monad)
 
@@ -82,14 +83,9 @@ io = ExportM . inBase
 
 -- | Assumes that we are holding the lock
 runExportM :: Debugger -> ExportM a -> IO a
-runExportM Debugger { dbgStateVM, dbgExportable } (ExportM m) =
+runExportM Debugger { dbgExportable, dbgMachEnv } (ExportM m) =
   do s      <- readIORef dbgExportable
-     mms    <- readIORef dbgStateVM
-     let vm = case mms of
-                Running vm' _  -> Just vm'
-                RunningInC     -> undefined
-
-     (a,s1) <- runStateT s $ runReaderT (vmAllocRef <$> vm) m
+     (a,s1) <- runStateT s $ runReaderT (machAllocRef dbgMachEnv) m
      writeIORef dbgExportable s1
      return a
 
@@ -111,39 +107,37 @@ setExpandedThread r = ExportM $ sets_ $ \rw ->
 
 getLiveExpandedThreads :: ExportM [Reference Thread]
 getLiveExpandedThreads = ExportM $
-  do mb <- ask
-     case mb of
-       Nothing ->
-         sets $ \rw -> ([], rw { openThreads = Set.empty })
-
-       Just aref ->
-         do ids <- openThreads <$> get
-            let lkp x = do mbA <- lookupRef aref x
-                           return (case mbA of
-                                     Nothing -> Left x
-                                     Just a  -> Right a)
-            eiths <- inBase (mapM lkp (Set.toList ids))
-            let (bad,good) = partitionEithers eiths
-            unless (null bad) $
-              sets_ $ \rw -> rw { openThreads = Set.difference ids
-                                                  (Set.fromList bad) }
-            return good
+  do aref <- ask
+     ids <- openThreads <$> get
+     let lkp x = do mbA <- lookupRef aref x
+                    return (case mbA of
+                              Nothing -> Left x
+                              Just a  -> Right a)
+     eiths <- inBase (mapM lkp (Set.toList ids))
+     let (bad,good) = partitionEithers eiths
+     unless (null bad) $
+       sets_ $ \rw -> rw { openThreads = Set.difference ids
+                                           (Set.fromList bad) }
+     return good
 
 --------------------------------------------------------------------------------
 
 tag :: String -> JS.Pair
 tag x = "tag" .= x
 
+whenStable = undefined
 
 exportDebugger :: Debugger -> IO JS.Value
 exportDebugger dbg =
   whenStable dbg False $
-  do st      <- readIORef dbgStateVM
+  do st      <- readIORef (dbgStatus (dbgExec dbg))
      funs    <- readIORef dbgSources
      outs    <- getConsoleLines
      watches <- readIORef dbgWatches
-     brkErr  <- readIOURef dbgBreakOnError
-     idle    <- readIORef dbgIdleReason
+     brkErr  <- readIOURef (dbgBreakOnError (dbgExec dbg))
+     let idle = case st of
+                  PausedInLua _ _ r -> r
+                  RunningInC _      -> Executing
      brks    <- exportBreaks dbg
      modifyIORef' dbgExportable $ \r -> newExportableState
                                           { openThreads = openThreads r }
@@ -156,20 +150,18 @@ exportDebugger dbg =
             jsLines <- mapM (exportPrintedLine funs) outs
             return (jsWatches, jsSt, jsIdle, jsLines)
 
-     cnt <- getCommandCount dbgCommand
+     cnt <- getCommandCount (dbgCommand (dbgExec dbg))
      return $ JS.object [ "sources" .= exportSources
                                           (Map.toList (topLevelChunks funs))
                         , "breakPoints" .= brks
                         , "state"       .= jsSt
-                        , "breakOnError".= brkErr
+                        , "breakOnError".= (brkErr :: Bool)
                         , "watches"     .= jsWatches
                         , "prints"      .= jsLines
                         , "idle"        .= jsIdle
                         , "stateCounter".= cnt
                         ]
-  where Debugger { dbgSources, dbgExportable, dbgIdleReason,
-                   dbgStateVM, dbgWatches, dbgBreakOnError,
-                   dbgCommand } = dbg
+  where Debugger { dbgSources, dbgExportable, dbgWatches } = dbg
 
 exportV :: Debugger -> ValuePath -> Value -> IO JS.Value
 exportV dbg path v =
@@ -243,6 +235,8 @@ groupSources getPath = map (collapseTree (</>))
 --------------------------------------------------------------------------------
 
 analyze :: Debugger -> Integer -> IO (Maybe JS.Value)
+analyze = undefined
+{-
 analyze dbg n =
   whenStable dbg False $
     runExportM dbg $
@@ -250,7 +244,7 @@ analyze dbg n =
          case mb of
            Just (ExportableValue _ (Closure r)) ->
              io $
-             do vms <- readIORef (dbgStateVM dbg)
+             do vms <- undefined -- readIORef (dbgStateVM dbg)
                 case vms of
                   Running vm _ ->
                     do let menv = vmMachineEnv vm
@@ -283,7 +277,7 @@ analyze dbg n =
                                               (fid,fu) <- Map.toList x ]
 
   dotFile pre x = pre ++ "_" ++ funIdString x ++ ".dot"
-
+-}
 
 unwatchExportable :: Debugger -> Int -> IO ()
 unwatchExportable dbg n =
@@ -346,9 +340,9 @@ expandSubtable dbg n from =
 
 
 exportBreaks :: Debugger -> IO JS.Value
-exportBreaks Debugger { dbgBreaks, dbgSources } =
+exportBreaks dbg@Debugger { dbgSources } =
   do funs <- readIORef dbgSources
-     brks <- readIORef dbgBreaks
+     brks <- readIORef (dbgBreaks (dbgExec dbg))
      return $ toJSON $ map (exportBreakLoc funs) $ Map.toList brks
 
 exportBreakLoc :: Chunks -> ((Int,FunId),Maybe BreakCondition) -> JS.Value
@@ -389,13 +383,13 @@ exportVMState :: Chunks -> VMState -> ExportM JS.Value
 exportVMState funs vms =
   case vms of
 
-    Running vm next ->
-      do jsVM <- exportVM funs vm next
+    PausedInLua vm next _ ->
+      do jsVM <- exportVM funs vm (Just next)
          return $ JS.object [ tag "running", "vm" .= jsVM ]
 
-    RunningInC -> undefined {-
-      do jsVM <- exportVM funs vm WaitForC
-         return $ JS.object [ tag "running", "vm" .= jsVM ] -}
+    RunningInC vm ->
+      do jsVM <- exportVM funs vm Nothing
+         return $ JS.object [ tag "running", "vm" .= jsVM ]
 
 
 
@@ -560,9 +554,9 @@ exportClosure funs path MkClosure { cloFun, cloUpvalues } =
 
 
 
-exportVM :: Chunks -> VM -> NextStep -> ExportM JS.Value
+exportVM :: Chunks -> VM -> Maybe NextStep -> ExportM JS.Value
 exportVM funs vm next =
-  do t  <- exportThread funs (Just next) (vmCurThread vm)
+  do t  <- exportThread funs next (vmCurThread vm)
      openTs <- do ids <- getLiveExpandedThreads
                   forM ids $ \r -> do js <- exportThread funs Nothing r
                                       return (Text.pack (prettyRef r), js)

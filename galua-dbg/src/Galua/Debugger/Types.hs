@@ -40,32 +40,31 @@ import           Galua.Debugger.CommandQueue
 
 
 data ExecState = ExecState
-  { dbgPaused     :: {-# UNPACK #-} !(MVar (VM,NextStep))
-    -- ^ Before we pause, we put the current state here,
-    -- to notify interested parties of the state when pausing.
+  { dbgStatus      :: {-# UNPACK #-} !(IORef VMState)
+    -- ^ This is to observe execution: we write, they read.
 
   , dbgResume     :: {-# UNPACK #-} !(MVar (VM,NextStep,StepMode))
     -- ^ When we pause, we take this MVar.  To resume execution,
-    -- someone notifys us by putting what to do next here.
+    -- someone notifies us by putting what to do next here.
+    -- We take, they put.
 
-  , dbgIdleReason :: {-# UNPACK #-} !(IORef IdleReason)
-    -- ^ When we are not executing, explain why not.
 
   , dbgStepMode   :: {-# UNPACK #-} !(IORef StepMode)
     -- ^ Save the execution mode across C calls
 
-  , dbgBreaks    :: !(IORef (Map (Int,FunId) (Maybe BreakCondition)))
+  , dbgBreaks    :: {-# UNPACK #-}
+                     !(IORef (Map (Int,FunId) (Maybe BreakCondition)))
     -- ^ Static break points.  The key of the map is the break point,
     -- the value is an optional condition.  The breakpoint will only
     -- be active if the condition is true.
 
-  , dbgBreakOnError :: !(IOURef Bool)
+  , dbgBreakOnError :: {-# UNPACK #-} !(IOURef Bool)
     -- ^ Should we stop automatically, when we encounter an error.
 
   , dbgCommand   :: {-# UNPACK #-} !(CommandQueue DebuggerCommand)
 
 
-  , dbgClients   :: !(IORef [MVar ()]) -- Hmm
+  , dbgClients   :: {-# UNPACK #-} !(IORef [MVar ()]) -- Hmm
   }
 
 
@@ -82,8 +81,8 @@ data Debugger = Debugger
 
 
 
-  , dbgStateVM   :: !(IORef VMState)  -- ^ XXX: The interpreter state
   , dbgExec      :: !(ExecState)
+  , dbgMachEnv   :: !MachineEnv
 
 
   , dbgBrkAddOnLoad :: !(IORef CommandLineBreakPoints)
@@ -123,9 +122,10 @@ data BreakCondition = BreakCondition
 newtype GlobalTypeMap = GTM (Map ByteString GlobalTypeEntry)
 data GlobalTypeEntry  = GlobalType [SpecType] | GlobalNamespace GlobalTypeMap
 
--- XXX
-data VMState  = Running !VM !NextStep
-              | RunningInC
+
+data VMState  = PausedInLua !VM !NextStep !IdleReason
+              | RunningInC !VM              -- ^ VM as it was when we left
+              | NotYetRunning               -- ^ Initial state
 
 data DebuggerCommand =
     StartExec StepMode (MVar ())
@@ -133,13 +133,6 @@ data DebuggerCommand =
 
   | AddClient (MVar ())
 
-  | TemporaryStop (IO ())
-    -- ^ Pause the debugger---if it was executing---and execute the
-    -- given IO action.  Once the action completes, the debugger will resume.
-
-  | WhenIdle (IO ())
-    -- ^ Execute the IO action, but only if the debugger is currently
-    -- not doing anything else.
 
 
 

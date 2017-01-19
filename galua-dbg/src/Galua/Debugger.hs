@@ -1,53 +1,34 @@
 {-# OPTIONS_GHC -fno-warn-deprecations #-}
 {-# LANGUAGE NamedFieldPuns, RecordWildCards, BangPatterns, OverloadedStrings #-}
 module Galua.Debugger
-  ( Debugger(..)
-  , VMState(..)
-  , IdleReason(..)
-  , Chunks(..)
-  , ChunkInfo(..)
-  , Source(..)
+  ( Debugger
   , newEmptyDebugger
+
+  , getValue
+  , setPathValue
+  , resolveName
+
+  , dbgSources
+  , poll
+
+  , addBreakPoint
+  , removeBreakPoint
+  , clearBreakPoints
+  , setBreakOnError
+
+  , executeStatement
+
+  , goto
   , stepInto
   , stepOver
   , stepIntoLine
   , stepOverLine
   , stepOutOf
-  , run
   , runNonBlock
+  , run
   , pause
-  , goto
-  , executeStatement
-  , addBreakPoint
-  , removeBreakPoint
-  , clearBreakPoints
-  , poll
-
-  , ExportableState(..)
-  , newExportableState
-  , Exportable(..)
-  , ValuePath(..)
-  , showValuePath
-  , getValue
-  , setPathValue
-
-  , FunVisName(..)
-  , BreakCondition(..)
-
-  , ExecEnvId(..)
-  , exportExecEnvId
-  , importExecEnvId
-  , resolveName
-
-  -- * WatchList
-  , WatchList, watchListEmpty, watchListRemove, watchListExtend
-  , watchListToList
-
-  -- * Globals
-  , GlobalTypeEntry(..)
   ) where
 
-import           Galua(setupLuaState)
 import           Galua.Debugger.PrettySource (NameId)
 import           Galua.Debugger.Options
 import           Galua.Debugger.NameHarness
@@ -64,6 +45,7 @@ import           Galua.FunValue
 import           Galua.Names.Eval
 import           Galua.Names.Find(LocatedExprName(..),ppExprName)
 import qualified Galua.Util.SizedVector as SV
+import           Galua.Util.IOURef
 
 import qualified Galua.Spec.AST as Spec
 import qualified Galua.Spec.Parser as Spec
@@ -83,13 +65,10 @@ import           Data.Ord(comparing)
 import           Data.List(minimumBy)
 import qualified Data.Vector as Vector
 import qualified Data.Vector.Mutable as IOVector
-import           Data.IORef(IORef,readIORef,writeIORef,
-                            modifyIORef,modifyIORef',newIORef,
-                            atomicModifyIORef')
+import           Data.IORef
 
-import            Control.Concurrent
-                    ( MVar, newEmptyMVar, putMVar, takeMVar, forkIO )
-import           Control.Concurrent (killThread, ThreadId)
+import           Control.Concurrent ( MVar, newEmptyMVar, takeMVar
+                                    , killThread, ThreadId )
 import           Control.Monad(when)
 import           Control.Exception
 import           MonadLib(ExceptionT,runExceptionT,raise,lift)
@@ -248,9 +227,9 @@ setValue vp v =
 
 --------------------------------------------------------------------------------
 
-findNameResolveEnv :: Debugger -> VM -> ExecEnvId -> IO (FunId, NameResolveEnv)
-findNameResolveEnv dbg vm eid =
-  do metaTabs <- readIORef $ machMetatablesRef $ vmMachineEnv vm
+findNameResolveEnv :: Debugger -> MachineEnv -> ExecEnvId -> IO (FunId, NameResolveEnv)
+findNameResolveEnv dbg menv eid =
+  do metaTabs <- readIORef (machMetatablesRef menv)
      case eid of
        StackFrameExecEnv sid ->
          do ExportableState { expClosed } <- readIORef (dbgExportable dbg)
@@ -260,7 +239,7 @@ findNameResolveEnv dbg vm eid =
               _ -> nameResolveException ("Invalid stack frame: " ++ show sid)
 
        ThreadExecEnv tid ->
-         do mb <- lookupRef (vmAllocRef vm) tid
+         do mb <- lookupRef (machAllocRef menv) tid
             case mb of
               Nothing  -> nameResolveException "Invalid thread."
               Just ref ->
@@ -268,7 +247,7 @@ findNameResolveEnv dbg vm eid =
                    execEnvToNameResolveEnv metaTabs eenv
 
        ClosureEnvId cid ->
-         do mb <- lookupRef (vmAllocRef vm) cid
+         do mb <- lookupRef (machAllocRef menv) cid
             case mb of
               Nothing  -> nameResolveException "Invalid closure."
               Just ref ->
@@ -311,10 +290,8 @@ execEnvToNameResolveEnv metaTabs eenv =
 resolveName :: Debugger -> ExecEnvId -> Maybe Int -> NameId ->
                 IO (Either NotFound (String,Value,Maybe GlobalTypeEntry))
 resolveName dbg eid pc nid =
-  whenIdle dbg False $
   try $
-  do let vm = undefined
-     (fid, resEnv) <- findNameResolveEnv dbg vm eid
+  do (fid, resEnv) <- findNameResolveEnv dbg (dbgMachEnv dbg) eid
      chunks        <- readIORef (dbgSources dbg)
 
      chunk <- case getRoot fid of
@@ -441,8 +418,8 @@ newEmptyDebugger threadVar opts =
                          , allFunNames    = Map.empty
                          }
 
-     dbgSources <- newIORef chunks
-     dbgWatches <- newIORef watchListEmpty
+     dbgSources      <- newIORef chunks
+     dbgWatches      <- newIORef watchListEmpty
      dbgBrkAddOnLoad <- newIORef (optBreakPoints opts)
 
      dbgExec         <- newExecState opts
@@ -456,14 +433,14 @@ newEmptyDebugger threadVar opts =
                                                    dbgSources
                  , machOnShutdown =
                      do a <- takeMVar threadVar
+                        -- XXX: Free stable pointers?
                         killThread a
                  , machOnQuery    = query
                  , machRunner     = handleAPICall dbgExec
                  }
 
-     cptr <- setupLuaState cfg
-
-     dbgStateVM <- newIORef undefined -- XXX
+     dbgMachEnv <- newMachineEnv cfg
+     let cptr = threadCPtr (machMainThreadRef dbgMachEnv)
 
      dbgExportable   <- newIORef newExportableState
 
@@ -473,16 +450,10 @@ newEmptyDebugger threadVar opts =
               return (Spec.specDecls s)
             `catch` \SomeException {} -> return [])
 
-     let dbg = Debugger { dbgSources, dbgWatches
-                        , dbgExportable, dbgStateVM
-
-                        , dbgExec
-
-                        , dbgBrkAddOnLoad
-                        , dbgDeclaredTypes
+     let dbg = Debugger { dbgSources, dbgWatches, dbgExportable
+                        , dbgBrkAddOnLoad, dbgDeclaredTypes
+                        , dbgExec, dbgMachEnv
                         }
-
-     _ <- forkIO (runDebugger dbg)
 
      return (cptr, dbg)
 
@@ -494,21 +465,12 @@ newEmptyDebugger threadVar opts =
 
 setPathValue :: Debugger -> Integer -> Value -> IO (Maybe ValuePath)
 setPathValue dbg vid newVal =
-  -- NOTE:  This action is marked as invisible, because when we set a value
-  -- we take care to patch up the UI state appropriately.  In this way,
-  -- we don't need to redraw the entire debugger state, which preserves
-  -- open tabs, etc.
-  -- XXX: One day we should probalby do something smarter, where we
-  -- can compute exactly what changed, and only redraw those things...
-  whenIdle dbg False $
-    do ExportableState { expClosed } <- readIORef dbgExportable
-       case Map.lookup vid expClosed of
-         Just (ExportableValue path _) ->
-           do setValue path newVal
-              return (Just path)
-         _   -> return Nothing
-  where
-  Debugger { dbgExportable } = dbg
+  do ExportableState { expClosed } <- readIORef (dbgExportable dbg)
+     case Map.lookup vid expClosed of
+       Just (ExportableValue path _) ->
+         do setValue path newVal
+            return (Just path)
+       _   -> return Nothing
 
 
 -- | Interrupt an executing command.
@@ -550,18 +512,20 @@ stepOutOf dbg = startExec dbg True (StepOut Stop)
 
 goto :: Int -> Debugger -> IO ()
 goto pc dbg =
-  whenIdle dbg True $
-    let vm = undefined
-    in writeIORef (dbgStateVM dbg) (Running vm (Goto pc))
+  modifyIORef' (dbgStatus (dbgExec dbg)) $ \st ->
+    case st of
+      PausedInLua vm _ reason -> PausedInLua vm (Goto pc) reason
+      _                       -> st
 
 
+-- XXX: Don't block server while executing statement.
 executeStatement :: Debugger -> Integer -> Text -> IO ()
-executeStatement dbg frame statement =
+executeStatement dbg frame statement = undefined{-
   whenIdle dbg True $
     do things <- expClosed <$> readIORef (dbgExportable dbg)
        case Map.lookup frame things of
          Just (ExportableStackFrame pc env) ->
-           do whenRunning dbg () $ \vm next ->
+           do whenInLua dbg () $ \vm next ->
                 do recordConsoleInput statement
                    let stat = Text.unpack statement
                    (next',vm') <-
@@ -571,7 +535,7 @@ executeStatement dbg frame statement =
 
               runNonBlock dbg
 
-         _ -> return ()
+         _ -> return () -}
 
 
 poll :: Debugger -> Word64 -> Int {- ^ Timeout in seconds -} -> IO Word64
@@ -583,16 +547,17 @@ poll dbg _ secs =
 
 --------------------------------------------------------------------------------
 
+setBreakOnError :: Debugger -> Bool -> IO ()
+setBreakOnError dbg on = writeIOURef (dbgBreakOnError (dbgExec dbg)) on
 
 addBreakPoint ::
   Debugger -> (Int,FunId) -> Maybe Text -> IO (Maybe BreakCondition)
 addBreakPoint dbg loc txtCon =
-  whenIdle dbg True $
-    do mb <- case txtCon of
-               Nothing  -> return Nothing
-               Just txt -> prepareCondition dbg loc txt
-       modifyIORef (dbgBreaks (dbgExec dbg)) (Map.insert loc mb)
-       return mb
+  do mb <- case txtCon of
+             Nothing  -> return Nothing
+             Just txt -> prepareCondition dbg loc txt
+     modifyIORef (dbgBreaks (dbgExec dbg)) (Map.insert loc mb)
+     return mb
 
 prepareCondition :: Debugger -> (Int,FunId) -> Text -> IO (Maybe BreakCondition)
 prepareCondition dbg (pc,fid) expr =
@@ -623,35 +588,11 @@ lookupFID dbg fid =
 
 removeBreakPoint :: Debugger -> (Int,FunId) -> IO ()
 removeBreakPoint dbg loc =
-  whenIdle dbg True $ modifyIORef' (dbgBreaks (dbgExec dbg)) (Map.delete loc)
+  modifyIORef' (dbgBreaks (dbgExec dbg)) (Map.delete loc)
 
 clearBreakPoints :: Debugger -> IO ()
-clearBreakPoints dbg =
-  whenIdle dbg True $ writeIORef (dbgBreaks (dbgExec dbg)) Map.empty
+clearBreakPoints dbg = writeIORef (dbgBreaks (dbgExec dbg)) Map.empty
 
-
-
-
-runDebugger :: Debugger -> IO ()
-runDebugger = undefined {-
-  forever $
-    do cmd    <- waitForCommand (dbgCommand dbg)
-       mbMode <- handleCommand dbg True cmd
-       case mbMode of
-         Nothing   -> return ()
-         Just Stop -> return () -- already stopped
-         Just mode ->
-           do state <- readIORef (dbgStateVM dbg)
-              case state of
-                Running vm next ->
-                  do setIdleReason dbg Executing
-                     let mode' = nextMode vm next mode
-                     vms <- doStepMode dbg vm next $! mode'
-                     writeIORef (dbgStateVM dbg) vms
-                _ -> return ()
-              clients  <- readIORef (dbgClients dbg)
-              writeIORef (dbgClients dbg) []
-              mapM_ (\client -> putMVar client ()) clients -}
 
 
 
@@ -673,20 +614,7 @@ startExec dbg blocking mode =
      sendDbgCommand dbg (StartExec mode mvar) True
      when blocking (takeMVar mvar)
 
--- | Execute the function, only if the debugger is running in Lua
--- rather than waiting for C.
-whenRunning :: Debugger -> a -> (VM -> NextStep -> IO a) -> IO a
-whenRunning dbg a io =
-  do state <- readIORef (dbgStateVM dbg)
-     case state of
-       Running vm next -> io vm next
-       _               -> return a
 
-
-whenIdle :: Debugger -> Bool -> IO () -> IO ()
-whenIdle dbg vis io = undefined -- sendDbgCommand dbg (WhenIdle io) vis
-
---------------------------------------------------------------------------------
 
 
 
