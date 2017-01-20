@@ -1,5 +1,5 @@
 {-# OPTIONS_GHC -fno-warn-deprecations #-}
-{-# LANGUAGE NamedFieldPuns, RecordWildCards, BangPatterns, OverloadedStrings #-}
+{-# LANGUAGE NamedFieldPuns #-}
 module Galua.Debugger
   ( Debugger
   , newEmptyDebugger
@@ -24,7 +24,6 @@ module Galua.Debugger
   , stepIntoLine
   , stepOverLine
   , stepOutOf
-  , runNonBlock
   , run
   , pause
   ) where
@@ -33,7 +32,6 @@ import           Galua.Debugger.PrettySource (NameId)
 import           Galua.Debugger.Options
 import           Galua.Debugger.NameHarness
 import           Galua.Debugger.Console(recordConsoleInput,recordConsoleValues)
-import           Galua.Debugger.CommandQueue
 import           Galua.Debugger.Types
 import           Galua.Debugger.Execute
 
@@ -67,12 +65,11 @@ import qualified Data.Vector as Vector
 import qualified Data.Vector.Mutable as IOVector
 import           Data.IORef
 
-import           Control.Concurrent ( MVar, newEmptyMVar, takeMVar
+import           Control.Concurrent ( MVar, takeMVar, putMVar
                                     , killThread, ThreadId )
 import           Control.Monad(when)
 import           Control.Exception
 import           MonadLib(ExceptionT,runExceptionT,raise,lift)
-import           System.Timeout(timeout)
 
 
 
@@ -227,7 +224,8 @@ setValue vp v =
 
 --------------------------------------------------------------------------------
 
-findNameResolveEnv :: Debugger -> MachineEnv -> ExecEnvId -> IO (FunId, NameResolveEnv)
+findNameResolveEnv ::
+  Debugger -> MachineEnv -> ExecEnvId -> IO (FunId, NameResolveEnv)
 findNameResolveEnv dbg menv eid =
   do metaTabs <- readIORef (machMetatablesRef menv)
      case eid of
@@ -475,40 +473,36 @@ setPathValue dbg vid newVal =
 
 -- | Interrupt an executing command.
 pause :: Debugger -> IO ()
-pause dbg = startExec dbg True Stop
+pause dbg = startExec dbg Stop
 
 -- | Run until something causes us to stop.
 run :: Debugger -> IO ()
-run dbg = startExec dbg True Run
-
--- | Start running, but return immediately.
-runNonBlock :: Debugger -> IO ()
-runNonBlock dbg = startExec dbg False Run
+run dbg = startExec dbg Run
 
 -- | Make a step.  If the step is a call, step into the called function.
 stepInto :: Debugger -> IO ()
-stepInto dbg = startExec dbg True StepIntoOp
+stepInto dbg = startExec dbg StepIntoOp
 
 -- | Make a step.  If the step is a call, step until the function returns.
 stepOver :: Debugger -> IO ()
-stepOver dbg = startExec dbg True StepOverOp
+stepOver dbg = startExec dbg StepOverOp
 
 -- | Make a step, and continue stepping while the op-codes belong to the
 -- same source code line.
 stepIntoLine :: Debugger -> IO ()
-stepIntoLine dbg = startExec dbg True (StepIntoLine (-42))
+stepIntoLine dbg = startExec dbg (StepIntoLine (-42))
 
 -- 1. Steps on same line until call
 -- 2. Add dynamic break
 -- 3. Steps until back from call
 -- 4. Continue till the end of same line
 stepOverLine :: Debugger -> IO ()
-stepOverLine dbg = startExec dbg True (StepOverLine (-42))
+stepOverLine dbg = startExec dbg (StepOverLine (-42))
 
 
 -- | Step when returning from the current function, or find break point.
 stepOutOf :: Debugger -> IO ()
-stepOutOf dbg = startExec dbg True (StepOut Stop)
+stepOutOf dbg = startExec dbg (StepOut Stop)
 
 goto :: Int -> Debugger -> IO ()
 goto pc dbg =
@@ -539,11 +533,7 @@ executeStatement dbg frame statement = undefined{-
 
 
 poll :: Debugger -> Word64 -> Int {- ^ Timeout in seconds -} -> IO Word64
-poll dbg _ secs =
-  do mvar <- newEmptyMVar
-     sendDbgCommand dbg (AddClient mvar) False
-     _ <- timeout (secs * 1000000) (takeMVar mvar)
-     getCommandCount (dbgCommand (dbgExec dbg))
+poll dbg _ secs = waitToStop (dbgPollState (dbgExec dbg)) secs
 
 --------------------------------------------------------------------------------
 
@@ -594,25 +584,23 @@ clearBreakPoints :: Debugger -> IO ()
 clearBreakPoints dbg = writeIORef (dbgBreaks (dbgExec dbg)) Map.empty
 
 
-
-
-
-sendDbgCommand :: Debugger -> DebuggerCommand -> Bool -> IO ()
-sendDbgCommand dbg = sendCommand (dbgCommand (dbgExec dbg))
-
-
-
-
-
-{- | Switch the debugger to the given execution mode.
-The boolean indicates if we should block:  if it is 'True', then
-this command will block until the execution stops.  If it is 'False',
-then we return immediately. -}
-startExec :: Debugger -> Bool -> StepMode -> IO ()
-startExec dbg blocking mode =
-  do mvar <- newEmptyMVar
-     sendDbgCommand dbg (StartExec mode mvar) True
-     when blocking (takeMVar mvar)
+startExec :: Debugger -> StepMode -> IO ()
+startExec dbg mode =
+  do status <- readIORef (dbgStatus (dbgExec dbg))
+     case mode of
+       Stop -> case status of
+                 RunningInC {}   -> doStop
+                 RunningInLua {} -> doStop
+                 _               -> return ()
+       _    -> case status of
+                 PausedInLua vm next _ ->
+                   do let exe = dbgExec dbg
+                      writeIOURef (dbgInterrupt exe) False
+                      writeIORef (dbgStatus exe) RunningInLua
+                      putMVar (dbgResume exe) (vm,next,mode)
+                 _ -> return ()
+  where
+  doStop  = writeIOURef (dbgInterrupt (dbgExec dbg)) True
 
 
 

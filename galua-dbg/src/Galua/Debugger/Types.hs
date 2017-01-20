@@ -12,6 +12,7 @@ import           Data.ByteString(ByteString)
 import           Data.IORef(IORef)
 import           Data.List(unfoldr)
 import           Data.Maybe(fromMaybe)
+import           Data.Word(Word64)
 
 
 import qualified Data.Text as Text
@@ -36,7 +37,6 @@ import qualified Galua.Spec.Parser as Spec
 import           Galua.Debugger.PrettySource (lexChunk,Line,NameId)
 import           Galua.Debugger.Options
 import           Galua.Debugger.NameHarness
-import           Galua.Debugger.CommandQueue
 
 
 data ExecState = ExecState
@@ -61,12 +61,23 @@ data ExecState = ExecState
   , dbgBreakOnError :: {-# UNPACK #-} !(IOURef Bool)
     -- ^ Should we stop automatically, when we encounter an error.
 
-  , dbgCommand   :: {-# UNPACK #-} !(CommandQueue DebuggerCommand)
+  , dbgInterrupt :: {-# UNPACK #-} !(IOURef Bool)
+    -- ^ Set this `true` to interrupt the debugger.
 
-
-  , dbgClients   :: {-# UNPACK #-} !(IORef [MVar ()]) -- Hmm
+  , dbgPollState :: !PollState
+    -- ^ Notify clients when we've stopped.
   }
 
+data PollState = PollState
+  { dbgClients          :: {-# UNPACK #-}!(MVar [MVar ()])
+    -- ^ Ping these mvars when we stop.
+
+
+  , dbgInterruptCounter :: {-# UNPACK #-}!(IOURef Word64)
+    -- ^ Counte how many times we've stopped.  This is so the polling
+    -- interface can notice that we've stopped and redraw itself.
+    -- Perhaps there is a better way to achieve this?
+  }
 
 
 {- The fields in this are mutable, so that the interpreter can modify them
@@ -124,6 +135,7 @@ data GlobalTypeEntry  = GlobalType [SpecType] | GlobalNamespace GlobalTypeMap
 
 
 data VMState  = PausedInLua !VM !NextStep !IdleReason
+              | RunningInLua
               | RunningInC !VM              -- ^ VM as it was when we left
               | NotYetRunning               -- ^ Initial state
 

@@ -24,19 +24,20 @@ import Galua.Names.Find(exprName)
 import Galua.Names.Eval(nameInScope)
 import Galua.Reference
 import Galua.Debugger.Console
-import Galua.Debugger.View.Analysis(exportResult)
 import qualified Galua.Util.Table as Tab
 import qualified Galua.Util.SizedVector as SV
 import Galua.Util.IOURef
 import Galua.Code
-import Galua.Debugger.CommandQueue
 
+{-
+import Galua.Debugger.View.Analysis(exportResult)
 import qualified Galua.Micro.AST         as Analysis
 import qualified Galua.Micro.Type.Primitives  as Analysis
 import qualified Galua.Micro.Type.Import as Analysis
 import qualified Galua.Micro.Type.Value  as Analysis
 import qualified Galua.Micro.Type.Eval   as Analysis
 import qualified Galua.Micro.Translate   as Analysis
+-}
 
 import Language.Lua.StringLiteral (constructStringLiteral)
 
@@ -125,11 +126,12 @@ getLiveExpandedThreads = ExportM $
 tag :: String -> JS.Pair
 tag x = "tag" .= x
 
-whenStable = undefined
+whenStable :: Debugger -> IO a -> IO a
+whenStable dbg it = it -- XXX
+
 
 exportDebugger :: Debugger -> IO JS.Value
 exportDebugger dbg =
-  whenStable dbg False $
   do st      <- readIORef (dbgStatus (dbgExec dbg))
      funs    <- readIORef dbgSources
      outs    <- getConsoleLines
@@ -138,6 +140,8 @@ exportDebugger dbg =
      let idle = case st of
                   PausedInLua _ _ r -> r
                   RunningInC _      -> Executing
+                  RunningInLua      -> Executing
+                  NotYetRunning     -> Ready
      brks    <- exportBreaks dbg
      modifyIORef' dbgExportable $ \r -> newExportableState
                                           { openThreads = openThreads r }
@@ -150,7 +154,7 @@ exportDebugger dbg =
             jsLines <- mapM (exportPrintedLine funs) outs
             return (jsWatches, jsSt, jsIdle, jsLines)
 
-     cnt <- getCommandCount (dbgCommand (dbgExec dbg))
+     cnt <- readIOURef (dbgInterruptCounter (dbgPollState (dbgExec dbg)))
      return $ JS.object [ "sources" .= exportSources
                                           (Map.toList (topLevelChunks funs))
                         , "breakPoints" .= brks
@@ -281,12 +285,11 @@ analyze dbg n =
 
 unwatchExportable :: Debugger -> Int -> IO ()
 unwatchExportable dbg n =
-  whenStable dbg False $
-    modifyIORef'  (dbgWatches dbg) (watchListRemove n)
+  whenStable dbg $ modifyIORef'  (dbgWatches dbg) (watchListRemove n)
 
 watchExportable :: Debugger -> Integer -> IO (Maybe JS.Value)
 watchExportable dbg n =
-  whenStable dbg False $
+  whenStable dbg $
      runExportM dbg $
        do mb <- lookupThing n
           case mb of
@@ -303,7 +306,7 @@ watchExportable dbg n =
 
 expandExportable :: Debugger -> Integer -> IO (Maybe JS.Value)
 expandExportable dbg n =
-  whenStable dbg False $
+  whenStable dbg $
   do funs <- readIORef dbgSources
      runExportM dbg $
        do mb   <- lookupThing n
@@ -320,7 +323,7 @@ expandExportable dbg n =
 
 expandSubtable :: Debugger -> Integer -> Integer -> IO (Maybe JS.Value)
 expandSubtable dbg n from =
-  whenStable dbg False $
+  whenStable dbg $
   do funs <- readIORef dbgSources
      runExportM dbg $
        do mb   <- lookupThing n
@@ -390,6 +393,9 @@ exportVMState funs vms =
     RunningInC vm ->
       do jsVM <- exportVM funs vm Nothing
          return $ JS.object [ tag "running", "vm" .= jsVM ]
+
+    NotYetRunning -> fail "Not yet running"
+    RunningInLua  -> fail "Running, please pause first."
 
 
 
@@ -606,6 +612,7 @@ exportCallStackFrameShort funs pc env mbnext =
                          ApiCallAborted api  -> exportApiCall api phase
                          ApiCallActive api   -> exportApiCall api phase
                          ApiCallErrorReturn api _ -> exportApiCall api phase
+                         ApiCallYielding api _ -> exportApiCall api phase
      return (JS.object ( apiInfo ++
                          tag "call"
                        : "ref"    .= ref

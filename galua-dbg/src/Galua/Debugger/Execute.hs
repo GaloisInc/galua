@@ -4,11 +4,14 @@ module Galua.Debugger.Execute where
 import           Data.Maybe(fromMaybe)
 import qualified Data.Map as Map
 import           Data.IORef
+import           Data.Word(Word64)
 
 import           Control.Monad(when)
 import           Control.Concurrent
 
-import Galua.Util.IOURef(readIOURef,newIOURef)
+import           System.Timeout(timeout)
+
+import Galua.Util.IOURef(newIOURef,readIOURef,modifyIOURef)
 import Galua.Value(valueBool,trimResult1)
 import Galua.FunValue
 import Galua.Mach
@@ -17,13 +20,13 @@ import Galua.Code(lookupLineNumber)
 
 import Galua.Debugger.Types
 import Galua.Debugger.NameHarness
-import Galua.Debugger.CommandQueue
 import Galua.Debugger.Options
 
 
 handleAPICall :: ExecState -> VM -> NextStep -> IO CNextStep
 handleAPICall dbg vm next =
   do mode <- readIORef (dbgStepMode dbg)
+     writeIORef (dbgStatus dbg) RunningInLua
      stepRun dbg vm next (nextMode vm next mode)
 
 
@@ -34,13 +37,31 @@ newExecState opts =
      dbgStepMode     <- newIORef Run
      dbgBreaks       <- newIORef Map.empty
      dbgBreakOnError <- newIOURef (optBreakOnError opts)
-     dbgCommand      <- newCommandQueue
-     dbgClients      <- newIORef []
+     dbgInterrupt    <- newIOURef False
+     dbgPollState    <- newPollState
      return $! ExecState { dbgStatus, dbgResume
                          , dbgStepMode
                          , dbgBreaks, dbgBreakOnError
-                         , dbgCommand, dbgClients
+                         , dbgInterrupt, dbgPollState
                          }
+
+newPollState :: IO PollState
+newPollState =
+  do dbgClients          <- newMVar []
+     dbgInterruptCounter <- newIOURef 0
+     return $! PollState { dbgClients, dbgInterruptCounter }
+
+
+waitToStop :: PollState -> Int {- ^ Timeout in seconds #-} -> IO Word64
+waitToStop dbg secs =
+  do mvar <- newEmptyMVar
+     modifyMVar_ (dbgClients dbg) (\xs -> return (mvar:xs))
+     _ <- timeout (secs * 1000000) (takeMVar mvar)
+     readIOURef (dbgInterruptCounter dbg)
+
+
+
+
 
 
 stepRun :: ExecState -> VM -> NextStep -> StepMode -> IO CNextStep
@@ -60,32 +81,15 @@ stepRun dbg vm0 next0 mode0 =
                                else return mode0
                   return $! nextMode vm next oldMode
 
-
        checkStopError dbg vm next $
          if not (mayPauseBefore next)
            then stepRun dbg vm next mode
            else checkStop dbg vm next mode $
                 checkBreakPoint dbg vm next mode $
-                do mb <- peekCmd (dbgCommand dbg)
-                   case mb of
-                     Nothing      -> stepRun dbg vm next mode
-                     Just command ->
-                       do mbNewMode <- handleCommand dbg False command
-                          let newMode = fromMaybe mode mbNewMode
-                          -- external stop directive and we're already
-                          -- at a safe point
-                          checkStop dbg vm next newMode $
-                            stepRun dbg vm next newMode
-
-
-handleCommand :: ExecState -> Bool -> DebuggerCommand -> IO (Maybe StepMode)
-handleCommand dbg isIdle cmd =
-  case cmd of
---    WhenIdle io        -> Nothing <$ when isIdle io
---    TemporaryStop m    -> Nothing <$ m
-    AddClient client   -> Nothing <$ modifyIORef (dbgClients dbg) (client :)
-    StartExec m client -> Just m  <$ modifyIORef (dbgClients dbg) (client :)
-
+                do interrupted <- readIOURef (dbgInterrupt dbg)
+                   if interrupted
+                      then doPause dbg vm next Ready
+                      else stepRun dbg vm next mode
 
 
 
@@ -144,12 +148,17 @@ checkBreakPoint dbg vm nextStep mode k =
   atBreak = doPause dbg vm nextStep ReachedBreakPoint
 
 
+-- | Pause execution.
 doPause :: ExecState -> VM -> NextStep -> IdleReason -> IO CNextStep
 doPause dbg vm next reason =
   do writeIORef (dbgStatus dbg) (PausedInLua vm next reason)
+     let ps = dbgPollState dbg
+     modifyIOURef (dbgInterruptCounter ps) (+ 1)
+     modifyMVar_ (dbgClients ps) $ \xs ->
+       do mapM_ (`putMVar` ()) xs
+          return []
      (newVM, newNext, newMode) <- takeMVar (dbgResume dbg)
      stepRun dbg newVM newNext newMode
-
 
 
 
@@ -259,10 +268,6 @@ getLineNumberForCurFunPC vm pc =
   fromMaybe 0 $
   do (_,func) <- luaOpCodes (execFunction (vmCurExecEnv vm))
      lookupLineNumber func pc
-
-
-
-
 
 
 
