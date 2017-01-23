@@ -10,10 +10,11 @@ import qualified Galua.Util.SizedVector as SV
 import           Control.Concurrent
 import           Data.Traversable
 import           Data.IORef
+import           Foreign.Ptr
 
-execCFunction :: MVar CNextStep -> CFunName -> IO NextStep
-execCFunction mvar cfun =
-  do putMVar mvar (CCallback (cfunAddr cfun))
+execCFunction :: Ptr () -> MVar CNextStep -> CFunName -> IO NextStep
+execCFunction l mvar cfun =
+  do putMVar mvar (CCallback (cfunAddr cfun) l)
      return WaitForC
 
 handleCCallState :: VM -> CCallState -> IO NextStep

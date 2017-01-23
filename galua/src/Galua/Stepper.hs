@@ -27,6 +27,7 @@ import           Control.Concurrent
 import           Control.Concurrent.STM (atomically, takeTMVar)
 import           Data.IORef
 import           Data.Foldable (traverse_)
+import           Foreign.ForeignPtr
 
 
 data Cont r = Cont
@@ -96,7 +97,7 @@ performTailCall ::
   [Value]           {- ^ arguments        -} ->
   IO r
 performTailCall c vm f vs =
-  do (newEnv, next) <- enterClosure f vs
+  do (newEnv, next) <- enterClosure vm f vs
 
      let th = vmCurThread vm
 
@@ -116,7 +117,7 @@ performFunCall ::
   ([Value] -> IO NextStep) {- ^ return continuation    -} ->
   IO r
 performFunCall c vm f vs mb k =
-  do (newEnv, next) <- enterClosure f vs
+  do (newEnv, next) <- enterClosure vm f vs
 
      let th = vmCurThread vm
 
@@ -348,8 +349,9 @@ consMb Nothing xs = xs
 consMb (Just x) xs = x : xs
 
 
-enterClosure :: Reference Closure -> [Value] -> IO (ExecEnv, MVar CNextStep -> IO NextStep)
-enterClosure c vs =
+enterClosure ::
+  VM -> Reference Closure -> [Value] -> IO (ExecEnv, MVar CNextStep -> IO NextStep)
+enterClosure vm c vs =
   do let MkClosure { cloFun, cloUpvalues } = referenceVal c
          (stackElts, vas, start, code) =
            case funValueCode cloFun of
@@ -365,7 +367,10 @@ enterClosure c vs =
 
                   in (stack, varargs, \_ -> return (Goto 0), funcCode f)
 
-             CCode cfun -> (vs, [], \m -> execCFunction m cfun, mempty)
+             CCode cfun ->
+                  let fpL = threadCPtr (referenceVal (vmCurThread vm))
+                  in (vs, [], \m -> withForeignPtr fpL $ \l ->
+                                    execCFunction l m cfun, mempty)
 
      stack    <- SV.new
      traverse_ (SV.push stack <=< newIORef) stackElts
