@@ -86,7 +86,20 @@ reentryG ::
   (VM -> SV.SizedVector (IORef Value) -> IO NextStep)
                     {- ^ operation continuation producing optional C return -} ->
   IO CInt
-reentryG label args l tid r impl =
+reentryG = reentryGK 0 nullFunPtr
+
+reentryGK ::
+  Lua_KContext  ->
+  Lua_KFunction ->
+  String            {- ^ entry name -} ->
+  [PrimArgument]    {- ^ entry arguments -} ->
+  Ptr ()            {- ^ stable pointer -} ->
+  Int               {- ^ thread ID      -} ->
+  Ptr ()            {- ^ return address -} ->
+  (VM -> SV.SizedVector (IORef Value) -> IO NextStep)
+                    {- ^ operation continuation producing optional C return -} ->
+  IO CInt
+reentryGK kctx kfun label args l tid r impl =
   do res <- try body
      case res of
        Right x -> return x
@@ -99,9 +112,14 @@ reentryG label args l tid r impl =
          returnObjInfo <- unsafeInterleaveIO $ do f <- cfunInfoFun
                                                   f (castPtrToFunPtr r)
 
-         let apiCall = ApiCall { apiCallMethod = label
+         let mbContinuation
+                | nullFunPtr == kfun = Nothing
+                | otherwise          = Just (capi_entryk kctx kfun)
+
+             apiCall = ApiCall { apiCallMethod = label
                                , apiCallReturn = returnObjInfo
                                , apiCallArgs = args
+                               , apiContinuation = mbContinuation
                                }
 
          atomically $ putTMVar (extLuaStateLuaServer ext)
@@ -181,6 +199,9 @@ cServiceLoop resultMVar interpMVar =
 
 foreign import ccall "galua_capi_entry" capi_entry ::
   CFun -> Ptr () -> IO CInt
+
+foreign import ccall "galua_capi_entryk" capi_entryk ::
+  Lua_KContext -> Lua_KFunction -> CInt -> Ptr () -> IO CInt
 
 deRefLuaState :: Ptr () -> IO ExternalLuaState
 deRefLuaState = deRefStablePtr . castPtrToStablePtr
@@ -909,7 +930,8 @@ foreign export ccall lua_callk_hs
 -- [-(nargs+1), +nresults, e]
 lua_callk_hs :: EntryPoint (CInt -> CInt -> Lua_KContext -> Lua_KFunction -> IO CInt)
 lua_callk_hs l tid r narg nresult ctx k =
-  reentryG "lua_callk" [cArg narg, cArg nresult, cArg ctx, cArg k] l tid r $
+  reentryGK ctx k
+     "lua_callk" [cArg narg, cArg nresult, cArg ctx, cArg k] l tid r $
   \vm args ->
   do fxs <- popN args (fromIntegral narg + 1)
      case fxs of
@@ -926,14 +948,17 @@ lua_callk_hs l tid r narg nresult ctx k =
 
        _ -> luaError' "lua_callk: invalid narg"
 
-foreign export ccall lua_pcallk_hs
-  :: EntryPoint (CInt -> CInt -> CInt -> Ptr CInt -> IO CInt)
+
+type ApiLuaPcallk = EntryPoint
+  (CInt -> CInt -> CInt -> Lua_KContext -> Lua_KFunction -> Ptr CInt -> IO CInt)
+
+foreign export ccall lua_pcallk_hs :: ApiLuaPcallk
 
 -- | [-0, +1, e]
-lua_pcallk_hs ::
-  EntryPoint (CInt -> CInt -> CInt -> Ptr CInt -> IO CInt)
-lua_pcallk_hs l tid r narg nresult msgh out =
-  reentryG "lua_callk" [cArg narg, cArg nresult, cArg msgh] l tid r $ \vm args ->
+lua_pcallk_hs :: ApiLuaPcallk
+lua_pcallk_hs l tid r narg nresult msgh ctx k out =
+  reentryGK ctx k
+     "lua_callk" [cArg narg, cArg nresult, cArg msgh, cArg ctx, cArg k] l tid r $ \vm args ->
   do h <- if msgh == 0
             then return DefaultHandler
             else FunHandler <$> functionArgument vm (fromIntegral msgh) args
@@ -1205,7 +1230,8 @@ foreign export ccall
 
 lua_yieldk_hs :: EntryPoint (CInt -> Lua_KContext -> Lua_KFunction -> IO CInt)
 lua_yieldk_hs l tid r nResults ctx func =
-  reentryG "lua_yieldk" [cArg nResults, cArg ctx, cArg func] l tid r $ \vm args ->
+  reentryGK ctx func
+     "lua_yieldk" [cArg nResults, cArg ctx, cArg func] l tid r $ \vm args ->
     do outputs <- popN args (fromIntegral nResults)
 
        tRef  <- extToThreadRef vm tid

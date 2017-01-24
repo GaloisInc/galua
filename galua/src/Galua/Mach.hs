@@ -24,6 +24,7 @@ import qualified Data.Vector.Mutable as IOVector
 import           Data.ByteString (ByteString)
 import           Foreign (ForeignPtr, Ptr, nullPtr, newForeignPtr, FunPtr
                          , castFunPtr )
+import           Foreign.C (CInt)
 import           Foreign.StablePtr
                    (StablePtr, newStablePtr, freeStablePtr, castStablePtrToPtr)
 import qualified Data.ByteString.Lazy as L
@@ -319,6 +320,7 @@ data ApiCall = ApiCall
   { apiCallMethod :: !String
   , apiCallReturn :: CObjInfo -- ^ lazily generated location information
   , apiCallArgs   :: ![PrimArgument]
+  , apiContinuation :: Maybe (CInt -> Ptr () -> IO CInt)
   }
 
 -- | Make a blank exec env to be used when creating threads.
@@ -566,15 +568,6 @@ parseLua mbName src =
             return (Left (show e))
        Right (ExitFailure{},_,err) -> return $! Left $! unpackUtf8 $! L.toStrict err
        Right (ExitSuccess,chunk,_) -> parseLuaBytecode mbName chunk
-
-incrementCounter :: ReferenceType a => Reference a -> IORef (Map CodeLoc Int) -> IO ()
-incrementCounter i countRef =
-  atomicModifyIORef' countRef $ \counts ->
-    let counts' = inline Map.alter inc (refLocSite (referenceLoc i)) counts
-        inc old = Just $! maybe 1 succ old
-    in (counts', counts' `seq` ())
-
-
 
 
 data instance Reference Thread = ThreadRef

@@ -497,7 +497,7 @@ void lua_callk (lua_State *L, int nargs, int nresults, lua_KContext ctx, lua_KFu
 LUA_API
 int lua_pcallk (lua_State *L, int nargs, int nresults, int msgh, lua_KContext ctx, lua_KFunction k) {
         int out;
-        API_ENTRY(lua_pcallk, L, nargs, nresults, msgh, &out);
+        API_ENTRY(lua_pcallk, L, nargs, nresults, msgh, ctx, k, &out);
         return out;
 }
 
@@ -798,7 +798,7 @@ int galua_capi_entry(int (*cfun)(void *), lua_State *L) {
 }
 
 extern
-int galua_capi_entryk(lua_KFunction k, lua_KContext ctx, int status, lua_State *L) {
+int galua_capi_entryk(lua_KContext ctx, lua_KFunction k, int status, lua_State *L) {
         lua_State old_state;
         memcpy(&old_state, L, sizeof(lua_State));
 
