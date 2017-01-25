@@ -2,6 +2,7 @@
 module Galua.CallIntoC (execCFunction, handleCCallState) where
 
 import           Galua.Mach
+import           Galua.CApi
 import           Galua.Value
 import           Galua.Overloading
 
@@ -14,7 +15,7 @@ import           Foreign.Ptr
 
 execCFunction :: Ptr () -> MVar CNextStep -> CFunName -> IO NextStep
 execCFunction l mvar cfun =
-  do putMVar mvar (CCallback (cfunAddr cfun) l)
+  do putMVar mvar (CCallback (capi_entry (cfunAddr cfun) l))
      return WaitForC
 
 handleCCallState :: VM -> CCallState -> IO NextStep

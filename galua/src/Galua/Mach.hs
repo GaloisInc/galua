@@ -93,7 +93,7 @@ data CCallState
   = CReturned Int
   | CReEntry ApiCall (VM -> IO NextStep)
 
-data CNextStep = CAbort | CResume | CCallback CFun (Ptr ())
+data CNextStep = CAbort | CResume | CCallback (IO CInt)
 
 
 -- | Machine instructions to do with control flow.

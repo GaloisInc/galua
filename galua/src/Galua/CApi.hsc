@@ -4,7 +4,7 @@
 
 module Galua.CApi where
 
-import Control.Concurrent (MVar, takeMVar)
+import Control.Concurrent (MVar, takeMVar, putMVar)
 import Control.Concurrent.STM (TMVar, atomically, putTMVar)
 import Control.Exception(catch,SomeException(..),throwIO,try,displayException)
 import Control.Monad (replicateM_,when,unless)
@@ -186,8 +186,8 @@ cServiceLoop resultMVar interpMVar =
      case res of
        CAbort  -> return 1
        CResume -> return 0
-       CCallback cfun l ->
-         do resultN <- capi_entry cfun l
+       CCallback go ->
+         do resultN <- go
 
             case resultN of
               -1 -> return () -- normal error unwind
@@ -1240,10 +1240,12 @@ lua_yieldk_hs l tid r nResults ctx func =
        SV.shrink stack n
        traverse_ (push stack) outputs
        return $ Yield $
-         do inputs <- stackToList stack
-            if func == nullFunPtr
-              then return (FunReturn inputs)
-              else fail "Panic: lua_yieldk with continuation not implemented" -- XXX
+            if nullFunPtr == func
+                then FunReturn <$> stackToList stack
+                else do let token = unsafeForeignPtrToPtr (threadCPtr (referenceVal tRef))
+                        putMVar (machCServer (vmMachineEnv vm))
+                                (CCallback (capi_entryk ctx func luaYIELD token))
+                        return WaitForC
 
 
 foreign export ccall
