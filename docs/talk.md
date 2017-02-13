@@ -215,15 +215,39 @@ Cooperative Concurrency
         - C functions unwound in this way require explicit continuations.
 
 
-Leaving an Entering Haskell
----------------------------
-
-
-Background: Haskell's FFI
--------------------------
 
 
 
+Interaction Between C and Haskell
+---------------------------------
+
+* We want to expose a C API to the Haskell code
+
+* Export Haskell implementatoin:
+
+        foreign export ccall
+          lua_settable_hs :: Ptr () -> CInt -> IO CInt
+
+* Provide a C wrapper to deal with unwinding the stack:
+
+        int lua_settable (lua_State *L, int index) {
+          if (lua_settable_hs(L,index)
+            longjmp(*(L->oneror),1);
+          return 0;
+        }
+
+
+Background: Calling Haskell from C
+----------------------------------
+
+![](pdf/foreign-call.pdf)\
+
+
+
+Handling API Requests: Design Choices
+-------------------------------------
+
+![](pdf/handling-requests.pdf)\
 
 
 
