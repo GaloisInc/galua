@@ -208,9 +208,11 @@ Cooperative Concurrency
     - `resume` pushes a new call stack
     - `yield` pops a stack
 
-* Uses similar techniques
-    - `yeild` needs to unwind the C stack to return to
-      the C code that resumed the thread.
+* Uses similar techniques:
+    - Conceptually, `yield` preserves the stack, we just switch threads.
+    - If a `resume` happens in C, then `yeild` needs to return.
+        - unwind the C parts of the yielded stack, but not the Lua ones.
+        - C functions unwound in this way require explicit continuations.
 
 
 Leaving an Entering Haskell
@@ -237,6 +239,9 @@ Lua: Too Much Overloading
 
 GHC/Haskell: Data Representation
 --------------------------------
+
+![](pdf/object-representations.pdf)\
+
 
 
 Packaging and Distribution
