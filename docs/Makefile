@@ -6,7 +6,9 @@ talk.pdf: talk.md $(IMGS) Makefile
 
 pdf/%.pdf: %.svg
 	mkdir -p pdf
-	inkscape -A $@ $<
+	inkscape -A $(shell pwd)/$@ $(shell pwd)/$<
+# silly use of pwd required to support OS X
+# https://bugs.launchpad.net/inkscape/+bug/181639
 
 .PHONY: clean
 	rm -rf pdf
