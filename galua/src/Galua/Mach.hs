@@ -25,7 +25,7 @@ import           Data.ByteString (ByteString)
 import           Foreign (ForeignPtr, Ptr, nullPtr, newForeignPtr, FunPtr
                          , castFunPtr )
 import           Foreign.StablePtr
-                   (newStablePtr, freeStablePtr, castStablePtrToPtr)
+                   (StablePtr, newStablePtr, freeStablePtr, castStablePtrToPtr)
 import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString as B
 import           System.Exit
@@ -92,7 +92,7 @@ data CCallState
   = CReturned Int
   | CReEntry ApiCall (VM -> IO NextStep)
 
-data CNextStep = CAbort | CResume | CCallback CFun
+data CNextStep = CAbort | CResume | CCallback CFun (Ptr ())
 
 
 -- | Machine instructions to do with control flow.
@@ -271,6 +271,8 @@ data MachineEnv = MachineEnv
     -- ^ A cache mapping addresses of C functions to human-readable
     -- information about them.
 
+  , machStablePtr     :: {-# UNPACK #-} !(StablePtr ExternalLuaState)
+
   , machCFunInfo      :: FunPtr () -> IO CObjInfo
   }
 
@@ -357,10 +359,16 @@ newMachineEnv aref machConfig =
      machLuaServer     <- atomically newEmptyTMVar
      machCServer       <- newEmptyMVar
      machGarbage       <- newIORef []
-     machMainThreadRef <- allocNewThread aref refLoc
-                                      machLuaServer machCServer ThreadRunning
+
+     machStablePtr <- newStablePtr ExternalLuaState
+       { extLuaStateLuaServer = machLuaServer
+       , extLuaStateCServer   = machCServer
+       }
+
+     machMainThreadRef <- allocNewThread machStablePtr aref refLoc ThreadRunning
      setTableRaw machRegistry (Number 1) (Thread machMainThreadRef)
      setTableRaw machRegistry (Number 2) (Table machGlobals)
+
 
      machNameCache     <- newIORef (cacheEmpty 50000)
      machCFunInfo      <- cfunInfoFun
@@ -368,19 +376,17 @@ newMachineEnv aref machConfig =
 
 
 foreign import ccall "galua_allocate_luaState"
-  allocateLuaState :: Ptr () -> IO (Ptr ())
+  allocateLuaState :: Ptr () -> Int -> IO (Ptr ())
 
 foreign import ccall "&galua_free_luaState"
   freeLuaState :: FunPtr (Ptr () -> IO ())
 
-newCPtr :: Ptr () -> IO (ForeignPtr ())
-newCPtr initialToken =
-  do luastate <- allocateLuaState initialToken
+newCPtr :: StablePtr ExternalLuaState -> Int -> IO (ForeignPtr ())
+newCPtr initialToken threadId =
+  do luastate <- allocateLuaState (castStablePtrToPtr initialToken) threadId
      when (nullPtr == luastate)
        (fail "lua_State allocation failed")
      newForeignPtr freeLuaState luastate
-
-
 
 --------------------------------------------------------------------------------
 -- Allocation of values
@@ -412,26 +418,19 @@ machNewUserData vm fp n =
 machNewThread :: VM -> IO (Reference Thread)
 machNewThread vm =
   do let aref = vmAllocRef vm
-     loc     <- machRefLoc vm
-     let menv    = vmMachineEnv vm
-         luaMVar = machLuaServer menv
-         cMVar   = machCServer menv
-     allocNewThread aref loc luaMVar cMVar ThreadNew
+     loc <- machRefLoc vm
+     let sptr = machStablePtr (vmMachineEnv vm)
+     allocNewThread sptr aref loc ThreadNew
 
 allocNewThread ::
+  StablePtr ExternalLuaState ->
   AllocRef ->
   RefLoc ->
-  TMVar CCallState -> MVar CNextStep -> ThreadStatus -> IO (Reference Thread)
-allocNewThread aref refLoc luaTMVar cMVar st =
+  ThreadStatus -> IO (Reference Thread)
+allocNewThread sptr aref refLoc st =
   do refId <- newRefId aref
 
-     sptr <- newStablePtr ExternalLuaState
-               { extLuaStateLuaServer = luaTMVar
-               , extLuaStateCServer   = cMVar
-               , extLuaStateThreadId  = refId
-               }
-
-     threadCPtr <- newCPtr (castStablePtrToPtr sptr)
+     threadCPtr <- newCPtr sptr  refId
 
 
      threadStatus <- newIORef st
@@ -441,10 +440,7 @@ allocNewThread aref refLoc luaTMVar cMVar st =
      stPC         <- newIOURef 0
 
      let th = MkThread{..}
-     ref <- newRefWithId aref refId refLoc th
-
-     addRefFinalizer ref (freeStablePtr sptr)
-     return ref
+     newRefWithId aref refId refLoc th
 
 machRefLoc :: VM -> IO RefLoc
 machRefLoc vm =
@@ -475,15 +471,14 @@ machRefLoc vm =
 data ExternalLuaState = ExternalLuaState
   { extLuaStateLuaServer   :: TMVar CCallState
   , extLuaStateCServer     :: MVar CNextStep
-  , extLuaStateThreadId    :: Int
   }
 
 machLookupRef :: AllocType a => VM -> Int -> IO (Maybe (Reference a))
 machLookupRef vm n = lookupRef (vmAllocRef vm) n
 
-extToThreadRef :: VM -> ExternalLuaState -> IO (Reference Thread)
-extToThreadRef vm ext =
-  do mb <- machLookupRef vm (extLuaStateThreadId ext)
+extToThreadRef :: VM -> Int -> IO (Reference Thread)
+extToThreadRef vm tid =
+  do mb <- machLookupRef vm tid
      case mb of
        Nothing -> fail "extToThreadRef: Unexpectedly invalid weak thread reference"
        Just x  -> return x
