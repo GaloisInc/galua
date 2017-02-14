@@ -1,1 +1,3 @@
-*.pdf
+talk.pdf
+_build/
+.shake/

@@ -116,57 +116,57 @@ Implementation Overview
 Stack Frames: Local Execution
 -----------------------------
 
-![](pdf/debug-state-1.pdf)\
+![](_build/debug-state-1.pdf)\
 
 
 Calling Functions
 -----------------
 
-![](pdf/debug-state-2.pdf)\
+![](_build/debug-state-2.pdf)\
 
 
 Returning from Functions
 ------------------------
 
-![](pdf/debug-state-3.pdf)\
+![](_build/debug-state-3.pdf)\
 
 
 
 Calling a C Function
 --------------------
 
-![](pdf/debug-state-4.pdf)\
+![](_build/debug-state-4.pdf)\
 
 
 
 Reentry through the C API
 -------------------------
 
-![](pdf/debug-state-5.pdf)\
+![](_build/debug-state-5.pdf)\
 
 
 C calls Lua via C API
 ---------------------
 
-![](pdf/debug-state-6.pdf)\
+![](_build/debug-state-6.pdf)\
 
 
 Exception Handlers
 ------------------
 
-![](pdf/debug-state-7.pdf)\
+![](_build/debug-state-7.pdf)\
 
 
 Throwing Exceptions: Unroll Stack
 ---------------------------------
 
-![](pdf/debug-state-8.pdf)\
+![](_build/debug-state-8.pdf)\
 
 
 Challenge: Unroll the C Stack
 -----------------------------
 
-![](pdf/debug-state-9.pdf)\
+![](_build/debug-state-9.pdf)\
 
 
 
@@ -192,33 +192,33 @@ if (jumped) {
 Solution: `setjmp` when Leaving
 -------------------------------
 
-![](pdf/debug-state-10.pdf)\
+![](_build/debug-state-10.pdf)\
 
 
 Solution: Execution as Normal
 -----------------------------
 
-![](pdf/debug-state-11.pdf)\
+![](_build/debug-state-11.pdf)\
 
 
 Solution: `longjmp` to Unroll C Stack
 -------------------------------------
 
-![](pdf/debug-state-12.pdf)\
-
-
-
-Solution: `longjmp` to Unroll C Stack
--------------------------------------
-
-![](pdf/debug-state-13.pdf)\
+![](_build/debug-state-12.pdf)\
 
 
 
 Solution: `longjmp` to Unroll C Stack
 -------------------------------------
 
-![](pdf/debug-state-14.pdf)\
+![](_build/debug-state-13.pdf)\
+
+
+
+Solution: `longjmp` to Unroll C Stack
+-------------------------------------
+
+![](_build/debug-state-14.pdf)\
 
 
 
@@ -266,14 +266,14 @@ int lua_settable (lua_State *L, int index) {
 Background: Calling Haskell from C
 ----------------------------------
 
-![](pdf/foreign-call.pdf)\
+![](_build/foreign-call.pdf)\
 
 
 
 Handling API Requests: Design Choices
 -------------------------------------
 
-![](pdf/handling-requests.pdf)\
+![](_build/handling-requests.pdf)\
 
 
 
@@ -300,7 +300,7 @@ Lua: Too Much Overloading
 GHC/Haskell: Data Representation
 --------------------------------
 
-![](pdf/object-representations.pdf)\
+![](_build/object-representations.pdf)\
 
 
 
