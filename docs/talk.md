@@ -19,9 +19,14 @@ The Lua Language
 Example: a Lua program
 ----------------------
 
-    function f(name,x,y)
-      XXX
+```Lua
+    local files = {}
+    for i = 1,10 do
+      local file = io.open('/dev/null', 'w')
+      file:write('hello world: '..i)
+      files[i] = file
     end
+```
 
 
 
@@ -40,28 +45,44 @@ Lua's C API
 Example: Using the C API
 ------------------------
 
-     lua_getglobal(L, "f");     /* function to be called */
+```C
+lua_getglobal(L, "f");     /* function to be called */
+```
 \pause
 
-     lua_pushliteral(L, "how"); /* 1st argument */
+```C
+lua_pushliteral(L, "how"); /* 1st argument */
+```
 \pause
 
-     lua_getglobal(L, "t");     /* table to be indexed */
+```C
+lua_getglobal(L, "t");     /* table to be indexed */
+```
 \pause
 
-     lua_getfield(L, -1, "x");  /* push t.x (2nd arg) */
+```C
+lua_getfield(L, -1, "x");  /* push t.x (2nd arg) */
+```
 \pause
 
-     lua_remove(L, -2);         /* remove 't' */
+```C
+lua_remove(L, -2);         /* remove 't' */
+```
 \pause
 
-     lua_pushinteger(L, 14);    /* 3rd argument */
+```C
+lua_pushinteger(L, 14);    /* 3rd argument */
+```
 \pause
 
-     lua_call(L, 3, 1);         /* call 'f' */
+```C
+lua_call(L, 3, 1);         /* call 'f' */
+```
 \pause
 
-     lua_setglobal(L, "a");     /* set global 'a' */
+```C
+lua_setglobal(L, "a");     /* set global 'a' */
+```
 
 
 Haskell Implementation
@@ -159,13 +180,14 @@ Background: `setjmp` and `longjmp`
           Does not return at all.
 --------  -----------------------------
 
-
-        int jumped = setjmp(saveHere);
-        if (jumped) {
-          // code if jump back
-        } else {
-          // normal code
-        }
+```C
+int jumped = setjmp(saveHere);
+if (jumped) {
+  // code if jump back
+} else {
+  // normal code
+}
+```
 
 Solution: `setjmp` when Leaving
 -------------------------------
@@ -223,18 +245,22 @@ Interaction Between C and Haskell
 
 * We want to expose a C API to the Haskell code
 
-* Export Haskell implementatoin:
+* Export Haskell implementation:
 
-        foreign export ccall
-          lua_settable_hs :: Ptr () -> CInt -> IO CInt
+```Haskell
+foreign export ccall
+  lua_settable_hs :: Ptr () -> CInt -> IO CInt
+```
 
 * Provide a C wrapper to deal with unwinding the stack:
 
-        int lua_settable (lua_State *L, int index) {
-          if (lua_settable_hs(L,index)
-            longjmp(*(L->oneror),1);
-          return 0;
-        }
+```C
+int lua_settable (lua_State *L, int index) {
+  if (lua_settable_hs(L,index)
+    longjmp(*(L->oneror),1);
+  return 0;
+}
+```
 
 
 Background: Calling Haskell from C
@@ -255,11 +281,21 @@ Handling API Requests: Design Choices
 
 
 
-Reflections
-===========
+Challenges
+==========
 
 Lua: Too Much Overloading
 -------------------------
+
+* Overall a very nice and simple design.
+
+* Support for "overloading" makes simple looking code complicated.
+    - Evaluating `x + y` requires a complex decision procedure,
+      potentially evaluating loops!
+
+* Some overhead could be eliminate by JIT.
+
+
 
 GHC/Haskell: Data Representation
 --------------------------------
@@ -271,24 +307,62 @@ GHC/Haskell: Data Representation
 Packaging and Distribution
 ---------------------------
 
-  * Depend on a lot of Haskell libraries
-  * We would like to provide a single library with a C API.
+  * We depend on a lot of Haskell libraries.
+  * We would like to provide a single static C library.
+  * Solution:
+    - Custom `Setup.hs`
+    - Use the Cabal library to compute transitive library dependencies.
+    - Link together into a single static library.
+    - Hide all but the exposed C API symbols.
 
-  * XXX: describe 
-  * Improved support in latest Cabal
-
-
-GHC: Other issues
------------------
-
-  * PIC
-  * Profiling (confusing cost centers in CPS)
-  * Reinitializing RTS
-  * Signal handling
+  * The relinking and symbol control requires OS specific code.
 
 
-Conclusion
-----------
+Issues with GHC
+---------------
+
+  * The GHC RTS cannot be re-initialized
+      - We don't clean-up the RTS on `lua_close`.
+  * On Linux, GHC does not compile libraries with PIC:
+      - Galua cannot be integrated in a shared library.
+  * GHC RTS emits a lot of signals:
+      - May cause confusion with code that does not handle `EAGAIN`.
+  * Profiling Galua was difficult:
+      - Some code written in CPS
+      - Computation attributed to unexpected functions (e.g., `>>=`).
+
+
+Haskell Pros and Cons
+---------------------
+
+* Haskell's FFI worked very well.
+
+* The performance of our Lua implementation is quite a bit worse than
+  the reference C implementation:
+    - Reference implementation is extremely good!
+    - We've done some optimization, but more is possible.
+    - Data representation issues are a challenge:
+        - some control: stritness, UNPACK; not obvious when to use
+        - future GHC extensions are likely to help: mutable record fields.
+
+* Overall working in Haskell was great:
+    - Adding the web-server interface was fairly trivial.
+    - We could quickly add and try-out new features.
+    - The code changed a lot since the beginning:
+        - Haskell is great for refactorying code!
+
+
+Conclusions
+-----------
+
+* We implemented a full Lua debugger in Haskell.
+    - it works with Lua frameworks "in the wild" (e.g. Love)
+
+* The debugger is just an ordinary (if big) C library.
+
+* The techniques we used are not specific to interpreting Lua:
+    - other Haskell algorithms may be implemented and distributed
+      in a similar fashion.
 
 
 
