@@ -342,14 +342,14 @@ Haskell Pros and Cons
     - Reference implementation is extremely good!
     - We've done some optimization, but more is possible.
     - Data representation issues are a challenge:
-        - some control: stritness, UNPACK; not obvious when to use
+        - some control: strictness, UNPACK; not obvious when to use
         - future GHC extensions are likely to help: mutable record fields.
 
 * Overall working in Haskell was great:
     - Adding the web-server interface was fairly trivial.
     - We could quickly add and try-out new features.
     - The code changed a lot since the beginning:
-        - Haskell is great for refactorying code!
+        - Haskell is great for refactoring code!
 
 
 Conclusions
