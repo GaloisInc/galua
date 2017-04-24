@@ -31,19 +31,33 @@ LUALIBS_OBJS=\
      lualibs/objs/linit.o \
      lualibs/objs/lcompat.o
 
+define make_pkgconfig
+  @echo Installing $(DIST)/pkgconfig/$(1).pc
+  @echo 'prefix=$(realpath $(DIST))'             > $(DIST)/pkgconfig/$(1).pc
+  @echo 'exec_prefix=$${prefix}/bin'            >> $(DIST)/pkgconfig/$(1).pc
+  @echo 'includedir=$${prefix}/include/galua'   >> $(DIST)/pkgconfig/$(1).pc
+  @echo 'libdir=$${prefix}/lib'                 >> $(DIST)/pkgconfig/$(1).pc
+  @cat $(1).pc                                  >> $(DIST)/pkgconfig/$(1).pc
+endef
+
 install: prepare ${LUALIBS}
 	./build galua
 	cp libgalua.a $(DIST)/lib
 	cp galua $(DIST)/bin
+	$(call make_pkgconfig,galua)
 	./build galua-dbg
 	cp libgalua-dbg.a $(DIST)/lib
 	cp galua-dbg $(DIST)/bin
+	$(call make_pkgconfig,galua-dbg)
+
+
 
 prepare:
 	mkdir -p $(DIST)
 	mkdir -p $(DIST)/bin
 	mkdir -p $(DIST)/include/galua
 	mkdir -p $(DIST)/lib
+	mkdir -p $(DIST)/pkgconfig
 	cp $(TOP)/galua/include/* $(DIST)/include/galua
 	cp $(TOP)/galua-c/lualibs/include/* $(DIST)/include/galua
 
@@ -58,6 +72,8 @@ clean:
 
 distclean: clean
 	rm -rf $(DIST)
+	rm -f *.pc
+	rm -f libgalua.a libgalua-dbg.a
 
 lualibs/objs/%.o: lualibs/src/%.c
 	mkdir -p lualibs/objs

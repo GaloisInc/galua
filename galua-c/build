@@ -22,12 +22,15 @@ case $TGT in
   ;;
 esac
 
+echo "Target $TGT"
 
+################################################################################
 # Make the entry point for "newstate".
 $CC -fPIC -DNEWSTATE=${NEWSTATE} -DWRITESTRING=${WRITESTRING} -c newstate.c
 
 
-# Build library
+################################################################################
+# Building library
 
 LIBNAME=lib${TGT}.a
 
@@ -72,8 +75,23 @@ done
 UNAME=$(uname -s)
 ARCH=$(uname -m)
 
+echo "  Building for $UNAME-$ARCH"
+
+COMMON_CFLAGS=$(cat <<EOF
+-g
+-std=gnu99
+-I$TOP/galua-c/inplace/include/galua
+-o$TGT
+-L.
+-l$TGT
+$(for i in ${C_LD_FLAGS[@]}; do echo $i; done)
+EOF
+)
+
 case $UNAME in
   "Linux" | "FreeBSD" )
+
+      echo "  Building library $LIBNAME"
       TMP_DIR=$(mktemp -d .build.XXXX)
 
       cut --complement -b 1 lua_api.txt | sort > $TMP_DIR/API
@@ -85,17 +103,17 @@ case $UNAME in
       echo "};"                  >> $TMP_DIR/DYN
 
 
-      # XXX: Using --gc-sections causes a crash, for some reason?
-      # $LD -o $LIBNAME -arch $ARCH --relocatable --whole-archive \
-      #     @$TMP_DIR/REQ --gc-sections \
-      #  newstate.o liblualibs.a "${HS_LD_FLAGS[@]}"
+      $LD -o $LIBNAME \
+          -arch $ARCH \
+          --relocatable \
+          --whole-archive \
+          --retain-symbols-file=$TMP_DIR/API \
+          newstate.o \
+          liblualibs.a \
+          "${HS_LD_FLAGS[@]}"
 
-      $LD -o $LIBNAME -arch $ARCH --relocatable --whole-archive \
-       --retain-symbols-file=$TMP_DIR/API \
-       newstate.o liblualibs.a "${HS_LD_FLAGS[@]}"
 
-
-
+      echo "  Stripping library $LIBNAME"
       nm -f posix $LIBNAME | awk '{print $1}' | sort > $TMP_DIR/ALL
       comm -23 $TMP_DIR/ALL $TMP_DIR/API > $TMP_DIR/LOCALIZE
       objcopy --localize-symbols=$TMP_DIR/LOCALIZE $LIBNAME
@@ -103,13 +121,19 @@ case $UNAME in
 
       C_LD_FLAGS+=("-lpthread")
 
-      # Build executable
-      $CC main.c -g -o $TGT -I$TOP/galua-c/inplace/include/galua -std=gnu99 \
-              -Wl,--dynamic-list=$TMP_DIR/DYN \
-              -L. -l$TGT "${C_LD_FLAGS[@]}"
+      # These go in the pkgconfi
+      PC_CFLAGS=-rdynamic
+
+      echo "  Building executable $TGT"
+      $CC main.c \
+          -Wl,--dynamic-list=$TMP_DIR/DYN \
+          $PC_CFLAGS \
+          $COMMON_CFLAGS
       rm -rf $TMP_DIR
   ;;
   "Darwin")
+
+    echo "  Building library $LIBNAME"
     $LD -r -o $LIBNAME \
        -arch x86_64 \
        -exported_symbols_list lua_api.txt \
@@ -117,19 +141,40 @@ case $UNAME in
        liblualibs.a \
        "${HS_LD_FLAGS[@]}"
 
-    # Build executable
-    $CC main.c -g \
-            -o $TGT \
-            -std=gnu99 \
-            -Wl,-no_compact_unwind \
-            -I$TOP/galua-c/inplace/include/galua \
-            -L. -l$TGT \
-            "${C_LD_FLAGS[@]}"
+    PC_CFLAGS=
+
+    echo "  Building executable $TGT"
+    $CC main.c \
+          $PC_CFLAGS \
+          $COMMON_CFLAGS \
+          -Wl,-no_compact_unwind
 
   ;;
   *) echo "Unknown OS: $UNAME"
      exit 3
 esac
+
+
+
+
+################################################################################
+# Generate `pkgconfig` file
+################################################################################
+
+PKG_CONFIG_FILE=$TGT.pc
+
+echo "  Generating \`pkgconfig\` file $PKG_CONFIG_FILE"
+
+
+cat >$PKG_CONFIG_FILE <<EOF
+# Please define 'exec_prefix', 'includedir', and 'libdir' during install.
+Name:         libgalua-dbg
+Version:      0.1
+Description:  the '$TGT' library, used for debugging Lua.
+Cflags:       $PC_CFLAGS -I\${includedir}
+Libs:         -L\${libdir} -l$TGT ${C_LD_FLAGS[@]}
+EOF
+
 
 
 
