@@ -51,6 +51,9 @@ import           Galua.Value
 import           Galua.Number
 import           Galua.LuaString
 
+-- import qualified Galua.Micro.AST (MicroFunction)
+-- import qualified Galua.Micro.Translate as Micro
+
 import           Data.Coerce
 
 parseLuaBytecode :: Maybe String -> L.ByteString -> IO (Either String Chunk)
@@ -93,6 +96,7 @@ data Function = Function
   , funcIsVararg        :: !Bool
   , funcMaxStackSize    :: !Int
   , funcCode            :: !(Vector OpCode)
+  -- , funcMicroCode       :: !MicroFunction
   , funcUpvalues        :: !(Vector Upvalue)
   , funcNested          :: !(Vector Function)
   , funcDebug           :: !DebugInfo
@@ -198,6 +202,7 @@ cvtFunction parent fun =
       , funcIsVararg        = BC.funcIsVararg fun
       , funcMaxStackSize    = BC.funcMaxStackSize fun
       , funcCode            = code
+      -- , funcMicroCode       = Micro.translate fun
       , funcUpvalues        = ups'
       , funcDebug           = BC.funcDebug fun
       , funcNested          = nest
@@ -408,4 +413,23 @@ instance BC.PP UpIx where
 
 instance BC.PP Reg where
   pp i (Reg u) = BC.pp i (BC.Reg u)
+
+
+
+--------------------------------------------------------------------------------
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 

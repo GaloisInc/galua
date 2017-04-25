@@ -14,7 +14,7 @@ import           Data.List(nub)
 
 import           Galua.Micro.AST
 
-joinBlocks :: Function -> Function
+joinBlocks :: MicroFunction -> MicroFunction
 joinBlocks f = f { functionCode = doJoin (functionCode f) }
 
 doJoin :: Map BlockName (Vector BlockStmt) -> Map BlockName (Vector BlockStmt)

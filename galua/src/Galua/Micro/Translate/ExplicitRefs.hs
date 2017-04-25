@@ -10,7 +10,7 @@ import           Data.Map (Map)
 import qualified Data.Map as Map
 import           Control.Monad(liftM,ap)
 
-import qualified Language.Lua.Bytecode as OP
+import qualified Galua.Code as Code
 import           Galua.Micro.AST
 import           Galua.Micro.Translate.Monad (M,generate,inBlock)
 import qualified Galua.Micro.Translate.Monad as M
@@ -19,7 +19,7 @@ import qualified Galua.Micro.Translate.Monad as M
 
 --------------------------------------------------------------------------------
 
-explicitBlocks :: Map BlockName (Set OP.Reg) ->
+explicitBlocks :: Map BlockName (Set Code.Reg) ->
                   Map BlockName (Vector BlockStmt) ->
                   Map BlockName (Vector BlockStmt)
 explicitBlocks refs blocks = generate $ mapM_ oneBlock $ Map.toList blocks
@@ -37,7 +37,9 @@ explicitBlocks refs blocks = generate $ mapM_ oneBlock $ Map.toList blocks
 -- change during 'newRef'. In the case of compiling NewClosure it
 -- can occur that we need to assign to a reference immediately after
 -- creating it.
-newtype R a = R (Map BlockName (Set OP.Reg) -> Set OP.Reg -> M (a, Set OP.Reg))
+newtype R a = R (Map BlockName (Set Code.Reg) ->
+                Set Code.Reg ->
+                M (a, Set Code.Reg))
 
 instance Functor R where
   fmap  = liftM
@@ -51,7 +53,7 @@ instance Monad R where
                                 let R m1 = f a
                                 m1 rs refs1)
 
-reader :: (Set OP.Reg -> M a) -> R a
+reader :: (Set Code.Reg -> M a) -> R a
 reader f = R $ \_ refs -> do x <- f refs
                              return (x,refs)
 
@@ -60,7 +62,7 @@ isRef r = case r of
             Reg r' -> reader (\refs -> return (r' `Set.member` refs))
             _      -> return False
 
-runRefs :: Map BlockName (Set OP.Reg) -> Set OP.Reg -> R a -> M a
+runRefs :: Map BlockName (Set Code.Reg) -> Set Code.Reg -> R a -> M a
 runRefs allRefs refs (R f) = fmap fst (f allRefs refs)
 
 doM :: M a -> R a
@@ -232,9 +234,10 @@ refStmt stmt =
     Comment x -> emit (Comment x)
 
     CloseStack _ -> return ()   -- It was there only for analysis
-    NewClosure r c us ->
-      do mapM_ upVal us
-         setReg r $ \r' -> NewClosure r' c us
+    NewClosure r c f ->
+      do let us = funcUpvalExprs f
+         mapM_ upVal us
+         setReg r $ \r' -> NewClosure r' c f
       where
       upVal u =
         case u of

@@ -1,8 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 -- | Translate from Lua op-codes into the CFG representation of a program.
-module Galua.Micro.Translate (translate,translateAll,translateTop) where
+module Galua.Micro.Translate (translate) where -- ,translateAll,translateTop) where
 
-import qualified Language.Lua.Bytecode as OP
 import           Language.Lua.Bytecode (Count(..), plusReg, regRange)
 import           Data.String(fromString)
 import           Data.ByteString(ByteString)
@@ -16,20 +15,23 @@ import qualified Data.Map as Map
 
 import Language.Lua.Bytecode.FunId
 
+import qualified Galua.Code as Code
 import           Galua.Micro.AST
 import           Galua.Micro.Translate.Monad
 import           Galua.Micro.Translate.AnalyzeRefs(analyze)
 import           Galua.Micro.Translate.ExplicitRefs(explicitBlocks)
 import           Galua.Micro.Translate.JoinBlocks(joinBlocks)
 
-translate :: OP.Function -> Function
+translate :: Code.Function -> MicroFunction
 translate fun = joinBlocks pass1 { functionCode = explicitBlocks refs code1 }
   where
   pass1 = translatePass1 fun
   code1 = functionCode pass1
-  refs  = analyze (OP.Reg (OP.funcMaxStackSize fun - 1)) code1
+  refs  = analyze (Code.Reg (Code.funcMaxStackSize fun - 1)) code1
 
-translateAll :: FunId -> OP.Function -> Map FunId Function -> Map FunId Function
+{-
+translateAll :: FunId -> Code.Function -> Map FunId MicroFunction ->
+                                                        Map FunId MicroFunction
 translateAll cur f m0 =
   go m0 (zip [ 0 .. ] (Vector.toList (OP.funcProtos f)))
   where
@@ -38,7 +40,7 @@ translateAll cur f m0 =
 
 translateTop :: Int -> OP.Function -> Map FunId Function
 translateTop n f = translateAll (rootFun n) f Map.empty
-
+-}
 
 
 --------------------------------------------------------------------------------
@@ -46,82 +48,81 @@ translateTop n f = translateAll (rootFun n) f Map.empty
 newTMP :: M Reg
 newTMP = newPhaseTMP 1
 
-translatePass1 :: OP.Function -> Function
+translatePass1 :: Code.Function -> MicroFunction
 translatePass1 fun =
-  Function { functionCode = generate $
-                do prelude (OP.funcNumParams fun)
+  MicroFunction
+    { functionCode = generate $
+                do prelude (Code.funcNumParams fun)
                    mapM_ (micro fun) $ take (Vector.length code) [ 0 .. ]
            }
   where
-  code = OP.funcCode fun
+  code = Code.funcCode fun
 
 prelude :: Int -> M ()
 prelude params =
   inBlock EntryBlock $
     do for_ (take params [0..]) $ \i ->
-           do emit (IndexList (Reg (OP.Reg i)) ArgReg i)
+           do emit (IndexList (Reg (Code.Reg i)) ArgReg i)
        when (params > 0) (emit (Drop ArgReg params))
        goto (PCBlock 0)
 
-micro :: OP.Function -> Int -> M ()
+micro :: Code.Function -> Int -> M ()
 micro fun pc =
 
   inBlock (PCBlock pc) $
     case getOpCode fun pc of
 
       -- Setting registers
-      OP.OP_MOVE tgt src ->
+      Code.OP_MOVE tgt src ->
         do Reg tgt =: src
            advance
 
-      OP.OP_LOADK tgt k ->
+      Code.OP_LOADK tgt k ->
         do Reg tgt =: getLiteral fun k
            advance
 
-      OP.OP_LOADKX tgt    ->
-        do let k = OP.Kst (getExtraArg fun (pc + 1))
-           Reg tgt =: getLiteral fun k
+      Code.OP_LOADKX _ ->
            jump 1
 
-      OP.OP_LOADBOOL tgt b withJump ->
+      Code.OP_LOADBOOL tgt b withJump ->
         do Reg tgt =: b
            jump (if withJump then 1 else 0)
 
-      OP.OP_LOADNIL tgt count ->
+      Code.OP_LOADNIL tgt count ->
         do let mkNil r = Reg r =: KNil
            mapM_ mkNil $ regRange tgt (count + 1)
            advance
 
 
       -- Up values
-      OP.OP_GETUPVAL tgt src ->
+      Code.OP_GETUPVAL tgt src ->
         do Reg tgt =: src
            advance
 
-      OP.OP_SETUPVAL src tgt ->
+      Code.OP_SETUPVAL src tgt ->
         do emit $ SetUpVal tgt (Reg src)
            advance
 
-      OP.OP_GETTABUP tgt src tabKey ->
+      Code.OP_GETTABUP tgt src tabKey ->
         indexValue (Reg tgt) src (fromRK tabKey) (PCBlock (pc + 1))
 
-      OP.OP_SETTABUP tab tabKey val ->
+      Code.OP_SETTABUP tab tabKey val ->
         setTable tab (fromRK tabKey) (fromRK val) (PCBlock (pc + 1))
 
 
 
       -- Tables
-      OP.OP_NEWTABLE tgt _ _ ->
+      Code.OP_NEWTABLE tgt _ _ ->
         do emit $ NewTable (Reg tgt)
            advance
 
-      OP.OP_GETTABLE tgt src tabKey ->
+      Code.OP_GETTABLE tgt src tabKey ->
         indexValue (Reg tgt) src (fromRK tabKey) (PCBlock (pc + 1))
 
-      OP.OP_SETTABLE tab tabKey val ->
+      Code.OP_SETTABLE tab tabKey val ->
         setTable tab (fromRK tabKey) (fromRK val) (PCBlock (pc + 1))
 
-      OP.OP_SELF tgt tab key ->
+      Code.OP_SELF tgt tab key ->
         do tmp <- newTMP
            tmp =: tab
            indexValue (Reg tgt) tab (fromRK key) $
@@ -130,43 +131,43 @@ micro fun pc =
 
 
       -- Arithmethic
-      OP.OP_ADD  tgt op1 op2 -> binArithOp DoAdd tgt op1 op2
-      OP.OP_SUB  tgt op1 op2 -> binArithOp DoSub tgt op1 op2
-      OP.OP_MUL  tgt op1 op2 -> binArithOp DoMul tgt op1 op2
+      Code.OP_ADD  tgt op1 op2 -> binArithOp DoAdd tgt op1 op2
+      Code.OP_SUB  tgt op1 op2 -> binArithOp DoSub tgt op1 op2
+      Code.OP_MUL  tgt op1 op2 -> binArithOp DoMul tgt op1 op2
 
-      OP.OP_POW  tgt op1 op2 -> binArithOp DoPow tgt op1 op2
-      OP.OP_DIV  tgt op1 op2 -> binArithOp DoDiv tgt op1 op2
-      OP.OP_MOD  tgt op1 op2 -> binArithOp DoMod tgt op1 op2
+      Code.OP_POW  tgt op1 op2 -> binArithOp DoPow tgt op1 op2
+      Code.OP_DIV  tgt op1 op2 -> binArithOp DoDiv tgt op1 op2
+      Code.OP_MOD  tgt op1 op2 -> binArithOp DoMod tgt op1 op2
 
-      OP.OP_IDIV tgt op1 op2 -> binArithOp DoIDiv tgt op1 op2
-      OP.OP_BAND tgt op1 op2 -> binArithOp DoAnd  tgt op1 op2
-      OP.OP_BOR  tgt op1 op2 -> binArithOp DoOr   tgt op1 op2
-      OP.OP_BXOR tgt op1 op2 -> binArithOp DoXor  tgt op1 op2
-      OP.OP_SHL  tgt op1 op2 -> binArithOp DoShl  tgt op1 op2
-      OP.OP_SHR  tgt op1 op2 -> binArithOp DoShr  tgt op1 op2
+      Code.OP_IDIV tgt op1 op2 -> binArithOp DoIDiv tgt op1 op2
+      Code.OP_BAND tgt op1 op2 -> binArithOp DoAnd  tgt op1 op2
+      Code.OP_BOR  tgt op1 op2 -> binArithOp DoOr   tgt op1 op2
+      Code.OP_BXOR tgt op1 op2 -> binArithOp DoXor  tgt op1 op2
+      Code.OP_SHL  tgt op1 op2 -> binArithOp DoShl  tgt op1 op2
+      Code.OP_SHR  tgt op1 op2 -> binArithOp DoShr  tgt op1 op2
 
-      OP.OP_UNM tgt op1      -> unArithOp DoUnaryMinus tgt op1
-      OP.OP_BNOT tgt op1     -> unArithOp DoComplement tgt op1
+      Code.OP_UNM tgt op1      -> unArithOp DoUnaryMinus tgt op1
+      Code.OP_BNOT tgt op1     -> unArithOp DoComplement tgt op1
 
-      OP.OP_LEN tgt op -> valueLength (Reg tgt) (Reg op) (PCBlock (pc + 1))
+      Code.OP_LEN tgt op -> valueLength (Reg tgt) (Reg op) (PCBlock (pc + 1))
 
-      OP.OP_CONCAT tgt start end ->
+      Code.OP_CONCAT tgt start end ->
         valueConcat (Reg tgt) (map toExpr [ start .. end ]) (PCBlock (pc + 1))
 
-      OP.OP_NOT tgt op ->
+      Code.OP_NOT tgt op ->
         valueIf op (do Reg tgt =: False
                        advance)
                    (do Reg tgt =: True
                        advance)
 
       -- Relational operators
-      OP.OP_EQ invert op1 op2 -> relOp valueEqual invert op1 op2
-      OP.OP_LT invert op1 op2 -> relOp (valueLess True)  invert op1 op2
-      OP.OP_LE invert op1 op2 -> relOp (valueLess False) invert op1 op2
-      OP.OP_TEST ra c -> valueIf ra (PCBlock (pc + yes)) (PCBlock (pc + no))
+      Code.OP_EQ invert op1 op2 -> relOp valueEqual invert op1 op2
+      Code.OP_LT invert op1 op2 -> relOp (valueLess True)  invert op1 op2
+      Code.OP_LE invert op1 op2 -> relOp (valueLess False) invert op1 op2
+      Code.OP_TEST ra c -> valueIf ra (PCBlock (pc + yes)) (PCBlock (pc + no))
         where (yes,no) = if c then (1,2) else (2,1)
 
-      OP.OP_TESTSET ra rb c ->
+      Code.OP_TESTSET ra rb c ->
         do let upd = do Reg ra =: c
                         advance
 
@@ -176,38 +177,36 @@ micro fun pc =
                 else valueIf rb skip upd
 
       -- Function calls
-      OP.OP_CALL a b c ->
+      Code.OP_CALL a b c ->
         do let a' = succ a
            getCallArguments a' b
            callValue (Reg a) $
              do setCallResults a ListReg c
                 advance
 
-      OP.OP_TAILCALL a b c ->
+      Code.OP_TAILCALL a b c ->
         do let a' = succ a
            getCallArguments a' b
            resolveFunction (Reg a) $
              do emit (TailCall (Reg a))
                 setCallResults a ListReg c -- used when tail calls are disabled
 
-      OP.OP_RETURN a c ->
+      Code.OP_RETURN a c ->
         do getCallArguments a c
            emit Return
 
 
 
-      OP.OP_JMP mbCloseReg jmp ->
+      Code.OP_JMP mbCloseReg jmp ->
         do mapM_ (emit . CloseStack . Reg) mbCloseReg
            jump jmp
 
-      OP.OP_CLOSURE tgt (OP.ProtoIx i) ->
-        do let f  = getFunction fun i
-               us = map toExpr (Vector.toList (OP.funcUpvalues f))
-           emit (NewClosure (Reg tgt) i us)
+      Code.OP_CLOSURE tgt i f ->
+        do emit (NewClosure (Reg tgt) i f)
            advance
 
       -- Loops
-      OP.OP_FORPREP a jmp ->
+      Code.OP_FORPREP a jmp ->
         forloopAsNumber     a             $ \initial ->
           forloopAsNumber   (plusReg a 1) $ \limit ->
             forloopAsNumber (plusReg a 2) $ \step ->
@@ -217,7 +216,7 @@ micro fun pc =
                    jump jmp
 
 
-      OP.OP_FORLOOP a sBx ->
+      Code.OP_FORLOOP a sBx ->
         do let initial = Reg a
                limit   = Reg (plusReg a 1)
                step    = Reg (plusReg a 2)
@@ -235,12 +234,12 @@ micro fun pc =
                  (check next limit)
                  (check limit next)
 
-      OP.OP_TFORLOOP a sBx ->
+      Code.OP_TFORLOOP a sBx ->
         ifNil (succ a) (PCBlock (pc + 1))
                        (do Reg a =: succ a
                            jump sBx)
 
-      OP.OP_TFORCALL a c ->
+      Code.OP_TFORCALL a c ->
         do let arg n = toExpr (plusReg a n)
            emit (SetList ListReg [ arg 1, arg 2 ])
            callValue (Reg a) $
@@ -251,7 +250,7 @@ micro fun pc =
 
       -- Arguments
 
-      OP.OP_SETLIST a b c ->
+      Code.OP_SETLIST a b c ->
         typeCase a
            $ IfType TableType
              (do let (offset, skip)
@@ -280,12 +279,12 @@ micro fun pc =
             NoDefault
 
 
-      OP.OP_VARARG a b ->
+      Code.OP_VARARG a b ->
         do setCallResults a ArgReg b
            advance
 
 
-      OP.OP_EXTRAARG{} -> return ()
+      Code.OP_EXTRAARG{} -> return ()
 
 
 
@@ -306,8 +305,8 @@ micro fun pc =
 
   fromRK rk =
     case rk of
-      OP.RK_Reg r -> toExpr r
-      OP.RK_Kst k -> toExpr (getLiteral fun k)
+      Code.RK_Reg r -> toExpr r
+      Code.RK_Kst k -> toExpr (getLiteral fun k)
 
 
 
@@ -315,29 +314,23 @@ micro fun pc =
 
 --------------------------------------------------------------------------------
 
-getOpCode :: OP.Function -> Int -> OP.OpCode
+getOpCode :: Code.Function -> Int -> Code.OpCode
 getOpCode fun pc =
-  case OP.funcCode fun Vector.!? pc of
+  case Code.funcCode fun Vector.!? pc of
     Just op -> op
     Nothing -> error ("Bad PC: " ++ show pc)
 
-getExtraArg :: OP.Function -> Int -> Int
+getExtraArg :: Code.Function -> Int -> Int
 getExtraArg fun pc =
   case getOpCode fun pc of
-    OP.OP_EXTRAARG n -> n
+    Code.OP_EXTRAARG n -> n
     _ -> error ("Expected EXTRA_ARG at PC: " ++ show pc)
 
-getLiteral :: OP.Function -> OP.Kst -> Literal
-getLiteral fun (OP.Kst litIx) =
-  case OP.funcConstants fun Vector.!? litIx of
+getLiteral :: Code.Function -> Code.Kst -> Literal
+getLiteral fun (Code.Kst litIx) =
+  case Code.funcConstants fun Vector.!? litIx of
     Just l  -> l
     Nothing -> error ("Invalid literal index: " ++ show litIx)
-
-getFunction :: OP.Function -> Int -> OP.Function
-getFunction fun protoIx =
-  case OP.funcProtos fun Vector.!? protoIx of
-    Just l  -> l
-    Nothing -> error ("Missing function prototype: " ++ show protoIx)
 
 
 
@@ -684,7 +677,7 @@ callValue f fin =
     do emit $ Call f
        fin
 
-getCallArguments :: OP.Reg {- ^ start -} ->
+getCallArguments :: Code.Reg {- ^ start -} ->
                     Count  {- ^ count -} ->
                     M ()
 getCallArguments from count =
@@ -708,7 +701,7 @@ getCallArguments from count =
 
 
 setCallResults ::
-  OP.Reg  {- ^ starting register -} ->
+  Code.Reg  {- ^ starting register -} ->
   ListReg {- ^ source register -} ->
   Count   {- ^ results expected  -} ->
   M ()

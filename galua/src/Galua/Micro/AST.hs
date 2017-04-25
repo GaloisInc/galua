@@ -4,13 +4,10 @@
 module Galua.Micro.AST
   ( module Galua.Micro.AST
   , ValueType(..)
-  , Constant(..)
   ) where
 
 
 import           Galua.ValueType(ValueType(..))
-import qualified Language.Lua.Bytecode as OP
-import           Language.Lua.Bytecode (Constant(..))
 import           Language.Lua.Bytecode.Pretty(PP(..),blankPPInfo)
 import           Text.PrettyPrint
 import           Data.ByteString(ByteString)
@@ -20,11 +17,13 @@ import qualified Data.Vector as Vector
 import           Data.Map (Map)
 import qualified Data.Map as Map
 
-data Function = Function
-  { functionCode :: Map BlockName (Vector BlockStmt)
-  } deriving Show
+import qualified Galua.Code as Code
 
-data Reg        = Reg !OP.Reg
+data MicroFunction = MicroFunction
+  { functionCode :: Map BlockName (Vector BlockStmt)
+  }
+
+data Reg        = Reg !Code.Reg
                 | TMP !Int !Int     -- ^ phase, temporary
                   deriving (Eq,Ord,Show)
 
@@ -43,18 +42,17 @@ blockNamePC pc =
     NewBlock n _  -> n
     EntryBlock    -> 0
 
-type Literal    = Constant
-type UpIx       = OP.UpIx
+type Literal    = Code.Kst
+type UpIx       = Code.UpIx
 
 
 data Expr       = EReg Reg
                 | ELit Literal
                 | EUp  UpIx
-                  deriving Show
 
 data BlockStmt = BlockStmt { stmtPC   :: !Int   -- ^ PC in original program
                            , stmtCode :: !Stmt
-                           } deriving Show
+                           }
 
 data Stmt =
 
@@ -88,7 +86,7 @@ data Stmt =
   | Return             -- End of block
 
   | CloseStack !Reg         -- Only before "reference" phase
-  | NewClosure !Reg !Int ![Expr]
+  | NewClosure !Reg !Int !Code.Function
 
 
   -- Argument lists
@@ -108,7 +106,6 @@ data Stmt =
   | WriteRef !Expr !Expr  -- Only after "reference" phase
 
   | Comment !String
-    deriving Show
 
 
 
@@ -143,7 +140,6 @@ data Op2 = NumberAdd
 -- Properties
 
 data Prop       = Prop !Pred ![Expr]
-                  deriving Show
 
 data Pred       = IsInteger | IsNaN | IsNone
                 | Equals
@@ -166,13 +162,13 @@ instance IsExpr Reg where
 instance IsExpr UpIx where
   toExpr = EUp
 
-instance IsExpr OP.Upvalue where
+instance IsExpr Code.Upvalue where
   toExpr x =
     case x of
-      OP.UpReg r -> toExpr r
-      OP.UpUp u  -> toExpr u
+      Code.UpReg r -> toExpr r
+      Code.UpUp u  -> toExpr u
 
-
+{-
 instance IsExpr Bool where
   toExpr = toExpr . KBool
 
@@ -181,20 +177,28 @@ instance IsExpr ByteString where
 
 instance IsExpr Int where
   toExpr = toExpr . KInt
+-}
 
-instance IsExpr OP.Reg where
+instance IsExpr Code.Reg where
   toExpr = toExpr . Reg
 
 
+{-
 zero :: Expr
 zero = toExpr (0 :: Int)
 
 emptyString :: Expr
 emptyString = toExpr ("" :: ByteString)
+-}
+
+funcUpvalExprs :: Code.Function -> [Expr]
+funcUpvalExprs = map toExpr . Vector.toList . Code.funcUpvalues
+
 
 
 --------------------------------------------------------------------------------
 
+{-
 
 pp' :: PP a => a -> Doc
 pp' = pp blankPPInfo
@@ -277,8 +281,10 @@ instance PP Stmt where
       WriteRef r1 e -> "writeRef" <+> pp' r1 <+> pp' e
 
       CloseStack r    -> "closeStack" <+> pp' r
-      NewClosure r i es ->
-        pp' r <+> "=" <+> "newClosure" <> brackets (int i) <+> hsep (map pp' es)
+      NewClosure r i f ->
+        pp' r <+> "=" <+> "newClosure" <> brackets (int i) <+>
+                                                          hsep (map pp' ups)
+        where ups = map toExpr (Vector.toList (funcUpvalues f))
 
       Comment x -> "--" <+> text x
 
@@ -391,5 +397,5 @@ ppDot m = vcat $ [ "digraph G {"
       If _ t e    -> [ (Just "true", t), (Just "false", e) ]
       _           -> []
 
-
+-}
 

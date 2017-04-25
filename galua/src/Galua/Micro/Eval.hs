@@ -318,13 +318,19 @@ runStmt aref f@Frame { .. } pc stmt =
 
     CloseStack _ -> crash "CloseStack in phase 2"
 
-{- XXX:
-    NewClosure res proto us ->
+
+{-
+    NewClosure res ix us ->
       do rs <- mapM (isReference <=< getExpr f) us
+         closureUpvals <- Vector.thaw vs
+         let fid = ourFID
+             f   = luaFunction (subFun fid ix) cloFunc
+
          fun <- case subFuns Vector.!? proto of
                   Just fn ->
                         return (luaFunction (subFun ourFID proto) fn)
                   Nothing -> crash ("Missing function: " ++ show proto)
+         undefined
          let refLoc = RefLoc { refLocSite   = InLua ourFID pc
                              , refLocCaller = ourCaller
                              }

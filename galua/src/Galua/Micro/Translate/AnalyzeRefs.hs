@@ -2,7 +2,7 @@
 -- These registers are represented as references to values in the heap.
 module Galua.Micro.Translate.AnalyzeRefs where
 
-import qualified Language.Lua.Bytecode as OP
+import qualified Galua.Code as Code
 import           Galua.Micro.AST
 
 import           Data.Set(Set)
@@ -10,14 +10,15 @@ import qualified Data.Set as Set
 import           Data.Map(Map)
 import qualified Data.Map as Map
 import           Data.Vector(Vector)
+import qualified Data.Vector as Vector
 import           Data.List(foldl',union)
 import           Data.Maybe(maybeToList)
 import           Data.Foldable(toList)
 
 -- | Compute what registers contains references at the beginning and end
 -- of each block.
-analyze :: OP.Reg -> Map BlockName (Vector BlockStmt) ->
-                                              Map BlockName (Set OP.Reg)
+analyze :: Code.Reg -> Map BlockName (Vector BlockStmt) ->
+                                              Map BlockName (Set Code.Reg)
 analyze lim orig = Map.mapWithKey (\b _ -> atStart b) orig
   where
   prog       = makeProg lim orig
@@ -25,7 +26,7 @@ analyze lim orig = Map.mapWithKey (\b _ -> atStart b) orig
   atStart b  = incomingRefs prog endOfBlock b
 
 
-makeProg :: OP.Reg -> Map BlockName (Vector BlockStmt) -> Prog
+makeProg :: Code.Reg -> Map BlockName (Vector BlockStmt) -> Prog
 makeProg lim mp = Prog { predecessors = preds
                        , blocks       = blks
                        , maxReg       = lim
@@ -53,11 +54,11 @@ makeProg lim mp = Prog { predecessors = preds
 
 -- | For each block, what registers contains references at the *end* of
 -- the block.
-type RefMap = Map BlockName (Set OP.Reg)
+type RefMap = Map BlockName (Set Code.Reg)
 
 data Prog = Prog { predecessors :: Map BlockName [ BlockName ]
                  , blocks       :: Map BlockName Block
-                 , maxReg       :: OP.Reg
+                 , maxReg       :: Code.Reg
                  }
 
 data Block  = Block { blockNext   :: [ BlockName ]
@@ -66,7 +67,7 @@ data Block  = Block { blockNext   :: [ BlockName ]
 
 -- | Given a set of registers that are known to be references at the
 -- beginning of a block, compute what registers are references at the end.
-refsForBlock :: OP.Reg -> Set OP.Reg -> Block -> Set OP.Reg
+refsForBlock :: Code.Reg -> Set Code.Reg -> Block -> Set Code.Reg
 refsForBlock lim incoming =
   foldl' updEsc incoming . concatMap (cvt lim) . toList . blockStmts
   where
@@ -79,7 +80,7 @@ refsForBlock lim incoming =
 
 -- | Compute what registers are known to be references at the beginning of
 -- a block, by looking at its predecessors.
-incomingRefs :: Prog -> RefMap -> BlockName -> Set OP.Reg
+incomingRefs :: Prog -> RefMap -> BlockName -> Set Code.Reg
 incomingRefs prog esc l =
   Set.unions [ Map.findWithDefault Set.empty p esc
                   | p <- Map.findWithDefault [] l (predecessors prog) ]
@@ -118,7 +119,7 @@ flowAnalysis fun = go (Map.keysSet (blocks fun)) Map.empty
 --------------------------------------------------------------------------------
 
 class Uses t where
-  uses :: t -> Set OP.Reg
+  uses :: t -> Set Code.Reg
 
 instance Uses Reg where
   uses reg =
@@ -175,7 +176,7 @@ instance Uses Stmt where
       TailCall x          -> uses x
       Return              -> uses ()
 
-      NewClosure x _ y    -> uses (x,y)
+      NewClosure x _ y    -> uses (x, funcUpvalExprs y)
 
       Drop {}             -> uses ()
       Append _ x          -> uses x
@@ -192,26 +193,26 @@ instance Uses Stmt where
       Comment _           -> uses ()
 
 
-data Simple = Use     OP.Reg
-            | Capture OP.Reg
-            | Close   OP.Reg
+data Simple = Use     Code.Reg
+            | Capture Code.Reg
+            | Close   Code.Reg
 
-cvt :: OP.Reg -> BlockStmt -> [Simple]
+cvt :: Code.Reg -> BlockStmt -> [Simple]
 cvt lim stmt =
   case stmtCode stmt of
-    CloseStack (Reg r) -> [ Close i | i <- [ r .. lim ] ]
-    CloseStack _       -> error "CloseStack: non OP.Reg"
+    CloseStack (Reg r) -> [ Close i | i <- Code.regFromTo r lim ]
+    CloseStack _       -> error "CloseStack: non Code.Reg"
 
-    Return            -> [ Close i | i <- [ OP.Reg 0 .. lim ] ]
+    Return            -> [ Close i | i <- Code.regFromTo (Code.Reg 0) lim ]
 
-    NewClosure x _ es     -> makeUses es ++
+    NewClosure x _ f   -> makeUses es ++
                              [ Capture r | EReg (Reg r) <- es ] ++
                              makeUses x
+      where es = funcUpvalExprs f
 
     _                        -> makeUses stmt
 
   where
   makeUses x = [ Use r | r <- Set.toList (uses x) ]
-
 
 
