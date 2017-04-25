@@ -17,7 +17,7 @@ module Galua.FunValue
 import Foreign.C(CInt)
 import Foreign.Ptr (FunPtr,nullFunPtr,Ptr)
 
-import {-# SOURCE #-} Galua.Code(Function,FunId)
+import Galua.Code(Function,FunId)
 import Galua.CObjInfo(CObjInfo,noFunInfo)
 
 
