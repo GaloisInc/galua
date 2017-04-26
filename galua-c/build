@@ -77,7 +77,8 @@ ARCH=$(uname -m)
 
 echo "  Building for $UNAME-$ARCH"
 
-COMMON_CFLAGS=$(cat <<EOF
+function COMMON_CFLAGS() {
+cat <<EOF
 -g
 -std=gnu99
 -I$TOP/galua-c/inplace/include/galua
@@ -86,7 +87,9 @@ COMMON_CFLAGS=$(cat <<EOF
 -l$TGT
 $(for i in ${C_LD_FLAGS[@]}; do echo $i; done)
 EOF
-)
+}
+
+
 
 case $UNAME in
   "Linux" | "FreeBSD" )
@@ -121,15 +124,15 @@ case $UNAME in
 
       C_LD_FLAGS+=("-lpthread")
 
-      # These go in the pkgconfi
-      PC_CFLAGS=-rdynamic
+      # Hmm?
+      C_LD_FLAGS+=("-no-pie")
+      C_LD_FLAGS+=("-rdynamic")
 
       echo "  Building executable $TGT"
-      $CC main.c \
-          -Wl,--dynamic-list=$TMP_DIR/DYN \
-          $PC_CFLAGS \
-          $COMMON_CFLAGS
+      $CC main.c $(COMMON_CFLAGS)
       rm -rf $TMP_DIR
+
+  # -Wl,--dynamic-list=$TMP_DIR/DYN \
   ;;
   "Darwin")
 
@@ -141,12 +144,9 @@ case $UNAME in
        liblualibs.a \
        "${HS_LD_FLAGS[@]}"
 
-    PC_CFLAGS=
-
     echo "  Building executable $TGT"
     $CC main.c \
-          $PC_CFLAGS \
-          $COMMON_CFLAGS \
+          $(COMMON_CFLAGS) \
           -Wl,-no_compact_unwind
 
   ;;
@@ -171,7 +171,7 @@ cat >$PKG_CONFIG_FILE <<EOF
 Name:         libgalua-dbg
 Version:      0.1
 Description:  the '$TGT' library, used for debugging Lua.
-Cflags:       $PC_CFLAGS -I\${includedir}
+Cflags:       -I\${includedir}
 Libs:         -L\${libdir} -l$TGT ${C_LD_FLAGS[@]}
 EOF
 
