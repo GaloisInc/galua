@@ -1,7 +1,6 @@
 {-# LANGUAGE OverloadedStrings, ForeignFunctionInterface #-}
 -- module Galua.MicroOpCode where
 
-import           Language.Lua.Bytecode.Pretty(PP(..),blankPPInfo)
 import qualified Language.Lua.Bytecode as BC
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map as Map
@@ -10,6 +9,7 @@ import qualified Data.Set as Set
 import           Foreign(Ptr)
 
 import Galua.Code
+import Galua.Pretty
 import Galua.Mach(parseLua)
 import Galua.Micro.AST(Function(..),ppDot)
 import Galua.Micro.Translate(translateTop)
@@ -54,7 +54,7 @@ testFile f =
             let tr1 = filterFunctions valueAnalysis tr
             save "trim" tr1
 
-            writeFile "va.txt" (show (pp blankPPInfo valueAnalysis))
+            writeFile "va.txt" (show (pp valueAnalysis))
 {-
             ups <- replicateM n (newIORef Val.Nil)
             meta <- newIORef Map.empty

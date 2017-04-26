@@ -49,6 +49,9 @@ library
                        Galua.Names.Find
                        Galua.Names.Eval
 
+                       Galua.Pretty
+
+                       Galua.Util.String
                        Galua.Util.Cache
                        Galua.Util.Table
                        Galua.Util.Loc

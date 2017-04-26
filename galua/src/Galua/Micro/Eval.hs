@@ -23,6 +23,7 @@ import           Galua.Reference(AllocRef)
 import           Galua.LuaString
                    (LuaString,toByteString,fromByteString,luaStringLen)
 import           Galua.Micro.AST
+import           Galua.Pretty
 
 data V = VRef {-# UNPACK #-} !(IORef Value)
        | VVal Value
@@ -113,7 +114,7 @@ getReg Frame { .. } reg =
     TMP a b -> do m <- readIORef regsTMP
                   case Map.lookup (a,b) m of
                     Just v  -> return (VVal v)
-                    Nothing -> crash ("Read from bad reg: " ++ show (pp' reg))
+                    Nothing -> crash ("Read from bad reg: " ++ show (pp reg))
 
 
 getExpr :: Frame -> Expr -> IO V
@@ -123,7 +124,7 @@ getExpr f expr =
     EUp (OP.UpIx x)  ->
       case upvals f Vector.!? x of
         Just r  -> return (VRef r)
-        Nothing -> crash ("Read from bad upval: " ++ show (pp' expr))
+        Nothing -> crash ("Read from bad upval: " ++ show (pp expr))
     ELit l ->
       case l of
         KNil           -> return (VVal Nil)

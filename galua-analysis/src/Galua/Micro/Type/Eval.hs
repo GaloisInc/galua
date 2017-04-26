@@ -16,8 +16,8 @@ import           Debug.Trace
 import Galua.Micro.AST
 import Galua.Micro.Type.Value
 import Galua.Micro.Type.Pretty()
-import Language.Lua.Bytecode.Pretty(PP(..),pp,blankPPInfo)
 import Galua.Micro.Type.Monad
+import Galua.Pretty
 
 
 regCasesM :: Reg -> BlockM SingleV
@@ -89,7 +89,7 @@ raiseError v =
 
 evalStmt :: BlockStmt -> BlockM Next
 evalStmt stmt =
-  logTrace ("STMT: " ++ show (pp blankPPInfo stmt)) >>
+  logTrace ("STMT: " ++ show (pp stmt)) >>
 
   case stmtCode stmt of
 
@@ -378,7 +378,7 @@ evalStmt stmt =
 evalBlock :: AnalysisM m => GlobalBlockName -> State -> m (Next, State)
 evalBlock bn s = inBlock bn s go
   where
-  go = do logTrace ("BLOCK: " ++ show (pp blankPPInfo bn))
+  go = do logTrace ("BLOCK: " ++ show (pp bn))
           next <- evalStmt =<< curStmt
           case next of
             Continue -> continue >> go
@@ -442,8 +442,8 @@ data Result = Result
   , resBlockRaises  :: Map GlobalBlockName Value
   } deriving Show
 
-instance PP Result where
-  pp n Result { .. } =
+instance Pretty Result where
+  pp Result { .. } =
     vcat [ entry "returns" resReturns
          , entry "raises"  resRaises
          , entry "finals"  resGlobals
@@ -453,7 +453,7 @@ instance PP Result where
     where
     entry x y
       | y == bottom = empty
-      | otherwise   = x <> colon $$ nest 2 (pp n y)
+      | otherwise   = x <> colon $$ nest 2 (pp y)
 
 {-
 analyze ::

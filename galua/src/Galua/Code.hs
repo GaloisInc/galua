@@ -1,3 +1,4 @@
+{-# Language OverloadedStrings #-}
 module Galua.Code
   ( parseLuaBytecode
   , dumpLuaBytecode
@@ -17,8 +18,6 @@ module Galua.Code
   , module FunId
 
   -- * Pretty print
-  , BC.blankPPInfo
-  , BC.PP(..)
   , ppOpCode
 
     -- * Debug
@@ -49,6 +48,9 @@ import qualified Language.Lua.Bytecode.Parser as BC
 import qualified Language.Lua.Bytecode.Debug as BC
 
 import           Data.Coerce
+
+import Galua.Pretty
+import Galua.Util.String(unpackUtf8)
 
 parseLuaBytecode :: Maybe String -> L.ByteString -> IO (Either String Chunk)
 parseLuaBytecode name bytesL =
@@ -412,4 +414,27 @@ instance BC.PP UpIx where
 
 instance BC.PP Reg where
   pp i (Reg u) = BC.pp i (BC.Reg u)
+
+
+instance Pretty Literal where
+  pp l =
+    case l of
+      LNil -> "nil"
+      LBool b -> if b then "true" else "false"
+      LInt n  -> int n
+      LNum n  -> double n
+      LStr x  -> text (show (unpackUtf8 x))
+
+
+
+
+
+
+
+
+
+
+
+
+
 

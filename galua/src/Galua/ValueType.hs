@@ -2,9 +2,7 @@
 module Galua.ValueType where
 
 import GHC.Generics (Generic)
-import Text.PrettyPrint(text)
-
-import Language.Lua.Bytecode.Pretty(PP(..))
+import Galua.Pretty(text, Pretty(..))
 
 data ValueType
   = NumberType -- ^ integer and float are just representations of number
@@ -18,8 +16,8 @@ data ValueType
   | ThreadType
   deriving (Generic,Show,Eq,Ord)
 
-instance PP ValueType where
-  pp _ ty = text (prettyValueType ty)
+instance Pretty ValueType where
+  pp ty = text (prettyValueType ty)
 
 prettyValueType :: ValueType -> String
 prettyValueType t =

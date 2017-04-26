@@ -11,7 +11,6 @@ module Galua.Micro.AST
 import           Galua.ValueType(ValueType(..))
 import qualified Language.Lua.Bytecode as OP
 import           Language.Lua.Bytecode (Constant(..))
-import           Language.Lua.Bytecode.Pretty(PP(..),blankPPInfo)
 import           Text.PrettyPrint
 import           Data.ByteString(ByteString)
 import           Data.Foldable(toList)
@@ -19,6 +18,8 @@ import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
 import           Data.Map (Map)
 import qualified Data.Map as Map
+
+import Galua.Pretty
 
 data Function = Function
   { functionCode :: Map BlockName (Vector BlockStmt)
@@ -195,97 +196,99 @@ emptyString = toExpr ("" :: ByteString)
 
 --------------------------------------------------------------------------------
 
+instance Pretty OP.UpIx where
+  pp = text . show -- XXX
 
-pp' :: PP a => a -> Doc
-pp' = pp blankPPInfo
+instance Pretty Constant where
+  pp = text . show -- XXX
 
-instance PP Reg where
-  pp _ reg =
+instance Pretty Reg where
+  pp reg =
     case reg of
       Reg (OP.Reg r) -> "R"   <> int r
       TMP p i        -> "T_" <> int p <> "_" <> int i
 
-instance PP Expr where
-  pp p expr =
+instance Pretty Expr where
+  pp expr =
     case expr of
-      EReg e -> pp p e
-      ELit l -> pp p l
-      EUp u  -> pp p u
+      EReg e -> pp e
+      ELit l -> pp l
+      EUp u  -> pp u
 
-instance PP ListReg where
-  pp _ ArgReg = "arg"
-  pp _ ListReg = "list"
+instance Pretty ListReg where
+  pp ArgReg = "arg"
+  pp ListReg = "list"
 
-instance PP BlockStmt where
-  pp i stmt = int (stmtPC stmt) <> colon <+> pp i (stmtCode stmt)
+instance Pretty BlockStmt where
+  pp stmt = int (stmtPC stmt) <> colon <+> pp (stmtCode stmt)
 
-instance PP Stmt where
-  pp _ stmt =
+instance Pretty Stmt where
+  pp stmt =
     case stmt of
 
-      Assign r e    -> pp' r <+> "=" <+> pp' e
-      SetUpVal u r  -> pp' u <+> "=" <+> pp' r
+      Assign r e    -> pp r <+> "=" <+> pp e
+      SetUpVal u r  -> pp u <+> "=" <+> pp r
 
-      NewTable r    -> pp' r <+> "=" <+> "newtable"
+      NewTable r    -> pp r <+> "=" <+> "newtable"
       LookupTable r1 r2 e ->
-        pp' r1 <+> "=" <+> pp' r2 <> brackets (pp' e)
+        pp r1 <+> "=" <+> pp r2 <> brackets (pp e)
 
-      SetTable r e1 e2 -> pp' r <> brackets (pp' e1) <+> "=" <+> pp' e2
+      SetTable r e1 e2 -> pp r <> brackets (pp e1) <+> "=" <+> pp e2
 
       SetTableList r e1 ->
-        pp' r <> brackets (int e1 <> "..") <+> "= list"
+        pp r <> brackets (int e1 <> "..") <+> "= list"
 
 
-      GetMeta r1 r2 -> pp' r1 <+> "=" <+> pp' r2 <> ".meta"
+      GetMeta r1 r2 -> pp r1 <+> "=" <+> pp r2 <> ".meta"
 
-      Raise e -> "raise" <+> pp' e
+      Raise e -> "raise" <+> pp e
 
-      Goto l   -> "goto" <+> pp' l
-      Case e alts deflt -> "case" <+> pp' e <+> "of" $$ nest 2 (vcat as)
+      Goto l   -> "goto" <+> pp l
+      Case e alts deflt -> "case" <+> pp e <+> "of" $$ nest 2 (vcat as)
         where
         as          = map ppAlt alts ++ [ ppDef ]
-        ppAlt (x,g) = pp' x <+> "->" <+> pp' g
+        ppAlt (x,g) = pp x <+> "->" <+> pp g
         ppDef       = case deflt of
                         Nothing -> empty
-                        Just b  -> "_" <+> "->" <+> pp' b
+                        Just b  -> "_" <+> "->" <+> pp b
 
-      If p t f -> "if" <+> pp' p <+> "then" <+> pp' t <+> "else" <+> pp' f
+      If p t f -> "if" <+> pp p <+> "then" <+> pp t <+> "else" <+> pp f
 
-      Arith1 r op x   -> pp' r <+> "=" <+> pp' op <+> pp' x
-      Arith2 r op x y -> pp' r <+> "=" <+> pp' x <+> pp' op <+> pp' y
+      Arith1 r op x   -> pp r <+> "=" <+> pp op <+> pp x
+      Arith2 r op x y -> pp r <+> "=" <+> pp x <+> pp op <+> pp y
 
-      Call f        -> "list =" <+> pp' f <> "(list)"
-      TailCall f    -> "return" <+> pp' f <> "(list)"
+      Call f        -> "list =" <+> pp f <> "(list)"
+      TailCall f    -> "return" <+> pp f <> "(list)"
       Return        -> "return"
 
 
       IndexList r list ix ->
-        pp' r <+> "=" <+> pp' list <+> "!!" <+> int ix
+        pp r <+> "=" <+> pp list <+> "!!" <+> int ix
 
       Drop list n ->
-        pp' list <+> "=" <+> "drop" <+> int n <+> pp' list
+        pp list <+> "=" <+> "drop" <+> int n <+> pp list
 
       Append list xs ->
-        pp' list <+> "=" <+> brackets (hsep (punctuate comma (map pp' xs)))
-                 <+> "++" <+> pp' list
+        pp list <+> "=" <+> brackets (hsep (punctuate comma (map pp xs)))
+                 <+> "++" <+> pp list
 
       SetList list xs ->
-        pp' list <+> "=" <+> brackets (hsep (punctuate comma (map pp' xs)))
+        pp list <+> "=" <+> brackets (hsep (punctuate comma (map pp xs)))
 
-      NewRef r e    -> pp' r  <+> "=" <+> "newRef" <+> pp' e
-      ReadRef r1 r2 -> pp' r1 <+> "=" <+> "readRef" <+> pp' r2
-      WriteRef r1 e -> "writeRef" <+> pp' r1 <+> pp' e
+      NewRef r e    -> pp r  <+> "=" <+> "newRef" <+> pp e
+      ReadRef r1 r2 -> pp r1 <+> "=" <+> "readRef" <+> pp r2
+      WriteRef r1 e -> "writeRef" <+> pp r1 <+> pp e
 
-      CloseStack r    -> "closeStack" <+> pp' r
+      CloseStack r    -> "closeStack" <+> pp r
       NewClosure r i es ->
-        pp' r <+> "=" <+> "newClosure" <> brackets (int i) <+> hsep (map pp' es)
+        pp r <+> "=" <+> "newClosure" <> brackets (int i) <+> hsep (map pp es)
 
       Comment x -> "--" <+> text x
 
 
 
-instance PP Op1 where
-  pp _ op =
+instance Pretty Op1 where
+  pp op =
     case op of
       ToNumber    -> "toNumber"
       ToInt       -> "toInt"
@@ -299,8 +302,8 @@ instance PP Op1 where
       BoolNot     -> "not"
 
 
-instance PP Op2 where
-  pp _ op =
+instance Pretty Op2 where
+  pp op =
     case op of
       NumberAdd -> "+"
       NumberSub -> "-"
@@ -322,14 +325,14 @@ instance PP Op2 where
       Concat -> ".."
 
 
-instance PP Prop where
-  pp _ (Prop p args) =
+instance Pretty Prop where
+  pp (Prop p args) =
     case args of
-      [l,r] -> pp' l <+> pp' p <+> pp' r
-      _     -> pp' p <+> hsep (map pp' args)
+      [l,r] -> pp l <+> pp p <+> pp r
+      _     -> pp p <+> hsep (map pp args)
 
-instance PP Pred where
-  pp _ pre =
+instance Pretty Pred where
+  pp pre =
     case pre of
       IsInteger -> "isInteger"
       IsNaN     -> "isNan"
@@ -340,8 +343,8 @@ instance PP Pred where
       StringLT  -> "<S"
       StringLEQ -> "<=S"
 
-instance PP BlockName where
-  pp _ bn =
+instance Pretty BlockName where
+  pp bn =
     case bn of
       EntryBlock   -> "ENTRY"
       PCBlock n    -> "PC" <> int n
@@ -351,10 +354,10 @@ ppBlocks :: Map BlockName (Vector BlockStmt) -> Doc
 ppBlocks = vcat . map ppBlock . Map.toList
 
 ppBlock :: (BlockName, Vector BlockStmt) -> Doc
-ppBlock (nm,xs) = (pp' nm <> colon) $$ nest 2 (ppStmts xs)
+ppBlock (nm,xs) = (pp nm <> colon) $$ nest 2 (ppStmts xs)
 
 ppStmts :: Vector BlockStmt -> Doc
-ppStmts xs = vcat $ map pp' $ Vector.toList xs
+ppStmts xs = vcat $ map pp $ Vector.toList xs
 
 ppDot :: Map BlockName (Vector BlockStmt) -> Doc
 ppDot m = vcat $ [ "digraph G {"
@@ -367,7 +370,7 @@ ppDot m = vcat $ [ "digraph G {"
   where
   els = Map.toList m
   node (nm,stms) =
-    pp' nm <>
+    pp nm <>
       brackets ("label=" <>
                   text (left $ show $ show (ppBlock (nm,stms)))) <> semi
 
@@ -379,14 +382,14 @@ ppDot m = vcat $ [ "digraph G {"
   edges (nm,stmts) = vcat [ edge nm x | xs <- map followers (toList stmts)
                                       , x <- xs ]
   edge a (mbLab,b) =
-    pp' a <+> "->" <+> pp' b <+> maybe empty ppLab mbLab <> semi
+    pp a <+> "->" <+> pp b <+> maybe empty ppLab mbLab <> semi
     where ppLab l = brackets ("label=" <> text (show l))
 
 
   followers s =
     case stmtCode s of
       Goto x      -> [ (Nothing,x) ]
-      Case _ as b -> [ (Just (show (pp' t)),a) | (t,a) <- as ] ++
+      Case _ as b -> [ (Just (show (pp t)),a) | (t,a) <- as ] ++
                      maybe [] (\x -> [(Just "otherwise",x)]) b
       If _ t e    -> [ (Just "true", t), (Just "false", e) ]
       _           -> []
