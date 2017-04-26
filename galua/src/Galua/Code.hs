@@ -11,6 +11,7 @@ module Galua.Code
   , RK(..)
   , Count(..)
   , OpCode(..)
+  , Literal(..)
   , regRange
   , regFromTo
   , module FunId
@@ -46,13 +47,6 @@ import qualified Language.Lua.Bytecode as BC
 import qualified Language.Lua.Bytecode.Pretty as BC
 import qualified Language.Lua.Bytecode.Parser as BC
 import qualified Language.Lua.Bytecode.Debug as BC
-
-import           Galua.Value
-import           Galua.Number
-import           Galua.LuaString
-
--- import qualified Galua.Micro.AST (MicroFunction)
--- import qualified Galua.Micro.Translate as Micro
 
 import           Data.Coerce
 
@@ -103,7 +97,13 @@ data Function = Function
   , funcOrig            :: !BC.Function
   }
 
-type Kst = Value
+type Kst = Literal
+
+data Literal = LNil
+             | LBool !Bool
+             | LInt {-# UNPACK #-} !Int
+             | LNum {-# UNPACK #-} !Double
+             | LStr {-# UNPACK #-} !ByteString
 
 data RK = RK_Reg !Reg | RK_Kst !Kst
 
@@ -382,18 +382,19 @@ cvtOpCode' nest fun pc op =
     BC.OP_EXTRAARG x          -> return $! OP_EXTRAARG x
 
 
-cvtKst :: BC.Function -> BC.Kst -> IO Kst
+cvtKst :: BC.Function -> BC.Kst -> IO Literal
 cvtKst fun (BC.Kst n) =
   case BC.funcConstants fun Vector.!? n of
     Nothing -> fail "Bad constant in op-codes"
     Just k ->
+      return $!
       case k of
-        BC.KNil          -> return Nil
-        BC.KNum d        -> return (Number (Double d))
-        BC.KInt i        -> return (Number (Int i))
-        BC.KBool b       -> return (Bool b)
-        BC.KString s     -> String <$> fromByteString s
-        BC.KLongString s -> String <$> fromByteString s
+        BC.KNil          -> LNil
+        BC.KNum d        -> LNum d
+        BC.KInt i        -> LInt i
+        BC.KBool b       -> LBool b
+        BC.KString s     -> LStr s
+        BC.KLongString s -> LStr s
 
 cvtRK :: BC.Function -> BC.RK -> IO RK
 cvtRK fun rk =

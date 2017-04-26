@@ -19,6 +19,7 @@ import           Galua.FunValue
 import           Galua.Overloading
 import           Galua.Mach
 import           Galua.Number
+import           Galua.LuaString(fromByteString)
 import qualified Data.Vector.Mutable as IOVector
 
 -- | Attempt to load the instruction stored at the given address
@@ -29,6 +30,15 @@ loadInstruction eenv i =
   execInstructions eenv `Vector.unsafeIndex` i
   -- program counter offsets are checked when functions
   -- are loaded in Galua.Code
+
+kst :: Literal -> IO Value
+kst k =
+  case k of
+    LNil    -> return Nil
+    LBool b -> return (Bool b)
+    LNum x  -> return (Number (Double x))
+    LInt x  -> return (Number (Int x))
+    LStr x  -> String <$> fromByteString x
 
 -- | Compute the result of executing the opcode at the given address
 -- within the current function execution environment.
@@ -62,13 +72,13 @@ execute !vm !pc =
 
      case loadInstruction eenv pc of
        OP_MOVE     tgt src -> tgt =: get eenv src
-       OP_LOADK    tgt src -> tgt =: return src
+       OP_LOADK    tgt src -> tgt =: kst src
        OP_GETUPVAL tgt src -> tgt =: get eenv src
        OP_SETUPVAL src tgt -> tgt =: get eenv src
                    -- SETUPVAL's argument order is different!
 
-       OP_LOADKX tgt v -> 
-         do set eenv tgt v
+       OP_LOADKX tgt v ->
+         do set eenv tgt =<< kst v
             jump 1 -- skip over the extrarg
 
        OP_LOADBOOL tgt b c ->
@@ -349,7 +359,7 @@ lvalToRval eenv r = readIORef =<< getLValue eenv r
 
 instance RValue RK where
   get eenv (RK_Reg r) = get eenv r
-  get _    (RK_Kst k) = return k
+  get _    (RK_Kst k) = kst k
   {-# INLINE get #-}
 
 
