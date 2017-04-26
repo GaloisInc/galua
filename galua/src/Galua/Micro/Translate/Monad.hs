@@ -1,7 +1,6 @@
 {-# LANGUAGE RecordWildCards, FlexibleInstances, ExistentialQuantification #-}
 module Galua.Micro.Translate.Monad where
 
-import Galua.Micro.AST
 
 import           Data.ByteString(ByteString)
 import           Data.Sequence (Seq)
@@ -13,8 +12,9 @@ import qualified Data.Map as Map
 import           Data.Foldable(toList)
 import           Control.Monad(ap,liftM)
 import           Control.Monad.Fix(MonadFix(..))
-import qualified Language.Lua.Bytecode as OP
 
+import Galua.Micro.AST
+import qualified Galua.Code as Code
 
 newtype M a = M (RO -> RW -> (a,RW))
 
@@ -41,7 +41,7 @@ data RW = RW
   { rwNextBlock :: !Int
   , rwNextTMP   :: !Int
   , rwBlocks    :: !(Map BlockName (Seq BlockStmt))
-  , rwListReg   :: !(Maybe OP.Reg)
+  , rwListReg   :: !(Maybe Code.Reg)
   }
 
 generate :: M () -> Map BlockName (Vector BlockStmt)
@@ -82,10 +82,10 @@ inNewBlock_ m =
      inBlock l m
      return l
 
-setListReg :: OP.Reg -> M ()
+setListReg :: Code.Reg -> M ()
 setListReg r = M $ \_ RW {..} -> ( (), RW { rwListReg = Just r, .. } )
 
-getListReg :: M (Maybe OP.Reg)
+getListReg :: M (Maybe Code.Reg)
 getListReg = M $ \_ RW {..} -> ( rwListReg, RW { rwListReg = Nothing, .. } )
 
 

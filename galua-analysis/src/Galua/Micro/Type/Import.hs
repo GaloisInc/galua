@@ -11,13 +11,13 @@ import qualified Data.Map as Map
 import qualified Data.Set as Set
 
 import qualified Galua.Util.Table as C (tableToList,getTableMeta)
-import           Language.Lua.Bytecode(UpIx(..))
 
 
 import qualified Galua.Mach             as C -- concrete
 import qualified Galua.Value            as C hiding (getTableMeta)
 import           Galua.LuaString(toByteString)
 import qualified Galua.Micro.Type.Value as A -- abstract
+import           Galua.Code(UpIx(..))
 
 
 importClosure ::
@@ -189,7 +189,8 @@ importTable t =
 
 importFunction :: C.Closure -> M A.FunV
 importFunction C.MkClosure { .. } =
-  do rs <- fmap Vector.toList (mapM importUpVal =<< liftIO (Vector.freeze cloUpvalues))
+  do rs <- fmap Vector.toList
+             (mapM importUpVal =<< liftIO (Vector.freeze cloUpvalues))
      let nm = case C.funValueName cloFun of
                 C.LuaFID fid -> A.OneValue (A.LuaFunImpl fid)
                 C.CFID ptr   -> A.OneValue (A.CFunImpl (C.cfunAddr ptr))

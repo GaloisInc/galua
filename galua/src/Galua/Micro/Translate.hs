@@ -1,21 +1,18 @@
 {-# LANGUAGE OverloadedStrings #-}
 -- | Translate from Lua op-codes into the CFG representation of a program.
-module Galua.Micro.Translate (translate) where -- ,translateAll,translateTop) where
+module Galua.Micro.Translate (translate,translateAll,translateTop) where
 
-import           Language.Lua.Bytecode (Count(..), plusReg, regRange)
 import           Data.String(fromString)
 import           Data.ByteString(ByteString)
 import           Data.Foldable
 import           Control.Monad
 import qualified Data.Vector as Vector
+import           Data.Map(Map)
+import qualified Data.Map as Map
 import           Control.Monad.Fix(mfix)
 
-import           Data.Map ( Map )
-import qualified Data.Map as Map
-
-import Language.Lua.Bytecode.FunId
-
 import qualified Galua.Code as Code
+import           Galua.Code (FunId, subFun, rootFun)
 import           Galua.Micro.AST
 import           Galua.Micro.Translate.Monad
 import           Galua.Micro.Translate.AnalyzeRefs(analyze)
@@ -29,19 +26,20 @@ translate fun = joinBlocks pass1 { functionCode = explicitBlocks refs code1 }
   code1 = functionCode pass1
   refs  = analyze (Code.Reg (Code.funcMaxStackSize fun - 1)) code1
 
-{-
 translateAll :: FunId -> Code.Function -> Map FunId MicroFunction ->
                                                         Map FunId MicroFunction
 translateAll cur f m0 =
-  go m0 (zip [ 0 .. ] (Vector.toList (OP.funcProtos f)))
+  go m0 (zip [ 0 .. ] (Vector.toList (Code.funcNested f)))
   where
   go mp ((n,sub) : rest) = go (translateAll (subFun cur n) sub mp) rest
   go mp []               = Map.insert cur (translate f) mp
 
-translateTop :: Int -> OP.Function -> Map FunId Function
+translateTop :: Int -> Code.Function -> Map FunId MicroFunction
 translateTop n f = translateAll (rootFun n) f Map.empty
--}
 
+
+
+ ----------
 
 --------------------------------------------------------------------------------
 
@@ -78,10 +76,11 @@ micro fun pc =
            advance
 
       Code.OP_LOADK tgt k ->
-        do Reg tgt =: getLiteral fun k
+        do Reg tgt =: k
            advance
 
-      Code.OP_LOADKX _ ->
+      Code.OP_LOADKX tgt k ->
+        do Reg tgt =: k
            jump 1
 
       Code.OP_LOADBOOL tgt b withJump ->
@@ -89,8 +88,8 @@ micro fun pc =
            jump (if withJump then 1 else 0)
 
       Code.OP_LOADNIL tgt count ->
-        do let mkNil r = Reg r =: KNil
-           mapM_ mkNil $ regRange tgt (count + 1)
+        do let mkNil r = Reg r =: LNil
+           mapM_ mkNil $ Code.regRange tgt (count + 1)
            advance
 
 
@@ -126,7 +125,7 @@ micro fun pc =
         do tmp <- newTMP
            tmp =: tab
            indexValue (Reg tgt) tab (fromRK key) $
-             do Reg (succ tgt) =: tmp
+             do Reg (Code.plusReg tgt 1) =: tmp
                 advance
 
 
@@ -152,7 +151,8 @@ micro fun pc =
       Code.OP_LEN tgt op -> valueLength (Reg tgt) (Reg op) (PCBlock (pc + 1))
 
       Code.OP_CONCAT tgt start end ->
-        valueConcat (Reg tgt) (map toExpr [ start .. end ]) (PCBlock (pc + 1))
+        valueConcat (Reg tgt) (map toExpr (Code.regFromTo start end))
+                              (PCBlock (pc + 1))
 
       Code.OP_NOT tgt op ->
         valueIf op (do Reg tgt =: False
@@ -178,14 +178,14 @@ micro fun pc =
 
       -- Function calls
       Code.OP_CALL a b c ->
-        do let a' = succ a
+        do let a' = Code.plusReg a 1
            getCallArguments a' b
            callValue (Reg a) $
              do setCallResults a ListReg c
                 advance
 
       Code.OP_TAILCALL a b c ->
-        do let a' = succ a
+        do let a' = Code.plusReg a 1
            getCallArguments a' b
            resolveFunction (Reg a) $
              do emit (TailCall (Reg a))
@@ -208,24 +208,24 @@ micro fun pc =
       -- Loops
       Code.OP_FORPREP a jmp ->
         forloopAsNumber     a             $ \initial ->
-          forloopAsNumber   (plusReg a 1) $ \limit ->
-            forloopAsNumber (plusReg a 2) $ \step ->
+          forloopAsNumber   (Code.plusReg a 1) $ \limit ->
+            forloopAsNumber (Code.plusReg a 2) $ \step ->
               implementationForArith2 DoSub (Reg a) initial step $
-                do Reg (plusReg a 1) =: limit
-                   Reg (plusReg a 2) =: step
+                do Reg (Code.plusReg a 1) =: limit
+                   Reg (Code.plusReg a 2) =: step
                    jump jmp
 
 
       Code.OP_FORLOOP a sBx ->
         do let initial = Reg a
-               limit   = Reg (plusReg a 1)
-               step    = Reg (plusReg a 2)
+               limit   = Reg (Code.plusReg a 1)
+               step    = Reg (Code.plusReg a 2)
 
            next <- newTMP
            let check x y =
                  ite (Prop NumberLEQ [toExpr x, toExpr y])
                     (do Reg a             =: next
-                        Reg (plusReg a 3) =: next
+                        Reg (Code.plusReg a 3) =: next
                         jump sBx)
                     (PCBlock (pc + 1))
 
@@ -235,30 +235,25 @@ micro fun pc =
                  (check limit next)
 
       Code.OP_TFORLOOP a sBx ->
-        ifNil (succ a) (PCBlock (pc + 1))
-                       (do Reg a =: succ a
+        ifNil (Code.plusReg a 1) (PCBlock (pc + 1))
+                       (do Reg a =: Code.plusReg a 1
                            jump sBx)
 
       Code.OP_TFORCALL a c ->
-        do let arg n = toExpr (plusReg a n)
+        do let arg n = toExpr (Code.plusReg a n)
            emit (SetList ListReg [ arg 1, arg 2 ])
            callValue (Reg a) $
-             do let results = zip (regRange (plusReg a 3) c) [ 0 .. ]
+             do let results = zip (Code.regRange (Code.plusReg a 3) c) [ 0 .. ]
                 mapM_ emit [ IndexList (Reg r) ListReg n | (r,n) <- results ]
                 advance
 
 
       -- Arguments
 
-      Code.OP_SETLIST a b c ->
+      Code.OP_SETLIST a b offset skip ->
         typeCase a
            $ IfType TableType
-             (do let (offset, skip)
-                       | c == 0     = (50 * getExtraArg fun (pc + 1), 1)
-                       | otherwise  = (50 * (c-1), 0)
-
-                 let a' = succ a
-
+             (do let a' = Code.plusReg a 1
                  if b == 0
                     then
                       do mb <- getListReg
@@ -266,12 +261,13 @@ micro fun pc =
                            Just r
                              | r >= a' ->
                                do emit $ Append ListReg
-                                           [ toExpr i | i <- [ a' .. pred r]]
+                                       $ map toExpr
+                                       $ init $ Code.regFromTo a' r
                                   emit $ SetTableList (Reg a) (1 + offset)
                              | otherwise -> error "OP_SETLIST: r < a'"
                            Nothing -> error "OP_SETLIST: missing list register"
                     else mapM_ emit [ SetTable (Reg a) (toExpr (offset + i))
-                                                       (toExpr (plusReg a i))
+                                                       (toExpr (Code.plusReg a i))
                                       | i <- [ 1 .. b ] ]
 
                  jump skip
@@ -306,7 +302,7 @@ micro fun pc =
   fromRK rk =
     case rk of
       Code.RK_Reg r -> toExpr r
-      Code.RK_Kst k -> toExpr (getLiteral fun k)
+      Code.RK_Kst k -> toExpr k
 
 
 
@@ -325,12 +321,6 @@ getExtraArg fun pc =
   case getOpCode fun pc of
     Code.OP_EXTRAARG n -> n
     _ -> error ("Expected EXTRA_ARG at PC: " ++ show pc)
-
-getLiteral :: Code.Function -> Code.Kst -> Literal
-getLiteral fun (Code.Kst litIx) =
-  case Code.funcConstants fun Vector.!? litIx of
-    Just l  -> l
-    Nothing -> error ("Invalid literal index: " ++ show litIx)
 
 
 
@@ -373,7 +363,7 @@ indexValue ans tab0 key' fin =
            $ IfType TableType
                (do tmp <- newTMP
                    emit (LookupTable tmp tab key)
-                   ifNil tmp (meta $ do ans =: KNil
+                   ifNil tmp (meta $ do ans =: LNil
                                         goto done)
                              (do ans =: tmp
                                  goto done)
@@ -678,21 +668,21 @@ callValue f fin =
        fin
 
 getCallArguments :: Code.Reg {- ^ start -} ->
-                    Count  {- ^ count -} ->
+                    Code.Count  {- ^ count -} ->
                     M ()
 getCallArguments from count =
   case count of
-    CountInt x ->
-      emit $ SetList ListReg [ toExpr r | r <- regRange from x ]
+    Code.CountInt x ->
+      emit $ SetList ListReg [ toExpr r | r <- Code.regRange from x ]
 
-    CountTop ->
+    Code.CountTop ->
       do mb <- getListReg
          case mb of
            Just end
              | from <= end ->
                 emit $ Append ListReg
                               -- XXX: pred 0?
-                              [ toExpr r | r <- [ from .. pred end ] ]
+                          [ toExpr r | r <- init (Code.regFromTo from end) ]
 
              | otherwise -> error "getCallArguments: from > end"
 
@@ -701,17 +691,17 @@ getCallArguments from count =
 
 
 setCallResults ::
-  Code.Reg  {- ^ starting register -} ->
-  ListReg {- ^ source register -} ->
-  Count   {- ^ results expected  -} ->
+  Code.Reg    {- ^ starting register -} ->
+  ListReg     {- ^ source register -} ->
+  Code.Count  {- ^ results expected  -} ->
   M ()
 setCallResults to from count =
   case count of
-    CountInt x ->
-      mapM_ emit [ IndexList (Reg (plusReg to i)) from i
+    Code.CountInt x ->
+      mapM_ emit [ IndexList (Reg (Code.plusReg to i)) from i
                       | i <- take x [ 0 .. ]
                  ]
-    CountTop ->
+    Code.CountTop ->
       setListReg to
 
 

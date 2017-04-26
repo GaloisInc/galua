@@ -8,64 +8,64 @@ import           Data.Map ( Map )
 import qualified Data.Map as Map
 import Data.List(intersperse)
 import Text.PrettyPrint
-import Language.Lua.Bytecode.Pretty(PP(..),PPInfo)
 import Galua.Micro.Type.Value
+import Galua.Pretty
 
-instance PP Int where
-  pp _ x = text (show x)
+instance Pretty Int where
+  pp x = text (show x)
 
-instance PP Type where
-  pp _ ty = text (show ty)
+instance Pretty Type where
+  pp ty = text (show ty)
 
-instance PP RefId where
-  pp i (RefId b n)      = "ref:" <> pp i b <> colon <> int n
+instance Pretty RefId where
+  pp (RefId b n)      = "ref:" <> pp b <> colon <> int n
 
-instance PP TableId where
-  pp i (TableId b n)    = "tab:" <> pp i b <> colon <> int n
+instance Pretty TableId where
+  pp (TableId b n)    = "tab:" <> pp b <> colon <> int n
 
-instance PP ClosureId where
-  pp i (ClosureId b n)  = "clo:" <> pp i b <> colon <> int n
+instance Pretty ClosureId where
+  pp (ClosureId b n)  = "clo:" <> pp b <> colon <> int n
 
 
-instance PP QualifiedBlockName where
-  pp i (QualifiedBlockName fid b) = pp i fid <> colon <> pp i b
+instance Pretty QualifiedBlockName where
+  pp (QualifiedBlockName fid b) = pp fid <> colon <> pp b
 
-instance PP GlobalBlockName where
-  pp i (GlobalBlockName caller qbn) = pp i caller <> colon <> pp i qbn
+instance Pretty GlobalBlockName where
+  pp (GlobalBlockName caller qbn) = pp caller <> colon <> pp qbn
 
-instance PP CallsiteId where
-  pp i (CallsiteId qbn opcode) = pp i qbn <> colon <> pp i opcode
+instance Pretty CallsiteId where
+  pp (CallsiteId qbn opcode) = pp qbn <> colon <> pp opcode
 
-instance PP a => PP (List a) where
-  pp n xs = case xs of
+instance Pretty a => Pretty (List a) where
+  pp xs = case xs of
               ListBottom -> "⟂"
               List _count xs' y  ->
                case xs' of
-                 [] -> "repeat" <+> pp n y
-                 _  -> brackets (fsep (punctuate comma (map (pp n) xs'))) <+>
-                       "++" <+> "repeat" <+> pp n y
+                 [] -> "repeat" <+> pp y
+                 _  -> brackets (fsep (punctuate comma (map pp xs'))) <+>
+                       "++" <+> "repeat" <+> pp y
 
-instance PP ByteString where
-  pp _ = text . show
+instance Pretty ByteString where
+  pp = text . show
 
-instance PP a => PP (WithTop a) where
-  pp _ Top = "⊤"
-  pp n (NotTop p) = pp n p
+instance Pretty a => Pretty (WithTop a) where
+  pp Top = "⊤"
+  pp (NotTop p) = pp p
 
-instance PP RegVal where
-  pp n val =
+instance Pretty RegVal where
+  pp val =
     case val of
       RegBottom -> "⊥"
-      RegVal v  -> pp n v
-      RegRef r  -> ppSet n "ref" r
+      RegVal v  -> pp v
+      RegRef r  -> ppSet "ref" r
 
-instance PP Value where
-  pp _ t | t == bottom = "⊥"
-  pp n Value { .. } =
-      ppOpts $ map (pp n) (Set.toList valueBasic) ++
+instance Pretty Value where
+  pp t | t == bottom = "⊥"
+  pp Value { .. } =
+      ppOpts $ map pp (Set.toList valueBasic) ++
                ppStr ++
-               [ ppSet n "fun"   valueFunction
-               , ppSet n "table" valueTable ]
+               [ ppSet "fun"   valueFunction
+               , ppSet "table" valueTable ]
 
     where
     ppStr = case valueString of
@@ -78,58 +78,58 @@ ppOpts ds = hsep (intersperse "/" ds)
 
 
 
-ppSet :: PP a => PPInfo -> String -> WithTop (Set.Set a) -> Doc
-ppSet _ tag Top = braces (text tag <> ": ⊤")
-ppSet n tag (NotTop xs)
+ppSet :: Pretty a => String -> WithTop (Set.Set a) -> Doc
+ppSet tag Top = braces (text tag <> ": ⊤")
+ppSet tag (NotTop xs)
   | Set.null xs = braces (text tag <> ": ⊥")
   | otherwise   = braces (text tag <> ":" <+>
-                                    ppOpts (map (pp n) (Set.toList xs)))
+                                    ppOpts (map pp (Set.toList xs)))
 
 
-instance (PP a, PP b) => PP (a :-> b) where
-  pp n (FFun mp b) =
-    vcat [ pp n k <+> "->" <+> pp n v | (k,v) <- Map.toList mp ]
-    $$ "_" <+> "->" <+> pp n b
+instance (Pretty a, Pretty b) => Pretty (a :-> b) where
+  pp (FFun mp b) =
+    vcat [ pp k <+> "->" <+> pp v | (k,v) <- Map.toList mp ]
+    $$ "_" <+> "->" <+> pp b
 
-instance (PP a, PP b) => PP (Map a b) where
-  pp n mp = vcat [ pp n k <+> "->" <+> pp n v | (k,v) <- Map.toList mp ]
+instance (Pretty a, Pretty b) => Pretty (Map a b) where
+  pp mp = vcat [ pp k <+> "->" <+> pp v | (k,v) <- Map.toList mp ]
 
-instance PP a => PP (Lift a) where
-  pp n v = case v of
-             NoValue        -> "⊥"
-             OneValue x     -> pp n x
-             MultipleValues -> "⊤"
+instance Pretty a => Pretty (Lift a) where
+  pp v = case v of
+           NoValue        -> "⊥"
+           OneValue x     -> pp x
+           MultipleValues -> "⊤"
 
 
 
-instance PP TableV where
-  pp n TableV { .. } = braces (vcat (pp n tableFields : metatable : rest))
+instance Pretty TableV where
+  pp TableV { .. } = braces (vcat (pp tableFields : metatable : rest))
       where
-      metatable = "meta ->" <+> pp n tableMeta
+      metatable = "meta ->" <+> pp tableMeta
       rest | tableKeys == bottom || tableValues == bottom = []
-           | otherwise = [ pp n tableKeys <+> "->" <+> pp n tableValues ]
+           | otherwise = [ pp tableKeys <+> "->" <+> pp tableValues ]
 
-instance PP FunV where
-  pp n FunV { .. } = braces ( pp n (lab <$> functionFID) <+> "|" <+>
-                              hsep (map (ppSet n "ref")
+instance Pretty FunV where
+  pp FunV { .. } = braces ( pp (lab <$> functionFID) <+> "|" <+>
+                              hsep (map (ppSet "ref")
                                         (Map.elems functionUpVals)) )
     where lab mb = case mb of
                      CFunImpl ptr -> "C:" <> text (show ptr)
-                     LuaFunImpl fid -> "LUA" <+> pp n fid
+                     LuaFunImpl fid -> "LUA" <+> pp fid
 
 
-instance PP LocalState where
-  pp n LocalState { .. } =
+instance Pretty LocalState where
+  pp LocalState { .. } =
     vcat [ entry "env" env
-         , "upvals" <> colon <+> hsep (map (ppSet n "ref") (Map.elems upvals))
+         , "upvals" <> colon <+> hsep (map (ppSet "ref") (Map.elems upvals))
          ]
     where
     entry x y
       | y == bottom = empty
-      | otherwise   = x <> colon $$ nest 2 (pp n y)
+      | otherwise   = x <> colon $$ nest 2 (pp y)
 
-instance PP GlobalState where
-  pp n GlobalState { .. } =
+instance Pretty GlobalState where
+  pp GlobalState { .. } =
     vcat [ entry "tables" tables
          , entry "type.meta"  basicMetas
          , entry "string.meta" stringMeta
@@ -141,10 +141,10 @@ instance PP GlobalState where
     where
     entry x y
       | y == bottom = empty
-      | otherwise   = x <> colon $$ nest 2 (pp n y)
+      | otherwise   = x <> colon $$ nest 2 (pp y)
 
-instance PP State where
-  pp n State { .. } = pp n localState $$ pp n globalState
+instance Pretty State where
+  pp State { .. } = pp localState $$ pp globalState
 
 
 

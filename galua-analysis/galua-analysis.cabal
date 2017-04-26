@@ -39,17 +39,3 @@ library
   ghc-options:         -Wall
   ghc-prof-options:    -fprof-auto-top
 
-
-executable GaluaMicroTest
-  main-is: MicroOpCode.hs
-  ghc-options:         -Wall
-  build-depends:       base,
-                       lua-bc,
-                       galua,
-                       galua-analysis,
-                       vector,
-                       containers,
-                       bytestring,
-                       pretty-show
-  default-language:    Haskell2010
-

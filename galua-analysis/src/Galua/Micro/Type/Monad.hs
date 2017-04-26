@@ -67,11 +67,10 @@ import qualified Data.Vector as Vector
 import qualified MonadLib as M
 import           MonadLib hiding (raises,sets,sets_,ask,get)
 
-import qualified Language.Lua.Bytecode as OP
-import           Language.Lua.Bytecode.FunId
 
 import Galua.Micro.AST
 import Galua.Micro.Type.Value
+import qualified Galua.Code as Code
 
 
 class Monad m => AnalysisM m where
@@ -105,7 +104,7 @@ sets_ f = sets $ \s -> ((),f s)
 
 
 data RO = RO
-  { roCode     :: Map FunId Function
+  { roCode     :: Map FunId MicroFunction
   , roPrims    :: Map CFun PrimImpl
   }
 
@@ -133,7 +132,7 @@ impossible :: AnalysisM m => m a
 impossible = options []
 
 allPaths ::
-  Map FunId Function ->
+  Map FunId MicroFunction ->
   Map CFun PrimImpl ->
   AllPaths a ->
   [ (a, Map GlobalBlockName State , Map GlobalBlockName Value, [String]) ]
@@ -150,7 +149,7 @@ allPaths funs prims (AllPaths m) =
 
 
 singlePath ::
-  Map FunId Function ->
+  Map FunId MicroFunction ->
   Map CFun PrimImpl ->
   SinglePath a ->
   ([a], Map GlobalBlockName State, Map GlobalBlockName Value, [String])
@@ -205,7 +204,7 @@ tryEnterBlockAt loc sCur =
                            Nothing -> error $ "The block is missing: " ++
                                                             show b ++
                                               "\nI'm in function: " ++
-                                                        funIdString curFun
+                                                        Code.funIdString curFun
                        Nothing ->
                          error $ "The current functions is missing: " ++
                                                             show curFun
@@ -555,7 +554,7 @@ newFunId proto refs =
      return ref
 
   where
-  up n r = (OP.UpIx n, NotTop (Set.singleton r))
+  up n r = (Code.UpIx n, NotTop (Set.singleton r))
 
 
 anyFunId :: BlockM ClosureId

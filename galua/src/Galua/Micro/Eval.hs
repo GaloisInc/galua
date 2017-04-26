@@ -13,9 +13,6 @@ import           Data.Bits(complement,(.&.),(.|.),xor)
 import qualified Data.ByteString as BS
 import           Control.Monad(zipWithM_,(<=<))
 
-import qualified Language.Lua.Bytecode as OP
-import           Language.Lua.Bytecode.FunId
-
 import           Galua.Value
 import           Galua.Number(Number(..),wordshiftL,wordshiftR,nummod,
                               numberPow,numberDiv)
@@ -23,6 +20,8 @@ import           Galua.Reference(AllocRef)
 import           Galua.LuaString
                    (LuaString,toByteString,fromByteString,luaStringLen)
 import           Galua.Micro.AST
+import qualified Galua.Code as Code
+import           Galua.Pretty(pp)
 
 data V = VRef {-# UNPACK #-} !(IORef Value)
        | VVal Value
@@ -36,8 +35,8 @@ data Frame = Frame { regs         :: !(IOVector V)
                    , listRegRef   :: !(IORef [Value])
                    , upvals       :: !(Vector (IORef Value))
                    , metaTables   :: !MetaTables
-                   , ourFID       :: !FunId
-                   , subFuns      :: !(Vector OP.Function)
+                   , ourFID       :: !Code.FunId
+                   , subFuns      :: !(Vector Code.Function)
                    , ourCode      :: !(Map BlockName (Vector BlockStmt))
                    , ourCaller    :: !CodeLoc
                    }
@@ -97,7 +96,7 @@ getListReg Frame{..} = readIORef listRegRef
 setReg :: IsValue v => Frame -> Reg -> v -> IO ()
 setReg Frame { .. } reg v0 =
   case reg of
-    Reg (OP.Reg r) -> IOVector.write regs r val
+    Reg (Code.Reg r) -> IOVector.write regs r val
     TMP a b        -> case toValue v0 of
                         VVal v -> modifyIORef' regsTMP (Map.insert (a,b) v)
                         VRef _ -> error "[bug] reference in a TMP register"
@@ -109,29 +108,28 @@ setReg Frame { .. } reg v0 =
 getReg :: Frame -> Reg -> IO V
 getReg Frame { .. } reg =
   case reg of
-    Reg (OP.Reg r) -> IOVector.read regs r
+    Reg (Code.Reg r) -> IOVector.read regs r
     TMP a b -> do m <- readIORef regsTMP
                   case Map.lookup (a,b) m of
                     Just v  -> return (VVal v)
-                    Nothing -> crash ("Read from bad reg: " ++ show (pp' reg))
+                    Nothing -> crash ("Read from bad reg: " ++ show (pp reg))
 
 
 getExpr :: Frame -> Expr -> IO V
 getExpr f expr =
   case expr of
     EReg r -> getReg f r
-    EUp (OP.UpIx x)  ->
+    EUp (Code.UpIx x)  ->
       case upvals f Vector.!? x of
         Just r  -> return (VRef r)
-        Nothing -> crash ("Read from bad upval: " ++ show (pp' expr))
+        Nothing -> crash ("Read from bad upval: " ++ show (pp expr))
     ELit l ->
       case l of
-        KNil           -> return (VVal Nil)
-        KBool b        -> return (VVal (Bool b))
-        KNum d         -> return (VVal (Number (Double d)))
-        KInt n         -> return (VVal (Number (Int n)))
-        KString bs     -> (VVal . String) <$> fromByteString bs
-        KLongString bs -> (VVal . String) <$> fromByteString bs
+        LNil           -> return (VVal Nil)
+        LBool b        -> return (VVal (Bool b))
+        LNum d         -> return (VVal (Number (Double d)))
+        LInt n         -> return (VVal (Number (Int n)))
+        LStr bs        -> (VVal . String) <$> fromByteString bs
 
 getProp :: Frame -> Prop -> IO Bool
 getProp f (Prop pre es) =

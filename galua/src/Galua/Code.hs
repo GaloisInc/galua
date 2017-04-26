@@ -1,3 +1,4 @@
+{-# Language OverloadedStrings #-}
 module Galua.Code
   ( parseLuaBytecode
   , dumpLuaBytecode
@@ -17,8 +18,6 @@ module Galua.Code
   , module FunId
 
   -- * Pretty print
-  , BC.blankPPInfo
-  , BC.PP(..)
   , ppOpCode
 
     -- * Debug
@@ -49,6 +48,9 @@ import qualified Language.Lua.Bytecode.Parser as BC
 import qualified Language.Lua.Bytecode.Debug as BC
 
 import           Data.Coerce
+
+import Galua.Pretty
+import Galua.Util.String(unpackUtf8)
 
 parseLuaBytecode :: Maybe String -> L.ByteString -> IO (Either String Chunk)
 parseLuaBytecode name bytesL =
@@ -90,12 +92,11 @@ data Function = Function
   , funcIsVararg        :: !Bool
   , funcMaxStackSize    :: !Int
   , funcCode            :: !(Vector OpCode)
-  -- , funcMicroCode       :: !MicroFunction
   , funcUpvalues        :: !(Vector Upvalue)
   , funcNested          :: !(Vector Function)
   , funcDebug           :: !DebugInfo
   , funcOrig            :: !BC.Function
-  }
+  } deriving Show
 
 type Kst = Literal
 
@@ -104,10 +105,13 @@ data Literal = LNil
              | LInt {-# UNPACK #-} !Int
              | LNum {-# UNPACK #-} !Double
              | LStr {-# UNPACK #-} !ByteString
+               deriving Show
 
 data RK = RK_Reg !Reg | RK_Kst !Kst
+  deriving Show
 
 data Upvalue = UpReg !Reg | UpUp !UpIx
+  deriving Show
 
 newtype Reg = Reg Int
   deriving (Eq, Ord, Show)
@@ -186,13 +190,14 @@ data OpCode
 
   | OP_VARARG   !Reg !Count {- ^    A B     R(A), R(A+1), ..., R(A+B-2) = vararg            -}
   | OP_EXTRAARG !Int        {- ^    Ax      extra (larger) argument for previous opcode     -}
+  deriving Show
 
 --------------------------------------------------------------------------------
 
 cvtFunction :: Maybe BC.Function -> BC.Function -> IO Function
 cvtFunction parent fun =
-  do nest <- mapM (cvtFunction (Just fun)) (BC.funcProtos fun)
-     code <- mapM (cvtOpCode nest fun) (Vector.indexed (BC.funcCode fun))
+  do subs <- mapM (cvtFunction (Just fun)) (BC.funcProtos fun)
+     code <- mapM (cvtOpCode subs fun) (Vector.indexed (BC.funcCode fun))
      ups' <- mapM (cvtUpvalue parent) (BC.funcUpvalues fun)
      return Function
       { funcSource          = BC.funcSource fun
@@ -202,10 +207,9 @@ cvtFunction parent fun =
       , funcIsVararg        = BC.funcIsVararg fun
       , funcMaxStackSize    = BC.funcMaxStackSize fun
       , funcCode            = code
-      -- , funcMicroCode       = Micro.translate fun
       , funcUpvalues        = ups'
       , funcDebug           = BC.funcDebug fun
-      , funcNested          = nest
+      , funcNested          = subs
       , funcOrig            = fun
       }
 
@@ -298,14 +302,14 @@ extraPcChecks fun pc op =
            (fail "Invalid target program counter")
 
 cvtOpCode :: Vector Function -> BC.Function -> (Int,BC.OpCode) -> IO OpCode
-cvtOpCode nest fun (pc,op) =
-  do op' <- cvtOpCode' nest fun pc op
+cvtOpCode subs fun (pc,op) =
+  do op' <- cvtOpCode' subs fun pc op
      extraRegChecks fun op'
      extraPcChecks fun pc op'
      return op'
 
 cvtOpCode' :: Vector Function -> BC.Function -> Int -> BC.OpCode -> IO OpCode
-cvtOpCode' nest fun pc op =
+cvtOpCode' subs fun pc op =
   case op of
     BC.OP_MOVE     r1 r2      -> OP_MOVE <$> cvtReg fun r1 <*> cvtReg fun r2
     BC.OP_LOADK    r1 k       -> OP_LOADK <$> cvtReg fun r1 <*> cvtKst fun k
@@ -373,7 +377,7 @@ cvtOpCode' nest fun pc op =
             else return $! OP_SETLIST r' x (fpf * (y - 1)) 0
 
     BC.OP_CLOSURE  r1 (ProtoIx f) ->
-      case nest Vector.!? f of
+      case subs Vector.!? f of
         Nothing -> fail "Malformed op-code"
         Just fu -> OP_CLOSURE <$> cvtReg fun r1 <*> pure f <*> pure fu
 
@@ -409,17 +413,21 @@ ppOpCode f pc = BC.ppOpCode (funcOrig f) pc
 
 --------------------------------------------------------------------------------
 
-instance BC.PP UpIx where
-  pp i (UpIx u) = BC.pp i (BC.UpIx u)
+instance Pretty UpIx where
+  pp (UpIx u) = "U" <> int u
 
-instance BC.PP Reg where
-  pp i (Reg u) = BC.pp i (BC.Reg u)
-
-
-
---------------------------------------------------------------------------------
+instance Pretty Reg where
+  pp (Reg u) = "R" <> int u
 
 
+instance Pretty Literal where
+  pp l =
+    case l of
+      LNil -> "nil"
+      LBool b -> if b then "true" else "false"
+      LInt n  -> int n
+      LNum n  -> double n
+      LStr x  -> text (show (unpackUtf8 x))
 
 
 

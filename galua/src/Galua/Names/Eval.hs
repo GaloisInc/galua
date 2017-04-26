@@ -8,7 +8,6 @@ module Galua.Names.Eval
   ) where
 
 import           Language.Lua.Syntax(Unop(..))
-import           Language.Lua.Bytecode.Pretty(PP,pp,blankPPInfo)
 import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
 import           Data.Maybe(fromMaybe)
@@ -29,6 +28,7 @@ import Galua.LuaString(toByteString,
 import Galua.Number(Number(..),numberToInt)
 import Galua.Names.Find
 import Galua.Mach (TypeMetatables)
+import Galua.Pretty(Pretty(pp))
 
 data NameResolveEnv = NameResolveEnv
   { nrFunction :: Function
@@ -230,5 +230,5 @@ readReg eenv (Reg n) =
        Just ref -> readIORef ref
        Nothing  -> bad $ "Invalid register: " ++ sh (Reg n)
 
-sh :: PP a => a -> String
-sh = show . pp blankPPInfo
+sh :: Pretty a => a -> String
+sh = show . pp

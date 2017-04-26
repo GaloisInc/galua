@@ -14,9 +14,8 @@ import           Foreign.C.Types (CInt)
 import           Foreign.Ptr (FunPtr, Ptr)
 import           GHC.Generics
 
-import Language.Lua.Bytecode.FunId
-
 import Galua.Micro.AST
+import Galua.Code(FunId, noFun, subFun)
 
 
 -- | An abstract value.

@@ -26,7 +26,7 @@ import           Foreign (ForeignPtr, Ptr, nullPtr, newForeignPtr, FunPtr
                          , castFunPtr )
 import           Foreign.C (CInt)
 import           Foreign.StablePtr
-                   (StablePtr, newStablePtr, freeStablePtr, castStablePtrToPtr)
+                   (StablePtr, newStablePtr, castStablePtrToPtr)
 import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString as B
 import           System.Exit
@@ -47,8 +47,6 @@ import           Galua.Util.Cache
 import           Galua.Util.Weak (MakeWeak(..), mkWeakIORef')
 import           Galua.Util.IOURef
 
-
-import           GHC.Exts (inline)
 
 import           Process (readProcessWithExitCodeBS)
 

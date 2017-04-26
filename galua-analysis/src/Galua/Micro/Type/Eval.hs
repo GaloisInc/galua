@@ -16,8 +16,8 @@ import           Debug.Trace
 import Galua.Micro.AST
 import Galua.Micro.Type.Value
 import Galua.Micro.Type.Pretty()
-import Language.Lua.Bytecode.Pretty(PP(..),pp,blankPPInfo)
 import Galua.Micro.Type.Monad
+import Galua.Pretty
 
 
 regCasesM :: Reg -> BlockM SingleV
@@ -53,12 +53,11 @@ evalExpr expr =
     EUp u  -> getUpVal u
     ELit l ->
       case l of
-        KNil          -> ret (BasicValue Nil)
-        KBool b       -> ret (BooleanValue (Just b))
-        KNum _        -> ret (BasicValue Number)
-        KInt _        -> ret (BasicValue Number)
-        KString b     -> ret (StringValue (Just b))
-        KLongString b -> ret (StringValue (Just b))
+        LNil          -> ret (BasicValue Nil)
+        LBool b       -> ret (BooleanValue (Just b))
+        LNum _        -> ret (BasicValue Number)
+        LInt _        -> ret (BasicValue Number)
+        LStr b        -> ret (StringValue (Just b))
   where
   ret = return . RegVal . fromSingleV
 
@@ -89,7 +88,7 @@ raiseError v =
 
 evalStmt :: BlockStmt -> BlockM Next
 evalStmt stmt =
-  logTrace ("STMT: " ++ show (pp blankPPInfo stmt)) >>
+  logTrace ("STMT: " ++ show (pp stmt)) >>
 
   case stmtCode stmt of
 
@@ -227,8 +226,9 @@ evalStmt stmt =
            _ -> options [ EnterBlock t, EnterBlock f ]
 
 
-    NewClosure r proto ups ->
-      do upRs' <- mapM (regValToRef <=< evalExpr) ups
+    NewClosure r proto fun ->
+      do let ups = funcUpvalExprs fun
+         upRs' <- mapM (regValToRef <=< evalExpr) ups
          let upRs = case sequence upRs' of
                       Just rs -> rs
                       Nothing -> error "NewClosure: TOP references?"
@@ -378,7 +378,7 @@ evalStmt stmt =
 evalBlock :: AnalysisM m => GlobalBlockName -> State -> m (Next, State)
 evalBlock bn s = inBlock bn s go
   where
-  go = do logTrace ("BLOCK: " ++ show (pp blankPPInfo bn))
+  go = do logTrace ("BLOCK: " ++ show (pp bn))
           next <- evalStmt =<< curStmt
           case next of
             Continue -> continue >> go
@@ -442,8 +442,8 @@ data Result = Result
   , resBlockRaises  :: Map GlobalBlockName Value
   } deriving Show
 
-instance PP Result where
-  pp n Result { .. } =
+instance Pretty Result where
+  pp Result { .. } =
     vcat [ entry "returns" resReturns
          , entry "raises"  resRaises
          , entry "finals"  resGlobals
@@ -453,7 +453,7 @@ instance PP Result where
     where
     entry x y
       | y == bottom = empty
-      | otherwise   = x <> colon $$ nest 2 (pp n y)
+      | otherwise   = x <> colon $$ nest 2 (pp y)
 
 {-
 analyze ::
@@ -478,7 +478,7 @@ analyze funs prims cid args glob =
 -}
 
 analyze ::
-  Map FunId Function ->
+  Map FunId MicroFunction ->
   Map CFun PrimImpl ->
   ClosureId ->
   List Value ->

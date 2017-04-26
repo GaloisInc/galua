@@ -65,9 +65,6 @@ import           Control.Monad.IO.Class
 import           Data.ByteString (ByteString)
 import           Data.Function(on)
 import           Data.IORef
-import qualified Data.Text as Text
-import           Data.Text.Encoding (decodeUtf8With,encodeUtf8)
-import           Data.Text.Encoding.Error (lenientDecode)
 import           Data.Vector.Mutable (IOVector)
 import           GHC.Generics (Generic)
 import           Foreign.Ptr (FunPtr, Ptr,ptrToIntPtr)
@@ -79,6 +76,7 @@ import           Data.Hashable(Hashable(..))
 import {-# SOURCE #-} Galua.Mach (Thread)
 
 import qualified Galua.Util.Table as Tab
+import           Galua.Util.String(packUtf8,unpackUtf8)
 
 import Galua.Number
 import Galua.FunValue
@@ -257,13 +255,6 @@ prettyValue v =
     UserData u              -> "userdata: " ++ prettyRef u
     LightUserData p         -> "userdata: " ++ show p
     Thread t                -> "thread: "   ++ prettyRef t
-
-unpackUtf8 :: ByteString -> String
-unpackUtf8 = Text.unpack . decodeUtf8With lenientDecode
-
-packUtf8 :: String -> ByteString
-packUtf8 = encodeUtf8 . Text.pack
-
 
 
 --------------------------------------------------------------------------------

@@ -29,6 +29,7 @@ import qualified Galua.Util.SizedVector as SV
 import Galua.Util.IOURef
 import Galua.Code
 import Galua.Debugger.CommandQueue
+import Galua.Pretty(pp)
 
 import qualified Galua.Micro.AST         as Analysis
 import qualified Galua.Micro.Type.Primitives  as Analysis
@@ -263,7 +264,7 @@ analyze dbg n =
                            args = Analysis.initLuaArgList
                            prims = Analysis.buildPrimMap gid glob
                            res  = Analysis.analyze funs prims cid args glob
-                           txt  = show $ pp blankPPInfo res
+                           txt  = show (pp res)
                        save "out" funs
                        writeFile "imported.txt" (show (cid, gid, glob))
                        writeFile "va.txt" txt
@@ -276,7 +277,7 @@ analyze dbg n =
 
   where
   expandSources     = foldr expandTop Map.empty . Map.toList
-  expandTop (r,f) m = Analysis.translateAll (rootFun r) (funcOrig (chunkFunction f)) m
+  expandTop (r,f) m = Analysis.translateAll (rootFun r) (chunkFunction f) m
 
   save pre x = sequence_
                     [ writeFile (dotFile pre fid)

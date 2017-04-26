@@ -10,13 +10,12 @@ import           Data.List(groupBy)
 import           Data.Function(on)
 import           Data.Maybe(mapMaybe)
 
-import Language.Lua.Bytecode.FunId
-
+import Galua.Code(FunId)
 import Galua.Micro.AST
 import Galua.Micro.Type.Eval
          (Result(..),GlobalBlockName(..),QualifiedBlockName(..))
 
-filterFunctions :: Result -> Map FunId Function -> Map FunId Function
+filterFunctions :: Result -> Map FunId MicroFunction -> Map FunId MicroFunction
 filterFunctions res = Map.mapWithKey check
   where
   used  = usedBlocks res
@@ -26,7 +25,7 @@ filterFunctions res = Map.mapWithKey check
 
 
 
-filterFunction :: Set BlockName -> Function -> Function
+filterFunction :: Set BlockName -> MicroFunction -> MicroFunction
 filterFunction used f = f { functionCode = fmap (filterStmts used)
                                          $ Map.filterWithKey isUsed
                                          $ functionCode f }
