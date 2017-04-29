@@ -15,6 +15,11 @@
     <div class="nav-wrapper">
       <ul class="right">
         <li><a id="status" class="white-text blue darken-2">&nbsp;</a></li>
+
+        <li><a id="test-btn"
+               class="tooltipped" data-tooltip="Testing,testing,123">
+            <i class="material-icons">face</i></a></li>
+
         <li><a class="tooltipped" data-tooltip="Continue executing"
                onclick="drawStep('/run')">
             <i class="material-icons">play_arrow</i></a></li>
@@ -189,6 +194,7 @@
 </div>
 
 
+
 <!-- Edit text expressions.
 This is used to set break-point conditions, as well as setting values
 for things. -->
@@ -208,6 +214,9 @@ for things. -->
 
 <script src="libs/jquery.min.js"></script>
 <script src="libs/materialize/js/materialize.min.js"></script>
+<script src="libs/cytoscape.min.js"></script>
+<script src="libs/dagre.min.js"></script>
+<script src="libs/cytoscape-dagre.js"></script>
 <script src="init.js"></script>
 <script src="debugger.js"></script>
 <script src="code.js"></script>
@@ -216,6 +225,7 @@ for things. -->
 <script src="analysis.js"></script>
 <script src="popUpMenu.js"></script>
 <script src="editExpression.js"></script>
+<script src="micro-code.js"></script>
 </body>
 </html>
 

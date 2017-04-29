@@ -1,6 +1,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 -- | Translate from Lua op-codes into the CFG representation of a program.
-module Galua.Micro.Translate (translate,translateAll,translateTop) where
+module Galua.Micro.Translate
+  ( MicroFunction(..), blankMicroFunction
+  , translate,translateAll,translateTop
+  ) where
 
 import           Data.String(fromString)
 import           Data.ByteString(ByteString)
@@ -37,9 +40,6 @@ translateAll cur f m0 =
 translateTop :: Int -> Code.Function -> Map FunId MicroFunction
 translateTop n f = translateAll (rootFun n) f Map.empty
 
-
-
- ----------
 
 --------------------------------------------------------------------------------
 

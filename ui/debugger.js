@@ -326,6 +326,9 @@ function drawDebugger(d) {
       break
   }
 
+  $('#test-btn').off('click')
+                .click(function() { drawMicroCode(dbgState) })
+
   doPoll(d.stateCounter)
 }
 

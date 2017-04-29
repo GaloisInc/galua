@@ -5,6 +5,7 @@ module Galua.Micro.AST
   ( module Galua.Micro.AST
   , ValueType(..)
   , Literal(..)
+  , blankMicroFunction
   ) where
 
 
@@ -22,7 +23,11 @@ import           Galua.Pretty
 
 data MicroFunction = MicroFunction
   { functionCode :: Map BlockName (Vector BlockStmt)
-  }
+  } deriving Show
+
+
+blankMicroFunction :: MicroFunction
+blankMicroFunction = MicroFunction { functionCode = Map.empty }
 
 data Reg        = Reg !Code.Reg
                 | TMP !Int !Int     -- ^ phase, temporary
@@ -53,7 +58,7 @@ data Expr       = EReg Reg
 
 data BlockStmt = BlockStmt { stmtPC   :: !Int   -- ^ PC in original program
                            , stmtCode :: !Stmt
-                           }
+                           } deriving Show
 
 data Stmt =
 

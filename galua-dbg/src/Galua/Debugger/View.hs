@@ -6,6 +6,7 @@ module Galua.Debugger.View
   , importBreakLoc
   , exportBreakLoc
   , analyze
+  , exportMicroFun
   ) where
 
 import Galua.CObjInfo(CObjInfo(..))
@@ -13,6 +14,7 @@ import Galua.Debugger
 import Galua.Debugger.PrettySource (omittedLine,lineToJSON)
 import Galua.Debugger.Trie
 import Galua.Debugger.View.Utils
+import Galua.Debugger.View.MicroCode(exportMicroFunction)
 import Galua.Mach
 import Galua.Number
 import Galua.LuaString
@@ -835,6 +837,11 @@ funIdParent :: FunId -> Maybe FunId
 funIdParent (FunId []) = Nothing
 funIdParent (FunId (_:xs)) = Just (FunId xs)
 
+
+exportMicroFun :: Chunks -> Maybe Int -> Maybe ExecEnvId -> FunId -> Maybe JS.Value
+exportMicroFun funs mbPc mbEid fid0 =
+  do (_,f) <- lookupFun funs fid0
+     return (exportMicroFunction (funcMicroCode f))
 
 -- | Merge together the source lines of a function with their corresponding
 -- opcodes.

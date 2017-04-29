@@ -12,7 +12,9 @@ import           Galua.Debugger.View
                   , watchExportable, unwatchExportable
                   , expandExportable, expandSubtable,
                       analyze,
-                      exportFun,importBreakLoc,exportBreakLoc,exportV)
+                      exportFun,importBreakLoc,exportBreakLoc,exportV,
+                      exportMicroFun
+                  )
 import           Galua.Debugger.EmbedDirectory (embedDirectory)
 import qualified Galua.Value as G
 import           Galua.Number(parseNumber)
@@ -130,6 +132,7 @@ apiRoutes st =
   let cmd f   = f =<< liftIO (readIORef st)
       ioCmd f = liftIO (f =<< readIORef st)
   in [ ("/function", cmd snapGetFunction)
+     , ("/micro-function", cmd snapGetMicroFunction)
      , ("/closure",  cmd snapGetClosure)
      , ("/view",     cmd snapGetState)
      , ("/poll",     cmd snapPoll)
@@ -307,6 +310,14 @@ snapGetFunction st =
   do fid <- funIdParam "fid"
      sources <- liftIO (readIORef (dbgSources st))
      case exportFun sources Nothing Nothing fid of
+       Just js -> sendJSON js
+       _       -> notFound
+
+snapGetMicroFunction :: Debugger -> Snap ()
+snapGetMicroFunction st =
+  do fid <- funIdParam "fid"
+     sources <- liftIO (readIORef (dbgSources st))
+     case exportMicroFun sources Nothing Nothing fid of
        Just js -> sendJSON js
        _       -> notFound
 
