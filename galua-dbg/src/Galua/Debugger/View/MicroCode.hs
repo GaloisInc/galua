@@ -23,9 +23,9 @@ exportMicroFunction f =
 exportBlockName :: BlockName -> Text
 exportBlockName bn =
   case bn of
-    PCBlock n    -> Text.append "pc_" (sh n)
-    NewBlock x y -> Text.concat [ "new_", sh x, sh y ]
-    EntryBlock   -> "entry"
+    PCBlock n    -> Text.append "PC" (sh n)
+    NewBlock x y -> Text.concat [ "PC", sh x, "_", sh y ]
+    EntryBlock   -> "ENTRY"
   where sh = Text.pack . show
 
 exportBlock :: Vector BlockStmt -> JS.Value

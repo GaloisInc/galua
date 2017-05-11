@@ -14,6 +14,7 @@ import qualified Data.ByteString as BS
 import           Control.Monad(zipWithM_,(<=<))
 
 import           Galua.Value
+import           Galua.FunValue(luaFunction)
 import           Galua.Number(Number(..),wordshiftL,wordshiftR,nummod,
                               numberPow,numberDiv)
 import           Galua.Reference(AllocRef)
@@ -278,9 +279,9 @@ runStmt aref f@Frame { .. } pc stmt =
 
          case v of
 
-           Table tr         -> setMb =<< getTableMeta tr
-           UserData ur      -> setMb =<< readIORef (userDataMeta (referenceVal ur))
-           _                -> tyMeta (valueType v)
+           Table tr     -> setMb =<< getTableMeta tr
+           UserData ur  -> setMb =<< readIORef (userDataMeta (referenceVal ur))
+           _            -> tyMeta (valueType v)
 
     Raise e ->
       do v <- isValue =<< getExpr f e
@@ -317,25 +318,19 @@ runStmt aref f@Frame { .. } pc stmt =
     CloseStack _ -> crash "CloseStack in phase 2"
 
 
-{-
-    NewClosure res ix us ->
-      do rs <- mapM (isReference <=< getExpr f) us
-         closureUpvals <- Vector.thaw vs
-         let fid = ourFID
-             f   = luaFunction (subFun fid ix) cloFunc
+    NewClosure res ix fun ->
+      do rs <- mapM (isReference <=< getExpr f) (funcUpvalExprs fun)
 
-         fun <- case subFuns Vector.!? proto of
-                  Just fn ->
-                        return (luaFunction (subFun ourFID proto) fn)
-                  Nothing -> crash ("Missing function: " ++ show proto)
-         undefined
-         let refLoc = RefLoc { refLocSite   = InLua ourFID pc
+         let fid    = ourFID
+             fu     = luaFunction (Code.subFun fid ix) fun
+             refLoc = RefLoc { refLocSite   = InLua ourFID pc
                              , refLocCaller = ourCaller
                              }
-         clo <- newClosure aref refLoc fun =<< Vector.thaw (Vector.fromList rs)
+
+         clo <- newClosure aref refLoc fu =<< Vector.thaw (Vector.fromList rs)
          setReg f res clo
          return Continue
--}
+
 
     Drop ArgReg n ->
       do modifyIORef' argRegRef (drop n)

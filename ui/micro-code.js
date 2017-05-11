@@ -7,7 +7,7 @@ function drawMicroCode(dbg) {
 
     var els = []
     jQuery.each(cfg,function(l,b) {
-      var lab = b.stmts.join('\n')
+      var lab = l + ':\n' + b.stmts.join('\n')
       els.push({ data: { id: l, label: lab }})
 
       jQuery.each(b.next, function(ix,to) {
