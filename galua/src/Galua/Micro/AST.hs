@@ -5,7 +5,6 @@ module Galua.Micro.AST
   ( module Galua.Micro.AST
   , ValueType(..)
   , Literal(..)
-  , blankMicroFunction
   ) where
 
 

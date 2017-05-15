@@ -10,7 +10,6 @@ import qualified Data.Set as Set
 import           Data.Map(Map)
 import qualified Data.Map as Map
 import           Data.Vector(Vector)
-import qualified Data.Vector as Vector
 import           Data.List(foldl',union)
 import           Data.Maybe(maybeToList)
 import           Data.Foldable(toList)

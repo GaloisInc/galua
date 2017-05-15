@@ -316,14 +316,6 @@ getOpCode fun pc =
     Just op -> op
     Nothing -> error ("Bad PC: " ++ show pc)
 
-getExtraArg :: Code.Function -> Int -> Int
-getExtraArg fun pc =
-  case getOpCode fun pc of
-    Code.OP_EXTRAARG n -> n
-    _ -> error ("Expected EXTRA_ARG at PC: " ++ show pc)
-
-
-
 --------------------------------------------------------------------------------
 -- Tables
 
