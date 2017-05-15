@@ -25,7 +25,7 @@ import qualified Galua.Code as Code
 import           Galua.Pretty(pp)
 
 data V = VRef {-# UNPACK #-} !(IORef Value)
-       | VVal Value
+       | VVal !Value
 
 
 type MetaTables = IORef (Map ValueType (Reference Table))
@@ -37,7 +37,6 @@ data Frame = Frame { regs         :: !(IOVector V)
                    , upvals       :: !(Vector (IORef Value))
                    , metaTables   :: !MetaTables
                    , ourFID       :: !Code.FunId
-                   , subFuns      :: !(Vector Code.Function)
                    , ourCode      :: !(Map BlockName (Vector BlockStmt))
                    , ourCaller    :: !CodeLoc
                    }
@@ -224,256 +223,335 @@ isString val =
     VVal (String s) -> return s
     _ -> typeError "string"
 
+
 isBool :: V -> IO Bool
 isBool val =
   case val of
     VVal (Bool b) -> return b
     _ -> typeError "boolean"
 
+--------------------------------------------------------------------------------
+
+performAssign :: Frame -> Reg -> Expr -> IO Next
+performAssign f r e = do setReg f r =<< getExpr f e
+                         return Continue
+
+
+performNewTable :: AllocRef -> Frame -> Int -> Reg -> IO Next
+performNewTable aref f pc r =
+  do let refLoc = RefLoc { refLocSite   = InLua (ourFID f) pc
+                         , refLocCaller = ourCaller f
+                         }
+     setReg f r =<< newTable aref refLoc 0 0
+     return Continue
+
+
+performLookupTable :: Frame -> Reg -> Reg -> Expr -> IO Next
+performLookupTable f res tab ix =
+  do t <- isTable =<< getReg f tab
+     v <- isValue =<< getExpr f ix
+     setReg f res =<< getTableRaw t v
+     return Continue
+
+
+performSetTable :: Frame -> Reg -> Expr -> Expr -> IO Next
+performSetTable f tab ix val =
+  do t <- isTable =<< getReg f tab
+     i <- isValue =<< getExpr f ix
+     v <- isValue =<< getExpr f val
+     setTableRaw t i v
+     return Continue
+
+
+performSetTableList :: Frame -> Reg -> Int -> IO Next
+performSetTableList f tab ix =
+  do t  <- isTable =<< getReg f tab
+     xs <- getListReg f
+     zipWithM_ (setTableRaw t) (map (Number . Int) [ ix .. ]) xs
+     return Continue
+
+
+performGetMeta :: Frame -> Reg -> Expr -> IO Next
+performGetMeta f r e =
+  do v <- isValue =<< getExpr f e
+     let setMb mb = do case mb of
+                         Nothing -> setReg f r ()
+                         Just t  -> setReg f r t
+                       return Continue
+     tabs <- readIORef (metaTables f)
+     let tyMeta t = setMb (Map.lookup t tabs)
+
+     case v of
+
+       Table tr     -> setMb =<< getTableMeta tr
+       UserData ur  -> setMb =<< readIORef (userDataMeta (referenceVal ur))
+       _            -> tyMeta (valueType v)
+
+
+performRaise :: Frame -> Expr -> IO Next
+performRaise f e =
+  do v <- isValue =<< getExpr f e
+     return (RaiseError v)
+
+
+performCase :: Frame ->
+               Expr -> [(ValueType,BlockName)] -> Maybe BlockName -> IO Next
+performCase f e as d =
+  do v <- isValue =<< getExpr f e
+     case lookup (valueType v) as of
+       Just b  -> return (EnterBlock b)
+       Nothing ->
+         case d of
+           Nothing -> crash "Stuck case."
+           Just b  -> return (EnterBlock b)
+
+
+performIf :: Frame -> Prop -> BlockName -> BlockName -> IO Next
+performIf f p tr fa =
+  do b <- getProp f p
+     return (EnterBlock (if b then tr else fa))
+
+
+performGoto :: BlockName -> IO Next
+performGoto b = return (EnterBlock b)
+
+
+performCall :: Frame -> Reg -> IO Next
+performCall f clo =
+  do fun <- isFunction =<< getReg f clo
+     return (MakeCall fun)
+
+
+performTailCall :: Frame -> Reg -> IO Next
+performTailCall f clo =
+  do fun <- isFunction =<< getReg f clo
+     vs  <- getListReg f
+     return (MakeTailCall fun vs)
+
+
+performReturn :: Frame -> IO Next
+performReturn f =
+  do vs <- getListReg f
+     return (ReturnWith vs)
+
+
+performNewClosure :: AllocRef -> Frame -> Int ->
+                                        Reg -> Int -> Code.Function -> IO Next
+performNewClosure aref f pc res ix fun =
+  do rs <- mapM (isReference <=< getExpr f) (funcUpvalExprs fun)
+
+     let fid    = ourFID f
+         fu     = luaFunction (Code.subFun fid ix) fun
+         refLoc = RefLoc { refLocSite   = InLua fid pc
+                         , refLocCaller = ourCaller f
+                         }
+
+     clo <- newClosure aref refLoc fu =<< Vector.thaw (Vector.fromList rs)
+     setReg f res clo
+     return Continue
+
+
+lregRef :: Frame -> ListReg -> IORef [Value]
+lregRef f r =
+  case r of
+    ArgReg  -> argRegRef f
+    ListReg -> listRegRef f
+
+
+performDrop :: Frame -> ListReg -> Int -> IO Next
+performDrop f res n =
+  do modifyIORef' (lregRef f res) (drop n)
+     return Continue
+
+
+performSetList :: Frame -> ListReg -> [Expr] -> IO Next
+performSetList f res es =
+  do vs <- mapM (isValue <=< getExpr f) es
+     writeIORef (lregRef f res) vs
+     return Continue
+
+
+performAppend :: Frame -> ListReg -> [Expr] -> IO Next
+performAppend f res es =
+  do vs <- mapM (isValue <=< getExpr f) es
+     modifyIORef (lregRef f res) (vs ++)
+     return Continue
+
+
+performIndexList :: Frame -> Reg -> ListReg -> Int -> IO Next
+performIndexList f res lst ix =
+  do vs <- readIORef (lregRef f lst)
+     case splitAt ix vs of
+       (_,b:_) -> setReg f res b
+       _       -> setReg f res ()
+     return Continue
+
+
+performNewRef :: Frame -> Reg -> Expr -> IO Next
+performNewRef f res val =
+  do setReg f res =<< newIORef =<< isValue =<< getExpr f val
+     return Continue
+
+
+performReadRef :: Frame -> Reg -> Expr -> IO Next
+performReadRef f res ref =
+  do r <- isReference =<< getExpr f ref
+     setReg f res =<< readIORef r
+     return Continue
+
+
+performWriteRef :: Frame -> Expr -> Expr -> IO Next
+performWriteRef f ref val =
+  do r <- isReference =<< getExpr f ref
+     v <- isValue =<< getExpr f val
+     writeIORef r v
+     return Continue
+
+
+
+performArith1 :: Frame -> Reg -> Op1 -> Expr -> IO Next
+performArith1 f res op e =
+  do vv <- getExpr f e
+     case op of
+
+       ToNumber ->
+         do v <- isValue vv
+            case valueNumber v of
+              Just n  -> setReg f res n
+              Nothing -> setReg f res ()
+
+       ToInt ->
+         do v <- isValue vv
+            case valueInt v of
+             Just n  -> setReg f res n
+             Nothing -> setReg f res ()
+
+       IntToDouble ->
+         do n <- isInt vv
+            setReg f res (fromIntegral n :: Double)
+
+       ToString ->
+         do n <- isValue vv
+            case valueString n of
+              Just s  -> setReg f res =<< fromByteString s
+              Nothing -> setReg f res ()
+
+       ToBoolean ->
+         do n <- isValue vv
+            case valueString n of
+              Just s  -> setReg f res =<< fromByteString s
+              Nothing -> setReg f res ()
+
+       StringLen   -> setReg f res . luaStringLen =<< isString vv
+
+       TableLen    -> setReg f res =<< tableLen =<< isTable vv
+
+       NumberUnaryMinus ->
+         do d <- isNumber vv
+            setReg f res (negate d)
+
+       Complement  ->
+         do i <- isInt vv
+            setReg f res (complement i)
+
+       BoolNot ->
+         do b <- isBool vv
+            setReg f res (not b)
+
+
+     return Continue
+
+
+performArith2 :: Frame -> Reg -> Op2 -> Expr -> Expr -> IO Next
+performArith2 f res op e1 e2 =
+  do vv1 <- getExpr f e1
+     vv2 <- getExpr f e2
+     let liftBin cvt sem =
+           do x1 <- cvt vv1
+              x2 <- cvt vv2
+              setReg f res (sem x1 x2)
+
+     case op of
+       NumberAdd -> liftBin isNumber (+)
+       NumberSub -> liftBin isNumber (-)
+       NumberMul -> liftBin isNumber (*)
+
+       NumberPow -> liftBin isNumber numberPow
+
+       IMod      -> liftBin isInt    mod
+       FMod      -> liftBin isDouble nummod
+
+       IDiv      -> liftBin isInt    div
+       NumberDiv -> liftBin isNumber numberDiv
+
+       And       -> liftBin isInt (.&.)
+       Or        -> liftBin isInt (.|.)
+       Xor       -> liftBin isInt xor
+       Shl       -> liftBin isInt wordshiftL
+       Shr       -> liftBin isInt wordshiftR
+
+       Concat ->
+         do s1 <- isString vv1
+            s2 <- isString vv2
+            let x = toByteString s1
+                y = toByteString s2
+            z <- if | BS.null x -> return s1
+                    | BS.null y -> return s2
+                    | otherwise -> fromByteString (BS.append x y)
+            setReg f res (String z)
+
+     return Continue
+
+
+
+
 
 
 runStmt :: AllocRef -> Frame -> Int -> BlockStmt -> IO Next
 runStmt aref f@Frame { .. } pc stmt =
   case stmtCode stmt of
-    Assign r e    -> do setReg f r =<< getExpr f e
-                        return Continue
-
-    SetUpVal _ _  -> crash "SetUpVal in phase 2"
-
+    Comment _               -> return Continue
+    Assign r e              -> performAssign f r e
 
     -- Tables
-    NewTable r  ->
-      do let refLoc = RefLoc { refLocSite   = InLua ourFID pc
-                             , refLocCaller = ourCaller
-                             }
-         setReg f r =<< newTable aref refLoc 0 0
-         return Continue
+    NewTable r              -> performNewTable aref f pc r
+    LookupTable res tab ix  -> performLookupTable f res tab ix
+    SetTable tab ix val     -> performSetTable f tab ix val
+    SetTableList tab ix     -> performSetTableList f tab ix
+    GetMeta r e             -> performGetMeta f r e
 
-    LookupTable res tab ix ->
-      do t <- isTable =<< getReg f tab
-         v <- isValue =<< getExpr f ix
-         setReg f res =<< getTableRaw t v
-         return Continue
+    -- Local control flow
+    Case e as d             -> performCase f e as d
+    If p tr fa              -> performIf f p tr fa
+    Goto b                  -> performGoto b
 
-    SetTable tab ix val ->
-      do t <- isTable =<< getReg f tab
-         i <- isValue =<< getExpr f ix
-         v <- isValue =<< getExpr f val
-         setTableRaw t i v
-         return Continue
+    -- Functions
+    NewClosure res ix fun   -> performNewClosure aref f pc res ix fun
+    Call clo                -> performCall f clo
+    TailCall clo            -> performTailCall f clo
+    Return                  -> performReturn f
+    Raise e                 -> performRaise f e
 
-    SetTableList tab ix ->
-      do t  <- isTable =<< getReg f tab
-         xs <- getListReg f
-         zipWithM_ (setTableRaw t) (map (Number . Int) [ ix .. ]) xs
-         return Continue
+    -- Lists
+    Drop r n                -> performDrop f r n
+    SetList res es          -> performSetList f res es
+    Append res es           -> performAppend f res es
+    IndexList res lst ix    -> performIndexList f res lst ix
 
-    GetMeta r e ->
-      do v <- isValue =<< getExpr f e
-         let setMb mb = do case mb of
-                             Nothing -> setReg f r ()
-                             Just t  -> setReg f r t
-                           return Continue
-         tabs <- readIORef metaTables
-         let tyMeta t = setMb (Map.lookup t tabs)
+    -- References
+    NewRef res val          -> performNewRef f res val
+    ReadRef res ref         -> performReadRef f res ref
+    WriteRef ref val        -> performWriteRef f ref val
 
-         case v of
+    -- Arithmetic
+    Arith1 res op e         -> performArith1 f res op e
+    Arith2 res op e1 e2     -> performArith2 f res op e1 e2
 
-           Table tr     -> setMb =<< getTableMeta tr
-           UserData ur  -> setMb =<< readIORef (userDataMeta (referenceVal ur))
-           _            -> tyMeta (valueType v)
+    -- Misc
 
-    Raise e ->
-      do v <- isValue =<< getExpr f e
-         return (RaiseError v)
-
-    Case e as d ->
-      do v <- isValue =<< getExpr f e
-         case lookup (valueType v) as of
-           Just b  -> return (EnterBlock b)
-           Nothing ->
-             case d of
-               Nothing -> crash "Stuck case."
-               Just b  -> return (EnterBlock b)
-
-    If p tr fa ->
-      do b <- getProp f p
-         return (EnterBlock (if b then tr else fa))
-
-    Goto b -> return (EnterBlock b)
-
-    Call clo ->
-      do fun <- isFunction =<< getReg f clo
-         return (MakeCall fun)
-
-    TailCall clo ->
-      do fun <- isFunction =<< getReg f clo
-         vs  <- getListReg f
-         return (MakeTailCall fun vs)
-
-    Return ->
-      do vs <- getListReg f
-         return (ReturnWith vs)
-
-    CloseStack _ -> crash "CloseStack in phase 2"
-
-
-    NewClosure res ix fun ->
-      do rs <- mapM (isReference <=< getExpr f) (funcUpvalExprs fun)
-
-         let fid    = ourFID
-             fu     = luaFunction (Code.subFun fid ix) fun
-             refLoc = RefLoc { refLocSite   = InLua ourFID pc
-                             , refLocCaller = ourCaller
-                             }
-
-         clo <- newClosure aref refLoc fu =<< Vector.thaw (Vector.fromList rs)
-         setReg f res clo
-         return Continue
-
-
-    Drop ArgReg n ->
-      do modifyIORef' argRegRef (drop n)
-         return Continue
-
-    Drop ListReg n ->
-      do modifyIORef' listRegRef (drop n)
-         return Continue
-
-    SetList res es ->
-      do vs <- mapM (isValue <=< getExpr f) es
-         let ref = case res of
-                     ArgReg -> argRegRef
-                     ListReg -> listRegRef
-         writeIORef ref vs
-         return Continue
-
-    Append res es ->
-      do vs <- mapM (isValue <=< getExpr f) es
-         let ref = case res of
-                     ArgReg -> argRegRef
-                     ListReg -> listRegRef
-         modifyIORef ref (vs ++)
-         return Continue
-
-    IndexList res lst ix ->
-      do vs <- readIORef $ case lst of
-                             ArgReg  -> argRegRef
-                             ListReg -> listRegRef
-         case splitAt ix vs of
-           (_,b:_) -> setReg f res b
-           _       -> setReg f res ()
-         return Continue
-
-    NewRef res val ->
-      do setReg f res =<< newIORef =<< isValue =<< getExpr f val
-         return Continue
-
-    ReadRef res ref ->
-      do r <- isReference =<< getExpr f ref
-         setReg f res =<< readIORef r
-         return Continue
-
-    WriteRef ref val ->
-      do r <- isReference =<< getExpr f ref
-         v <- isValue =<< getExpr f val
-         writeIORef r v
-         return Continue
-
-    Arith1 res op e ->
-      do vv <- getExpr f e
-         case op of
-
-           ToNumber ->
-             do v <- isValue vv
-                case valueNumber v of
-                  Just n  -> setReg f res n
-                  Nothing -> setReg f res ()
-
-           ToInt ->
-             do v <- isValue vv
-                case valueInt v of
-                 Just n  -> setReg f res n
-                 Nothing -> setReg f res ()
-
-           IntToDouble ->
-             do n <- isInt vv
-                setReg f res (fromIntegral n :: Double)
-
-           ToString ->
-             do n <- isValue vv
-                case valueString n of
-                  Just s  -> setReg f res =<< fromByteString s
-                  Nothing -> setReg f res ()
-
-           ToBoolean ->
-             do n <- isValue vv
-                case valueString n of
-                  Just s  -> setReg f res =<< fromByteString s
-                  Nothing -> setReg f res ()
-
-           StringLen   -> setReg f res . luaStringLen =<< isString vv
-
-           TableLen    -> setReg f res =<< tableLen =<< isTable vv
-
-           NumberUnaryMinus ->
-             do d <- isNumber vv
-                setReg f res (negate d)
-
-           Complement  ->
-             do i <- isInt vv
-                setReg f res (complement i)
-
-           BoolNot ->
-             do b <- isBool vv
-                setReg f res (not b)
-
-
-         return Continue
-
-
-    Arith2 res op e1 e2 ->
-      do vv1 <- getExpr f e1
-         vv2 <- getExpr f e2
-         let liftBin cvt sem =
-               do x1 <- cvt vv1
-                  x2 <- cvt vv2
-                  setReg f res (sem x1 x2)
-
-         case op of
-           NumberAdd -> liftBin isNumber (+)
-           NumberSub -> liftBin isNumber (-)
-           NumberMul -> liftBin isNumber (*)
-
-           NumberPow -> liftBin isNumber numberPow
-
-           IMod      -> liftBin isInt    mod
-           FMod      -> liftBin isDouble nummod
-
-           IDiv      -> liftBin isInt    div
-           NumberDiv -> liftBin isNumber numberDiv
-
-           And       -> liftBin isInt (.&.)
-           Or        -> liftBin isInt (.|.)
-           Xor       -> liftBin isInt xor
-           Shl       -> liftBin isInt wordshiftL
-           Shr       -> liftBin isInt wordshiftR
-
-           Concat ->
-             do s1 <- isString vv1
-                s2 <- isString vv2
-                let x = toByteString s1
-                    y = toByteString s2
-                z <- if | BS.null x -> return s1
-                        | BS.null y -> return s2
-                        | otherwise -> fromByteString (BS.append x y)
-                setReg f res (String z)
-
-         return Continue
-
-
-    Comment _    -> return Continue
-
+    -- Errors
+    CloseStack _            -> crash "CloseStack in phase 2"
+    SetUpVal _ _            -> crash "SetUpVal in phase 2"
 
 runStmtAt :: AllocRef -> Frame -> Vector BlockStmt -> Int -> IO Next
 runStmtAt aref f curBlock pc =
