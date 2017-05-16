@@ -188,8 +188,7 @@ micro fun pc =
         do let a' = Code.plusReg a 1
            getCallArguments a' b
            resolveFunction (Reg a) $
-             do emit (TailCall (Reg a))
-                setCallResults a ListReg c -- used when tail calls are disabled
+             emit (TailCall (Reg a))
 
       Code.OP_RETURN a c ->
         do getCallArguments a c
