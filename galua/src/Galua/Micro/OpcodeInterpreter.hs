@@ -1,5 +1,11 @@
 {-# LANGUAGE RecordWildCards, FlexibleInstances, MultiWayIf #-}
-module Galua.Micro.OpcodeInterpreter (runStmtAt,Next(..)) where
+module Galua.Micro.OpcodeInterpreter
+  ( runStmtAt
+  , Next(..)
+  , crash
+  , Frame(..)
+  , setListReg
+  ) where
 
 import           Data.IORef(IORef,newIORef,modifyIORef',modifyIORef,readIORef,
                             writeIORef)
@@ -38,7 +44,7 @@ data Frame = Frame
     -- XXX: no need for a Map here, we can compile to a mutable vector
     -- just assign sequential numbers to TMP vars.
 
-  , upvals       :: !(Vector (IORef Value))
+  , upvals       :: !(IOVector (IORef Value))
     -- ^ Upvalues available to this function
 
   , argRegRef    :: !(IORef [Value])
@@ -57,7 +63,7 @@ data Frame = Frame
 
 data Next = EnterBlock BlockName
           | Continue
-          | MakeCall (Reference Closure)
+          | MakeCall (Reference Closure) [Value]
           | MakeTailCall (Reference Closure) [Value]
           | RaiseError Value
           | ReturnWith [Value]
@@ -101,6 +107,8 @@ instance IsValue (Reference Closure) where
 instance IsValue (Reference UserData) where
   toValue = toValue . UserData
 
+setListReg :: Frame -> [Value] -> IO ()
+setListReg Frame{..} vs = writeIORef listRegRef vs
 
 getListReg :: Frame -> IO [Value]
 getListReg Frame{..} = readIORef listRegRef
@@ -131,10 +139,7 @@ getExpr :: Frame -> Expr -> IO V
 getExpr f expr =
   case expr of
     EReg r -> getReg f r
-    EUp (Code.UpIx x)  ->
-      case upvals f Vector.!? x of
-        Just r  -> return (VRef r)
-        Nothing -> crash ("Read from bad upval: " ++ show (pp expr))
+    EUp (Code.UpIx x)  -> VRef <$> IOVector.read (upvals f) x
     ELit l ->
       case l of
         LNil           -> return (VVal Nil)
@@ -331,7 +336,8 @@ performGoto b = return (EnterBlock b)
 performCall :: Frame -> Reg -> IO Next
 performCall f clo =
   do fun <- isFunction =<< getReg f clo
-     return (MakeCall fun)
+     vs  <- getListReg f
+     return (MakeCall fun vs)
 
 
 performTailCall :: Frame -> Reg -> IO Next
@@ -515,12 +521,8 @@ performArith2 f res op e1 e2 =
      return Continue
 
 
-
-
-
-
 runStmt :: AllocRef -> Frame -> Int -> BlockStmt -> IO Next
-runStmt aref f@Frame { .. } pc stmt =
+runStmt aref f pc stmt =
   case stmtCode stmt of
     Comment _               -> return Continue
     Assign r e              -> performAssign f r e
@@ -564,6 +566,7 @@ runStmt aref f@Frame { .. } pc stmt =
     -- Errors
     CloseStack _            -> crash "CloseStack in phase 2"
     SetUpVal _ _            -> crash "SetUpVal in phase 2"
+
 
 runStmtAt :: AllocRef -> Frame -> Vector BlockStmt -> Int -> IO Next
 runStmtAt aref f curBlock pc =

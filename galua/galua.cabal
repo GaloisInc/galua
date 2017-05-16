@@ -40,6 +40,7 @@ library
 
                        Galua.Micro.AST
                        Galua.Micro.OpcodeInterpreter
+                       Galua.Micro.Stepper
                        Galua.Micro.Translate
                        Galua.Micro.Translate.Monad
                        Galua.Micro.Translate.AnalyzeRefs
