@@ -39,7 +39,7 @@ library
                        Galua.CObjInfo
 
                        Galua.Micro.AST
-                       Galua.Micro.Eval
+                       Galua.Micro.OpcodeInterpreter
                        Galua.Micro.Translate
                        Galua.Micro.Translate.Monad
                        Galua.Micro.Translate.AnalyzeRefs

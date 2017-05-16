@@ -1,5 +1,5 @@
 {-# LANGUAGE RecordWildCards, FlexibleInstances, MultiWayIf #-}
-module Galua.Micro.Eval (runStmtAt,Next(..)) where
+module Galua.Micro.OpcodeInterpreter (runStmtAt,Next(..)) where
 
 import           Data.IORef(IORef,newIORef,modifyIORef',modifyIORef,readIORef,
                             writeIORef)
