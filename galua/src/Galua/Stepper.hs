@@ -97,14 +97,14 @@ performTailCall ::
   [Value]           {- ^ arguments        -} ->
   IO r
 performTailCall c vm f vs =
-  do (newEnv, next) <- enterClosure vm f vs
+  do (newEnv, start) <- enterClosure vm f vs
 
      let th = vmCurThread vm
 
      setThreadField stExecEnv th newEnv
      let newVM = vm { vmCurExecEnv = newEnv }
 
-     running c newVM =<< next (machCServer (vmMachineEnv newVM))
+     running c newVM =<< start
 
 
 {-# INLINE performFunCall #-}
@@ -117,7 +117,7 @@ performFunCall ::
   ([Value] -> IO NextStep) {- ^ return continuation    -} ->
   IO r
 performFunCall c vm f vs mb k =
-  do (newEnv, next) <- enterClosure vm f vs
+  do (newEnv, start) <- enterClosure vm f vs
 
      let th = vmCurThread vm
 
@@ -133,7 +133,7 @@ performFunCall c vm f vs mb k =
      setThreadField stStack th (Stack.push frame stack)
 
      let newVM = vm { vmCurExecEnv = newEnv }
-     running c newVM =<< next (machCServer (vmMachineEnv newVM))
+     running c newVM =<< start
 
 
 
@@ -350,9 +350,10 @@ consMb (Just x) xs = x : xs
 
 
 enterClosure ::
-  VM -> Reference Closure -> [Value] -> IO (ExecEnv, MVar CNextStep -> IO NextStep)
+  VM -> Reference Closure -> [Value] -> IO (ExecEnv, IO NextStep)
 enterClosure vm c vs =
   do let MkClosure { cloFun, cloUpvalues } = referenceVal c
+
          (stackElts, vas, start, code) =
            case funValueCode cloFun of
              LuaOpCodes f ->
@@ -365,12 +366,14 @@ enterClosure vm c vs =
                         | funcIsVararg f = extraArgs
                         | otherwise      = []
 
-                  in (stack, varargs, \_ -> return (Goto 0), funcCode f)
+                  in (stack, varargs, return (Goto 0), funcCode f)
 
              CCode cfun ->
-                  let fpL = threadCPtr (referenceVal (vmCurThread vm))
-                  in (vs, [], \m -> withForeignPtr fpL $ \l ->
-                                    execCFunction l m cfun, mempty)
+                  let fpL   = threadCPtr (referenceVal (vmCurThread vm))
+                      cServ = machCServer (vmMachineEnv vm)
+                  in (vs, [], withForeignPtr fpL $ \l ->
+                                                  execCFunction l cServ cfun
+                     , mempty)
 
      stack    <- SV.new
      traverse_ (SV.push stack <=< newIORef) stackElts
