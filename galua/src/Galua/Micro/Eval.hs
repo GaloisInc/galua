@@ -23,23 +23,37 @@ import           Galua.LuaString
 import           Galua.Micro.AST
 import qualified Galua.Code as Code
 import           Galua.Pretty(pp)
+import           Galua.Mach(TypeMetatables)
 
 data V = VRef {-# UNPACK #-} !(IORef Value)
        | VVal !Value
 
 
-type MetaTables = IORef (Map ValueType (Reference Table))
+data Frame = Frame
+  { regs         :: !(IOVector V)
+    -- ^ Local values
 
-data Frame = Frame { regs         :: !(IOVector V)
-                   , regsTMP      :: !(IORef (Map (Int,Int) Value))
-                   , argRegRef    :: !(IORef [Value])
-                   , listRegRef   :: !(IORef [Value])
-                   , upvals       :: !(Vector (IORef Value))
-                   , metaTables   :: !MetaTables
-                   , ourFID       :: !Code.FunId
-                   , ourCode      :: !(Map BlockName (Vector BlockStmt))
-                   , ourCaller    :: !CodeLoc
-                   }
+  , regsTMP      :: !(IORef (Map (Int,Int) Value))
+    -- ^ Additional--temporary--registers
+    -- XXX: no need for a Map here, we can compile to a mutable vector
+    -- just assign sequential numbers to TMP vars.
+
+  , upvals       :: !(Vector (IORef Value))
+    -- ^ Upvalues available to this function
+
+  , argRegRef    :: !(IORef [Value])
+    -- ^ A special "list" register for storing function arguments
+
+  , listRegRef   :: !(IORef [Value])
+    -- ^ A special "list" register for storing results of functions
+
+  , metaTables   :: !(IORef TypeMetatables)
+
+  , ourCode      :: !(Map BlockName (Vector BlockStmt)) -- ^ Our CFG
+
+  , ourFID       :: !Code.FunId                         -- ^ Our functoin ID
+  , ourCaller    :: !CodeLoc                            -- ^ Who called us
+  }
 
 data Next = EnterBlock BlockName
           | Continue
@@ -87,8 +101,6 @@ instance IsValue (Reference Closure) where
 instance IsValue (Reference UserData) where
   toValue = toValue . UserData
 
--- setListReg :: MonadIO m => Frame -> [Value] -> m ()
--- setListReg Frame{..} = writeIORef listRegRef
 
 getListReg :: Frame -> IO [Value]
 getListReg Frame{..} = readIORef listRegRef

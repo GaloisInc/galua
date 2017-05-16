@@ -32,7 +32,8 @@ data Reg        = Reg !Code.Reg
                 | TMP !Int !Int     -- ^ phase, temporary
                   deriving (Eq,Ord,Show)
 
-data ListReg    = ArgReg | ListReg
+data ListReg    = ArgReg  -- ^ Function arguments, var-args in particualr
+                | ListReg -- ^ Function results, mostly(?)
                   deriving (Eq,Ord,Show)
 
 data BlockName  = PCBlock !Int
@@ -94,10 +95,11 @@ data Stmt =
   | NewClosure !Reg !Int !Code.Function
 
 
-  -- Argument lists
-  | Drop !ListReg !Int
-  | Append !ListReg [Expr] -- ^ Prepend the given expressions to the list
-  | SetList !ListReg [Expr]
+  -- "List" registers: these are
+  | Drop !ListReg !Int           -- ^ Drop the given number from the front of
+                                 -- the list register.
+  | Append !ListReg [Expr]       -- ^ Prepend the given expressions to the list.
+  | SetList !ListReg [Expr]      -- ^ Set the value of a list register.
 
   | IndexList !Reg !ListReg !Int
 
