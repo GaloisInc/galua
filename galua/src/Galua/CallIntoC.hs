@@ -41,7 +41,7 @@ returnFromC ::
   Int  {- ^ Number of values returned from the C call -} ->
   IO NextStep
 returnFromC vm n =
-  do let stack = execStack (vmCurExecEnv vm)
+  do let stack = execCStack (vmCurExecEnv vm)
      FunReturn <$>
        do sz <- SV.size stack
           for [ sz - n .. sz - 1 ] $ \i ->

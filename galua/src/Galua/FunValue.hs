@@ -1,5 +1,5 @@
 module Galua.FunValue
-  ( FunctionValue
+  ( FunctionValue(..)
   , luaFunction
   , cFunction
   , luaOpCodes

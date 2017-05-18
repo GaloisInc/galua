@@ -18,7 +18,6 @@ import           Data.Map (Map)
 import qualified Data.Map as Map
 import           Data.Maybe (fromMaybe)
 import           Data.Vector (Vector)
-import qualified Data.Vector as Vector
 import           Data.Vector.Mutable (IOVector)
 import qualified Data.Vector.Mutable as IOVector
 import           Data.ByteString (ByteString)
@@ -37,7 +36,7 @@ import           System.Environment (lookupEnv)
 import           Galua.Code
 import           Galua.Reference
 import           Galua.Value
-import           Galua.FunValue(cFunction,luaFunction)
+import           Galua.FunValue(FunctionValue(..))
 import           Galua.LuaString
 import           Galua.CObjInfo(CObjInfo,cfunInfoFun)
 import           Galua.Util.Stack(Stack)
@@ -286,7 +285,10 @@ data MachConfig = MachConfig
 
 
 
-data ExecEnv = ExecEnv
+data ExecEnv = ExecInLua {-# UNPACK #-} !LuaExecEnv
+             | ExecInC   {-# UNPACK #-} !CExecEnv
+
+{- ExecEnv
   { execStack    :: {-# UNPACK #-} !(SV.SizedVector (IORef Value))
 
     -- The currently executing function
@@ -297,16 +299,82 @@ data ExecEnv = ExecEnv
     -- ^ This is because the debug API can return the current closure.
 
     -- Interaction with the C world
-  , execApiCall    :: {-# UNPACK #-} !(IORef ApiCallStatus)
+  , execApiCall      :: {-# UNPACK #-} !(IORef ApiCallStatus)
+
   , execInstructions :: {-# UNPACK #-} !(Vector OpCode)
   }
+-}
+
+-- | Get the up-values for the execution environment.
+execUpvals :: ExecEnv -> IOVector (IORef Value)
+execUpvals env =
+  case env of
+    ExecInLua LuaExecEnv { luaExecUpvals } -> luaExecUpvals
+    ExecInC   CExecEnv   { cExecUpvals   } -> cExecUpvals
+
+execClosure :: ExecEnv -> Value
+execClosure env =
+  case env of
+    ExecInLua lenv -> luaExecClosure lenv
+    ExecInC   cenv -> cExecClosure cenv
+
+execFun :: ExecEnv -> FunctionValue
+execFun env =
+  case env of
+    ExecInLua lenv -> LuaFunction (luaExecFID lenv) (luaExecFunction lenv)
+    ExecInC cenv   -> CFunction (cExecFunction cenv)
+
+execCStack :: ExecEnv -> SV.SizedVector (IORef Value)
+execCStack env =
+  case env of
+    ExecInC cenv -> cExecStack cenv
+    ExecInLua {} -> error "[bug] execCStack: not a C execution environment"
+
+execApiCall :: ExecEnv -> IORef ApiCallStatus
+execApiCall env =
+  case env of
+    ExecInC cenv -> cExecApiCall cenv
+    ExecInLua {} -> error "[bug] execApiCall: not a C execturion evironment"
+
+
+
+-- | Execution environment for a Lua function
+data LuaExecEnv = LuaExecEnv
+  { luaExecStack    :: {-# UNPACK #-} !(SV.SizedVector (IORef Value))
+  , luaExecUpvals   :: {-# UNPACK #-} !(IOVector (IORef Value))
+  , luaExecVarargs  :: {-# UNPACK #-} !(IORef [Value])
+  , luaExecCode     :: {-# UNPACK #-} !(Vector OpCode)
+
+    -- The current function
+  , luaExecClosure  :: !Value         -- ^ used by debug API
+  , luaExecFID      :: !FunId         -- ^ extra info
+  , luaExecFunction :: !Function      -- ^ extra info
+  }
+
+-- XXX: Add exec env for Micro Lua
+
+-- | Execution environment for a C function
+data CExecEnv = CExecEnv
+  { cExecStack      :: {-# UNPACK #-} !(SV.SizedVector (IORef Value))
+    -- ^ XXX: This should be SizedVector Value, no need for the IORef
+  , cExecUpvals     :: {-# UNPACK #-} !(IOVector (IORef Value))
+
+  , cExecApiCall    :: {-# UNPACK #-} !(IORef ApiCallStatus)
+
+    -- The current functoin
+  , cExecClosure    :: !Value         -- ^ used by debug API
+  , cExecFunction   :: !CFunName      -- ^ extra info
+  }
+
+
+
 
 -- | Get the function id for this stack frame.
 execFunId :: ExecEnv -> Maybe FunId
 execFunId env =
-  case funValueName (execFunction env) of
-    LuaFID fid -> Just fid
-    _          -> Nothing
+  case env of
+    ExecInLua x -> Just (luaExecFID x)
+    ExecInC _   -> Nothing
 
 
 data ApiCallStatus
@@ -321,21 +389,19 @@ data ApiCall = ApiCall
   , apiContinuation :: Maybe (CInt -> Ptr () -> IO CInt)
   }
 
--- | Make a blank exec env to be used when creating threads.
+-- | Make a blank C-style exec env to be used when creating threads.
 newThreadExecEnv :: IO ExecEnv
 newThreadExecEnv =
-  do stack <- SV.new
-     api   <- newIORef NoApiCall
-     var   <- newIORef []
+  do stack  <- SV.new
+     api    <- newIORef NoApiCall
      upvals <- IOVector.new 0
-     return ExecEnv { execStack    = stack
-                    , execUpvals   = upvals
-                    , execFunction = cFunction blankCFunName
-                    , execVarargs  = var
-                    , execApiCall  = api
-                    , execInstructions = Vector.empty
-                    , execClosure  = Nil
-                    }
+     return $! ExecInC
+               CExecEnv { cExecStack        = stack
+                        , cExecUpvals       = upvals
+                        , cExecFunction     = blankCFunName
+                        , cExecApiCall      = api
+                        , cExecClosure      = Nil
+                        }
 
 
 --------------------------------------------------------------------------------
@@ -457,9 +523,9 @@ machRefLoc vm =
                    Just (CallFrame pc env _ _,_) -> mkLoc env pc
                    Nothing -> MachSetup -- XXX: or can this happen?
 
-  mkLoc env pc = case funValueName (execFunction env) of
-                   CFID nm    -> InC nm
-                   LuaFID fid -> InLua fid pc
+  mkLoc env pc = case env of
+                   ExecInLua lenv -> InLua (luaExecFID lenv) pc
+                   ExecInC cenv   -> InC (cExecFunction cenv)
 
 
 
@@ -540,7 +606,7 @@ chunkToClosure vm name bytes env =
                  return (upvalues, modNum)
 
             let fid = rootFun modNum
-            clo <- machNewClosure vm (luaFunction fid func) upvalues
+            clo <- machNewClosure vm (LuaFunction fid func) upvalues
             machOnChunkLoad (machConfig menv) name bytes modNum func
             return (Right clo)
 

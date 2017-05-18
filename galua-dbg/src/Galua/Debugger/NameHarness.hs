@@ -131,18 +131,26 @@ execEnvForCompiledStatment ::
   CompiledStatment                                   ->
   IO ExecEnv
 execEnvForCompiledStatment globals env stat =
-  do apiCallRef <- newIORef NoApiCall
-     stack      <- prepareStack stat (execStack env)
-     ups <- do oldUps <- Vector.freeze (execUpvals env)
-               Vector.thaw (Vector.snoc oldUps globals)
-     return env
-       { execStack    = stack
-       , execUpvals   = ups
-       , execFunction = luaFunction noFun (csFunc stat)
-       , execClosure  = Nil -- used for debug API
-       , execApiCall  = apiCallRef
-       , execInstructions = funcCode (csFunc stat)
-       }
+  do let st = case env of
+                ExecInLua lenv -> luaExecStack lenv
+                ExecInC cenv -> cExecStack cenv
+     stack <- prepareStack stat st
+     ups   <- do oldUps <- Vector.freeze (execUpvals env)
+                 Vector.thaw (Vector.snoc oldUps globals)
+     vas   <- case env of
+                ExecInLua lenv -> return $! luaExecVarargs lenv
+                ExecInLua {}   -> newIORef []
+
+     return $! ExecInLua LuaExecEnv
+        { luaExecStack    = stack
+        , luaExecUpvals   = ups
+        , luaExecVarargs  = vas
+        , luaExecCode     = funcCode (csFunc stat)
+        , luaExecClosure  = Nil
+        , luaExecFID      = noFun
+        , luaExecFunction = csFunc stat
+        }
+
 
 -- | Prepare a statement for execution at the specific program location.
 -- XXX: Handle parser exeception
@@ -206,7 +214,7 @@ executeCompiledStatment vm cenv cs resume =
 executeStatementInContext ::
   VM -> Int -> ExecEnv -> String -> ([Value] -> IO NextStep) -> IO (NextStep,VM)
 executeStatementInContext vm pc env statement resume =
-  do let fun = funValueCode (execFunction env)
+  do let fun = funValueCode (execFun env)
      res <- try (compileStatementForLocation fun pc statement)
      case res of
        Left (ParseError e) ->

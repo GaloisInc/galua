@@ -11,7 +11,7 @@ module Galua.Stepper
 
 import           Galua.Mach
 import           Galua.Value
-import           Galua.FunValue(funValueCode,FunCode(..))
+import           Galua.FunValue(FunctionValue(..))
 import           Galua.CallIntoC
 import           Galua.OpcodeInterpreter (execute)
 import           Galua.LuaString
@@ -71,16 +71,14 @@ performApiEnd ::
   VM                 {- ^ virtual machine state -} ->
   IO r
 performApiEnd c vm =
-  do let eenv = vmCurExecEnv vm
-     writeIORef (execApiCall eenv) NoApiCall
+  do writeIORef (execApiCall (vmCurExecEnv vm)) NoApiCall
      putMVar (machCServer (vmMachineEnv vm)) CResume
      running c vm WaitForC
 
 {-# INLINE performApiStart #-}
 performApiStart :: Cont r -> VM -> ApiCall -> IO NextStep -> IO r
 performApiStart c vm apiCall next =
-  do let eenv = vmCurExecEnv vm
-     writeIORef (execApiCall eenv) (ApiCallActive apiCall)
+  do writeIORef (execApiCall (vmCurExecEnv vm)) (ApiCallActive apiCall)
      running c vm =<< next
 
 {-# INLINE performGoto #-}
@@ -353,40 +351,53 @@ enterClosure ::
   VM -> Reference Closure -> [Value] -> IO (ExecEnv, IO NextStep)
 enterClosure vm c vs =
   do let MkClosure { cloFun, cloUpvalues } = referenceVal c
+     case cloFun of
 
-         (stackElts, vas, start, code) =
-           case funValueCode cloFun of
-             LuaOpCodes f ->
-                  let n = funcMaxStackSize f
-                      (normalArgs,extraArgs) = splitAt (funcNumParams f) vs
+       LuaFunction fid f ->
+         do let n = funcMaxStackSize f
+                (normalArgs,extraArgs) = splitAt (funcNumParams f) vs
 
-                      stack = take n $ normalArgs ++ repeat Nil
+                stackElts = take n (normalArgs ++ repeat Nil)
 
-                      varargs
-                        | funcIsVararg f = extraArgs
+                varargs | funcIsVararg f = extraArgs
                         | otherwise      = []
 
-                  in (stack, varargs, return (Goto 0), funcCode f)
 
-             CCode cfun ->
-                  let fpL   = threadCPtr (referenceVal (vmCurThread vm))
-                      cServ = machCServer (vmMachineEnv vm)
-                  in (vs, [], withForeignPtr fpL $ \l ->
-                                                  execCFunction l cServ cfun
-                     , mempty)
+            stack    <- SV.new
+            traverse_ (SV.push stack <=< newIORef) stackElts
+            vasRef   <- newIORef varargs
 
-     stack    <- SV.new
-     traverse_ (SV.push stack <=< newIORef) stackElts
-     vasRef   <- newIORef vas
-     apiRef   <- newIORef NoApiCall
+            let eenv = ExecInLua LuaExecEnv
+                         { luaExecStack     = stack
+                         , luaExecUpvals    = cloUpvalues
+                         , luaExecVarargs   = vasRef
+                         , luaExecCode      = funcCode f
+                         , luaExecClosure   = Closure  c
+                         , luaExecFID       = fid
+                         , luaExecFunction  = f
+                         }
 
-     let newEnv = ExecEnv { execStack    = stack
-                          , execUpvals   = cloUpvalues
-                          , execFunction = cloFun
-                          , execVarargs  = vasRef
-                          , execApiCall  = apiRef
-                          , execClosure  = Closure c
-                          , execInstructions  = code
-                          }
+            eenv `seq` return (eenv, return (Goto 0))
 
-     newEnv `seq` return (newEnv, start)
+
+       CFunction cfun ->
+         do stack <- SV.new
+            traverse_ (SV.push stack <=< newIORef) vs
+            apiRef   <- newIORef NoApiCall
+
+            let eenv = ExecInC CExecEnv
+                         { cExecStack     = stack
+                         , cExecUpvals    = cloUpvalues
+                         , cExecApiCall   = apiRef
+                         , cExecClosure   = Closure c
+                         , cExecFunction  = cfun
+                         }
+
+
+                fpL   = threadCPtr (referenceVal (vmCurThread vm))
+                cServ = machCServer (vmMachineEnv vm)
+
+            eenv `seq` fpL `seq` cServ `seq`
+              return (eenv, withForeignPtr fpL $ \l ->
+                                                  execCFunction l cServ cfun)
+

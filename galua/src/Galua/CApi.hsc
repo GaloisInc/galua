@@ -126,7 +126,7 @@ reentryGK kctx kfun label args l tid r impl =
                     $ CReEntry apiCall
                     $ \vm -> do Just threadRef <- machLookupRef vm tid
                                 eenv           <- getThreadField stExecEnv threadRef
-                                let stack = execStack eenv
+                                let stack = execCStack eenv
                                 impl vm stack `catch` \(LuaX str) ->
                                     do s <- fromByteString (packUtf8 str)
                                        return (ThrowError (String s))
@@ -1217,7 +1217,7 @@ lua_resume_hs l tid r from nargs out =
       case res of
         ThreadReturn rs ->
           do eenv <- getThreadField stExecEnv tRef
-             stackFromList (execStack eenv) rs
+             stackFromList (execCStack eenv) rs
              result out luaOK
 
         ThreadYield -> result out luaYIELD
@@ -1235,7 +1235,7 @@ lua_yieldk_hs l tid r nResults ctx func =
     do outputs <- popN args (fromIntegral nResults)
 
        tRef  <- extToThreadRef vm tid
-       stack <- execStack <$> getThreadField stExecEnv tRef
+       stack <- execCStack <$> getThreadField stExecEnv tRef
        n <- SV.size stack
        SV.shrink stack n
        traverse_ (push stack) outputs
@@ -1360,17 +1360,19 @@ lua_getstack_hs l tid r level ar out =
 
      case mbExecEnv of
        -- get stack doesn't access a thread's initial stack for whatever reason
-       Just execEnv | not (isNullCFunction (execFunction (snd execEnv))) ->
+       Just execEnv | not (atBottomOfStack (snd execEnv)) ->
          do pokeLuaDebugCallInfo ar =<< exportExecEnv execEnv
             result out 1
 
        _ -> result out 0
 
 
-isNullCFunction :: FunctionValue -> Bool
-isNullCFunction x = case funValueName x of
-                      CFID name -> cfunAddr name == nullFunPtr
-                      _         -> False
+atBottomOfStack :: ExecEnv -> Bool
+atBottomOfStack env =
+  case env of
+    ExecInLua {} -> False
+    ExecInC cenv -> cfunAddr (cExecFunction cenv) == nullFunPtr
+
 
 ------------------------------------------------------------------------
 
@@ -1391,11 +1393,13 @@ lua_getinfo_hs l tid r whatPtr ar out =
 
      let luaWhat fid = if isRootFun fid then "main" else "Lua"
 
-     let funVal = execFunction execEnv
-     case (funValueName funVal) of
+     case execEnv of
 
-       LuaFID fid ->
-         do let Just (_,fun) = luaOpCodes funVal
+
+       ExecInLua lenv ->
+
+         do let fid = luaExecFID lenv
+                fun = luaExecFunction lenv
             when ('n' `elem` what) $
               do pokeLuaDebugName            ar =<< newCAString ("(FID " ++ show fid ++ ")") -- track this
                  pokeLuaDebugNameWhat        ar =<< newCAString (luaWhat fid)
@@ -1419,8 +1423,8 @@ lua_getinfo_hs l tid r whatPtr ar out =
                  pokeLuaDebugIsVarArg        ar (if funcIsVararg fun then 1 else 0)
 
 
-       CFID cfun ->
-         do let funName = cfunName cfun
+       ExecInC cenv ->
+         do let funName = cfunName (cExecFunction cenv)
                 funNameStr = fromMaybe (cObjAddr funName) (cObjName funName)
 
             when ('n' `elem` what) $
@@ -1479,12 +1483,13 @@ getLocalStackArgs :: Int -> Ptr CString -> SV.SizedVector (IORef Value) -> Ptr L
 getLocalStackArgs n out args ar =
   do (pc,execEnv) <- importExecEnv =<< peekLuaDebugCallInfo ar
 
-     let stack = execStack execEnv
+     let stack = execCStack execEnv
 
      let ix = fromIntegral n - 1
 
-     case luaOpCodes (execFunction execEnv) of
-       Just (_,func)
+
+     case execEnv of
+       ExecInLua LuaExecEnv { luaExecFunction = func }
          | Just name <- lookupLocalName func pc (Reg ix) ->
              do len <- SV.size stack
                 if 0 <= ix && ix < len
@@ -1544,13 +1549,13 @@ lua_setlocal_hs l tid r ar n out =
 
   do (pc,execEnv) <- importExecEnv =<< peekLuaDebugCallInfo ar
 
-     let stack = execStack execEnv
+     let stack = execCStack execEnv
 
      let ix = fromIntegral n - 1
 
      result out =<<
-      case luaOpCodes (execFunction execEnv) of
-       Just (_,func)
+      case execEnv of
+        ExecInLua LuaExecEnv { luaExecFunction = func }
          | Just name <- lookupLocalName func pc (Reg ix) ->
            do mb <- SV.getMaybe stack ix
               case mb of
@@ -1559,7 +1564,7 @@ lua_setlocal_hs l tid r ar n out =
                      do v <- pop args
                         writeIORef cell v >> newCAString (B8.unpack name)
 
-       _ -> return nullPtr
+        _ -> return nullPtr
 
 ------------------------------------------------------------------------
 
@@ -1606,7 +1611,7 @@ lua_xmove_hs l tid r to n =
        unless (fromRef == toRef) $
          do transfer <- popN fromArgs (fromIntegral n)
 
-            toStack <- execStack <$> getThreadField stExecEnv toRef
+            toStack <- execCStack <$> getThreadField stExecEnv toRef
             traverse_ (push toStack) transfer
        noResult
 

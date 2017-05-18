@@ -299,22 +299,34 @@ getValue vp0 = do res <- runExceptionT (getVal vp0)
                     Nothing -> raise ()
              _ -> raise () -- XXX: Does anything else have a metatable?
 
-      VP_Register ExecEnv { execStack } n ->
-        do mb <- lift (SV.getMaybe execStack n)
-           case mb of
-             Just r  -> lift (readIORef r)
-             Nothing -> raise ()
+      VP_Register eenv n ->
+        case eenv of
+          ExecInLua lenv ->
+            do mb <- lift (SV.getMaybe (luaExecStack lenv) n)
+               case mb of
+                 Just r  -> lift (readIORef r)
+                 Nothing -> raise ()
 
-      VP_Upvalue ExecEnv { execUpvals } n ->
-        if 0 <= n && n < IOVector.length execUpvals
-          then lift (readIORef =<< IOVector.read execUpvals n)
-          else raise ()
+          ExecInC cenv ->
+            do mb <- lift (SV.getMaybe (cExecStack cenv) n)
+               case mb of
+                 Just r  -> lift (readIORef r)
+                 Nothing -> raise ()
 
-      VP_Varargs ExecEnv { execVarargs } n ->
-        do varargs <- lift (readIORef execVarargs)
-           case drop n varargs of
-             r:_ -> return r
-             []  -> raise ()
+      VP_Upvalue eenv n ->
+        let us = execUpvals eenv
+        in if 0 <= n && n < IOVector.length us
+             then lift (readIORef =<< IOVector.read us n)
+             else raise ()
+
+      VP_Varargs eenv n ->
+        case eenv of
+          ExecInLua lenv ->
+             do varargs <- lift (readIORef (luaExecVarargs lenv))
+                case drop n varargs of
+                  r:_ -> return r
+                  []  -> raise ()
+          _ -> raise ()
 
       VP_Registry registry -> return registry
 
@@ -382,23 +394,35 @@ setValue vp v =
       UserData ref -> writeIORef (userDataMeta (referenceVal ref)) mb1
       _            -> return ()
 
-  setReg n ExecEnv { execStack } =
-    do mb <- SV.getMaybe execStack n
-       case mb of
-         Just r  -> writeIORef r v
-         Nothing -> return ()
+  setReg n eenv =
+    case eenv of
+      ExecInLua lenv ->
+       do mb <- SV.getMaybe (luaExecStack lenv) n
+          case mb of
+            Just r  -> writeIORef r v
+            Nothing -> return ()
 
-  setUVal n ExecEnv { execUpvals } =
-    when (0 <= n && n < IOVector.length execUpvals) $
-      do r <- IOVector.read execUpvals n
-         writeIORef r v
+      ExecInC cenv ->
+       do mb <- SV.getMaybe (cExecStack cenv) n
+          case mb of
+            Just r  -> writeIORef r v
+            Nothing -> return ()
 
-  setVArg n ExecEnv { execVarargs } =
-    do modifyIORef' execVarargs $ \varargs ->
-         case splitAt n varargs of
-           (a,_:b) -> a++v:b
-           _       -> varargs
+  setUVal n env =
+    let uvs = execUpvals env
+    in when (0 <= n && n < IOVector.length uvs) $
+          do r <- IOVector.read uvs n
+             writeIORef r v
 
+  setVArg n env =
+    case env of
+      ExecInLua lenv ->
+        modifyIORef' (luaExecVarargs lenv) $ \varargs ->
+          case splitAt n varargs of
+            (a,_:b) -> a++v:b
+            _       -> varargs
+
+      _ -> return ()
 
 --------------------------------------------------------------------------------
 
@@ -482,19 +506,18 @@ closureToResolveEnv metaTabs c =
 execEnvToNameResolveEnv ::
   TypeMetatables -> ExecEnv -> IO (FunId, NameResolveEnv)
 execEnvToNameResolveEnv metaTabs eenv =
-  do (fid,func) <- case luaOpCodes (execFunction eenv) of
-                     Just (fid,func) -> return (fid,func)
-                     _ -> nameResolveException "Not in a Lua function."
+  case eenv of
+    ExecInLua lenv ->
+     do ups <- Vector.freeze (luaExecUpvals lenv)
+        let nre = NameResolveEnv
+                    { nrUpvals   = ups
+                    , nrStack    = luaExecStack lenv
+                    , nrFunction = luaExecFunction lenv
+                    , nrMetas    = metaTabs
+                    }
 
-     ups <- Vector.freeze (execUpvals eenv)
-     let nre = NameResolveEnv
-                 { nrUpvals   = ups
-                 , nrStack    = execStack eenv
-                 , nrFunction = func
-                 , nrMetas    = metaTabs
-                 }
-
-     return (fid, nre)
+        nre `seq` return (luaExecFID lenv, nre)
+    ExecInC {} -> nameResolveException "Not in a Lua function."
 
 
 resolveName :: Debugger -> ExecEnvId -> Maybe Int -> NameId ->
@@ -993,11 +1016,9 @@ handleCommand dbg isIdle cmd =
 -- | Returns 0 if there was no line number associated with this PC getLineNumberForCurFunPC :: VM -> Int -> Int
 getLineNumberForCurFunPC :: VM -> Int -> Int
 getLineNumberForCurFunPC vm pc =
-  fromMaybe 0 $
-  do (_,func) <- luaOpCodes (execFunction (vmCurExecEnv vm))
-     lookupLineNumber func pc
-
-
+  case vmCurExecEnv vm of
+    ExecInLua lenv -> fromMaybe 0 (lookupLineNumber (luaExecFunction lenv) pc)
+    ExecInC {}     -> 0
 
 
 doStepMode :: Debugger -> VM -> NextStep -> StepMode -> IO VMState
@@ -1067,7 +1088,7 @@ checkBreakPoint :: Debugger -> StepMode -> VM -> NextStep ->
                                                     IO VMState -> IO VMState
 checkBreakPoint dbg mode vm nextStep k =
   do let eenv = vmCurExecEnv vm
-         curFun = funValueName (execFunction eenv)
+         curFun = funValueName (execFun eenv)
      case (nextStep, curFun) of
        (Goto pc, LuaFID fid) ->
          do let loc = (pc,fid)

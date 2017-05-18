@@ -611,7 +611,9 @@ exportStackFrameShort funs sf =
 exportCallStackFrameShort :: Chunks -> Int -> ExecEnv -> Maybe NextStep -> ExportM JS.Value
 exportCallStackFrameShort funs pc env mbnext =
   do ref <- newThing (ExportableStackFrame pc env)
-     st  <- io (readIORef (execApiCall env))
+     st  <- case env of
+              ExecInC cenv -> io (readIORef (cExecApiCall cenv))
+              ExecInLua {} -> return NoApiCall
 
      let phase = case mbnext of
                    Just ApiStart{}   -> ApiCallStarting
@@ -627,7 +629,7 @@ exportCallStackFrameShort funs pc env mbnext =
      return (JS.object ( apiInfo ++
                          tag "call"
                        : "ref"    .= ref
-                       : exportFunctionValue funs pc (execFunction env)))
+                       : exportFunctionValue funs pc (execFun env)))
 
 data ApiCallPhase = ApiCallStarting | ApiCallRunning | ApiCallEnding (Maybe PrimArgument)
 
@@ -771,42 +773,76 @@ renderVisName f = fromMaybe (locName f) (funVisName f)
 getFunctionName :: Chunks -> FunId -> Maybe Text
 getFunctionName funs fid = renderVisName <$> Map.lookup fid (allFunNames funs)
 
-
 -- | Assumes that we are paused, so reading the IO refs will give a consistent
 -- view of the machine state.
 exportExecEnv :: Chunks -> Int -> ExecEnvId -> ExecEnv -> ExportM JS.Value
-exportExecEnv funs pc eid
-  env@ExecEnv { execStack, execUpvals
-              , execFunction, execVarargs } =
+exportExecEnv funs pc eid eenv =
+  case eenv of
+    ExecInLua lenv -> exportLuaExecEnv funs pc eid lenv
+    ExecInC cenv -> exportCExecEnv funs eid cenv
+
+
+exportCExecEnv :: Chunks -> ExecEnvId -> CExecEnv -> ExportM JS.Value
+exportCExecEnv funs eid env@CExecEnv
+    { cExecStack = execStack
+    , cExecUpvals = execUpvals
+    }  =
+  do vs <- io $ do n <- SV.size execStack
+                   traverse (SV.get execStack) [0..n-1]
+
+     let eenv      = ExecInC env
+
+     regVs <- zipWithM (exportNamed (VP_Register eenv)) [ 0 .. ] vs
+     uVs   <- zipWithM (exportNamed (VP_Upvalue eenv)) [ 0 .. ]
+                    =<< io (Vector.toList <$> Vector.freeze execUpvals)
+
+     return $ JS.object $ [ "registers" .= regVs
+                          , "upvalues"  .= uVs
+                          , "varargs"   .= ([] :: [String])
+                          , "code"      .= (Nothing :: Maybe String)
+                          ] ++ exportCObjInfo (cfunName (cExecFunction env))
+  where
+  exportNamed pathCon n ref =
+    do val <- io (readIORef ref)
+       vjs <- exportValue funs (pathCon n) val
+       return $ JS.object [ "name" .= (Nothing :: Maybe String)
+                          , "val"  .= vjs ]
+
+
+
+
+-- | Assumes that we are paused, so reading the IO refs will give a consistent
+-- view of the machine state.
+exportLuaExecEnv :: Chunks -> Int -> ExecEnvId -> LuaExecEnv -> ExportM JS.Value
+exportLuaExecEnv funs pc eid
+  env@LuaExecEnv { luaExecStack = execStack
+                , luaExecUpvals = execUpvals
+                , luaExecFID = fid
+                , luaExecFunction = fun
+                , luaExecVarargs = execVarargs } =
 
   do vs <- io $ do n <- SV.size execStack
                    traverse (SV.get execStack) [0..n-1]
 
-     let noCode = (Nothing, \_ -> Nothing, \_ -> Nothing)
-         (code,locNames,upNames) =
-            case luaOpCodes execFunction of
-              Just (fid,fun) ->
-                ( Just (exportFun funs (Just pc) (Just eid) fid)
-                , lookupLocalName fun pc . Reg
-                , \x -> debugInfoUpvalues (funcDebug fun) Vector.!? x
-                )
-              _ -> noCode
+     let code      = Just (exportFun funs (Just pc) (Just eid) fid)
+         locNames  = lookupLocalName fun pc . Reg
+         upNames x = debugInfoUpvalues (funcDebug fun) Vector.!? x
+         eenv      = ExecInLua env
 
-
-     regVs <- zipWithM (exportNamed (VP_Register env) locNames)
+     regVs <- zipWithM (exportNamed (VP_Register eenv) locNames)
                        [ 0 .. ] vs
-     uVs   <- zipWithM (exportNamed (VP_Upvalue env) upNames)
+     uVs   <- zipWithM (exportNamed (VP_Upvalue eenv) upNames)
                        [ 0 .. ]
           =<< io (Vector.toList <$> Vector.freeze execUpvals)
 
-     vAs <- zipWithM (\n -> named (VP_Varargs env n) Nothing) [0..] =<<
+     vAs <- zipWithM (\n -> named (VP_Varargs eenv n) Nothing) [0..] =<<
                                                     io (readIORef execVarargs)
 
      return $ JS.object $ [ "registers" .= regVs
                           , "upvalues"  .= uVs
                           , "varargs"   .= vAs
                           , "code"      .= code
-                          ] ++ exportFunctionValue funs pc execFunction
+                          ] ++ exportFunctionValue funs pc (LuaFunction fid fun)
 
   where
   named path nm v =

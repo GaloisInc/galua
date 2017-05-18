@@ -25,9 +25,9 @@ import qualified Data.Vector.Mutable as IOVector
 -- | Attempt to load the instruction stored at the given address
 -- in the currently executing function.
 {-# INLINE loadInstruction #-}
-loadInstruction :: ExecEnv -> Int {- ^ instruction counter -} -> OpCode
+loadInstruction :: LuaExecEnv -> Int {- ^ instruction counter -} -> OpCode
 loadInstruction eenv i =
-  execInstructions eenv `Vector.unsafeIndex` i
+  luaExecCode eenv `Vector.unsafeIndex` i
   -- program counter offsets are checked when functions
   -- are loaded in Galua.Code
 
@@ -45,7 +45,9 @@ kst k =
 execute :: VM -> Int -> IO NextStep
 execute !vm !pc =
 
-  do let eenv = vmCurExecEnv vm
+  do let eenv = case vmCurExecEnv vm of
+                  ExecInLua lenv -> lenv
+                  ExecInC {}     -> error "[bug] `execute` whilte `ExecInC`"
          advance      = jump 0
          jump i       = return $! Goto (pc + i + 1)
          tgt =: m     = do a <- m
@@ -242,12 +244,12 @@ execute !vm !pc =
        OP_CLOSURE tgt ix cloFunc ->
          do vs <- traverse (getLValue eenv) (funcUpvalues cloFunc)
             closureUpvals <- Vector.thaw vs
-            (fid,_) <- curLuaFunction eenv
-            let f = luaFunction (subFun fid ix) cloFunc
+            let fid = luaExecFID eenv
+                f   = luaFunction (subFun fid ix) cloFunc
             tgt =: (Closure <$> machNewClosure vm f closureUpvals)
 
        OP_VARARG a b ->
-         do let varargs = execVarargs eenv
+         do let varargs = luaExecVarargs eenv
             setCallResults eenv a b =<< readIORef varargs
             advance
 
@@ -256,7 +258,7 @@ execute !vm !pc =
 
 -- | Get a list of the `count` values stored from `start`.
 getCallArguments ::
-  ExecEnv -> Reg {- ^ start -} -> Count {- ^ count -} -> IO [Value]
+  LuaExecEnv -> Reg {- ^ start -} -> Count {- ^ count -} -> IO [Value]
 getCallArguments eenv a b =
   do end <- case b of
        CountTop   -> do sz <- getStackSize eenv
@@ -270,7 +272,7 @@ getCallArguments eenv a b =
 -- | Stores a list of results into a given register range.
 -- When expected is 'CountTop', values are stored up to TOP
 setCallResults ::
-  ExecEnv ->
+  LuaExecEnv ->
   Reg     {- ^ starting register -} ->
   Count   {- ^ results expected  -} ->
   [Value] {- ^ results           -} ->
@@ -287,9 +289,9 @@ setCallResults eenv a b xs =
 
 -- | Allocate fresh references for all registers from the `start` to the
 -- `TOP` of the stack
-closeStack :: ExecEnv -> Reg {- ^ start -} -> IO ()
+closeStack :: LuaExecEnv -> Reg {- ^ start -} -> IO ()
 closeStack eenv (Reg a) =
-  do let stack = execStack eenv
+  do let stack = luaExecStack eenv
      n <- SV.size stack
      for_ [a .. n-1] $ \i ->
        SV.set stack i =<< newIORef Nil
@@ -302,28 +304,29 @@ forloopAsNumber label v cont =
   case valueNumber v of
     Just n  -> cont n
     Nothing -> luaError' ("'for' " ++ label ++ " must be a number")
-
+{-
 curLuaFunction :: ExecEnv -> IO (FunId,Function)
 curLuaFunction eenv =
-  case luaOpCodes (execFunction eenv) of
-    Just x  -> return x
-    Nothing -> interpThrow NonLuaFunction
+  case env of
+    ExecInLua lenv -> return (luaExecFID lenv, luaExecFunction lenv)
+    ExecInC {}     -> interpThrow NonLuaFunction
+-}
 ------------------------------------------------------------------------
 -- Reference accessors
 ------------------------------------------------------------------------
 
 -- | Class for types that are indexes to references
 class LValue a where
-  getLValue :: ExecEnv -> a -> IO (IORef Value)
+  getLValue :: LuaExecEnv -> a -> IO (IORef Value)
 
 instance LValue UpIx where
   getLValue eenv (UpIx i) =
-    do let upvals = execUpvals eenv
+    do let upvals = luaExecUpvals eenv
        IOVector.unsafeRead upvals i
   {-# INLINE getLValue #-}
 
 instance LValue Reg where
-  getLValue eenv (Reg i) = SV.unsafeGet (execStack eenv) i
+  getLValue eenv (Reg i) = SV.unsafeGet (luaExecStack eenv) i
   {-# INLINE getLValue #-}
 
 instance LValue Upvalue where
@@ -332,14 +335,14 @@ instance LValue Upvalue where
   {-# INLINE getLValue #-}
 
 {-# INLINE set #-}
-set :: LValue a => ExecEnv -> a -> Value -> IO ()
+set :: LValue a => LuaExecEnv -> a -> Value -> IO ()
 set eenv r !x =
   do ref <- getLValue eenv r
      writeIORef ref x
 
 -- | Class for types that are indexes to values.
 class RValue a where
-  get :: ExecEnv -> a -> IO Value
+  get :: LuaExecEnv -> a -> IO Value
 
 instance RValue Upvalue where
   {-# INLINE get #-}
@@ -354,7 +357,7 @@ instance RValue Reg where
   get = lvalToRval
 
 {-# INLINE lvalToRval #-}
-lvalToRval :: LValue a => ExecEnv -> a -> IO Value
+lvalToRval :: LValue a => LuaExecEnv -> a -> IO Value
 lvalToRval eenv r = readIORef =<< getLValue eenv r
 
 instance RValue RK where
@@ -412,22 +415,22 @@ instance Show InterpreterFailure where
 -- This value is meaningful when dealing with
 -- variable argument function calls and returns.
 {-# INLINE getStackSize #-}
-getStackSize :: ExecEnv -> IO Int
+getStackSize :: LuaExecEnv -> IO Int
 getStackSize eenv =
-  do let stack = execStack eenv
+  do let stack = luaExecStack eenv
      SV.size stack
 
 {-# INLINE resetStackSize #-}
-resetStackSize :: ExecEnv -> IO ()
+resetStackSize :: LuaExecEnv -> IO ()
 resetStackSize eenv =
-  do (_,fun) <- curLuaFunction eenv
+  do let fun = luaExecFunction eenv
      setStackSize eenv (funcMaxStackSize fun)
 
 -- | Update TOP and ensure that the stack is large enough
 -- to index up to (but excluding) TOP.
-setStackSize :: ExecEnv -> Int -> IO ()
+setStackSize :: LuaExecEnv -> Int -> IO ()
 setStackSize eenv newLen =
-  do let stack = execStack eenv
+  do let stack = luaExecStack eenv
      oldLen <- SV.size stack
 
      if oldLen <= newLen
