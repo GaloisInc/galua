@@ -228,11 +228,12 @@ execute !vm !pc =
                      _ -> interpThrow SetListNeedsTable
 
             count <-
-              if b == 0
-                 then do sz <- getStackSize eenv
-                         let Reg aval = a
-                         return (sz - aval - 1)
-                 else return b
+              case b of
+                CountTop ->
+                  do sz <- getStackSize eenv
+                     let Reg aval = a
+                     return (sz - aval - 1)
+                CountInt i -> return i
 
             forM_ [1..count] $ \i ->
               do x <- get eenv (plusReg a i)

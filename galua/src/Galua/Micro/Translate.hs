@@ -253,8 +253,8 @@ micro fun pc =
         typeCase a
            $ IfType TableType
              (do let a' = Code.plusReg a 1
-                 if b == 0
-                    then
+                 case b of
+                   Code.CountTop ->
                       do mb <- getListReg
                          case mb of
                            Just r
@@ -265,9 +265,10 @@ micro fun pc =
                                   emit $ SetTableList (Reg a) (1 + offset)
                              | otherwise -> error "OP_SETLIST: r < a'"
                            Nothing -> error "OP_SETLIST: missing list register"
-                    else mapM_ emit [ SetTable (Reg a) (toExpr (offset + i))
-                                                       (toExpr (Code.plusReg a i))
-                                      | i <- [ 1 .. b ] ]
+                   Code.CountInt j ->
+                      mapM_ emit [ SetTable (Reg a) (toExpr (offset + i))
+                                                    (toExpr (Code.plusReg a i))
+                                      | i <- [ 1 .. j ] ]
 
                  jump skip
             )

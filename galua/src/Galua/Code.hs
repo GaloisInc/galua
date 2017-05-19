@@ -186,7 +186,7 @@ data OpCode
   | OP_TFORCALL !Reg !Int         {- ^    A C     R(A+3), ... ,R(A+2+C) := R(A)(R(A+1), R(A+2));  -}
   | OP_TFORLOOP !Reg !Int         {- ^    A sBx   if R(A+1) ~= nil then { R(A)=R(A+1); pc += sBx }-}
 
-  | OP_SETLIST  !Reg !Int !Int !Int   {- ^    A B C D  R(A)[C+i] := R(A+i), 1 <= i <= B; pc += D -}
+  | OP_SETLIST  !Reg !Count !Int !Int {- ^    A B C D  R(A)[C+i] := R(A+i), 1 <= i <= B; pc += D -}
 
   | OP_CLOSURE  !Reg !Int !Function   {- ^    A Bx    R(A) := closure(KPROTO[Bx])                     -}
 
@@ -258,8 +258,8 @@ extraRegChecks fun op =
     OP_TAILCALL r c1 _ -> counted (plusReg r 1) c1
     OP_TFORCALL r c    -> counted (plusReg r 3) (CountInt c) >> simple r 2
     OP_SELF r _ _      -> simple r 1
-    OP_SETLIST _ 0 _ _ -> return ()
-    OP_SETLIST r c _ _ -> counted r (CountInt c)
+    OP_SETLIST _ CountTop _ _ -> return ()
+    OP_SETLIST r c _ _        -> counted r c
     OP_LOADNIL r c     -> counted r (CountInt (c+1))
     _ -> return ()
   where
@@ -375,10 +375,11 @@ cvtOpCode' subs fun pc op =
     BC.OP_SETLIST  r1 x y ->
       do r' <- cvtReg fun r1
          let fpf = 50
+             sz  = if x == 0 then CountTop else CountInt x
          if y == 0
             then do k <- getExtraOp fun (pc + 1)
-                    return $! OP_SETLIST r' x (fpf * k) 1
-            else return $! OP_SETLIST r' x (fpf * (y - 1)) 0
+                    return $! OP_SETLIST r' sz (fpf * k) 1
+            else    return $! OP_SETLIST r' sz (fpf * (y - 1)) 0
 
     BC.OP_CLOSURE  r1 (ProtoIx f) ->
       case subs Vector.!? f of
