@@ -344,7 +344,7 @@ data CExecEnv = CExecEnv
 
   , cExecApiCall    :: {-# UNPACK #-} !(IORef ApiCallStatus)
 
-    -- The current functoin
+    -- The current function
   , cExecClosure    :: !Value         -- ^ used by debug API
   , cExecFunction   :: !CFunName      -- ^ extra info
   }
