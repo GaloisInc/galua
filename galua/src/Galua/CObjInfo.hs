@@ -2,6 +2,8 @@
 module Galua.CObjInfo ( CObjInfo(..), cfunInfoFun, noFunInfo ) where
 
 import Foreign(FunPtr,nullFunPtr)
+import Data.Text(Text)
+import qualified Data.Text as Text
 
 #if defined (LUA_USE_LINUX)
 import Data.Elf
@@ -12,7 +14,6 @@ import Data.List(isPrefixOf)
 import System.Posix.Files(readSymbolicLink)
 import qualified Data.Map as Map
 import qualified Data.Text.Encoding as Text (decodeUtf8)
-import qualified Data.Text as Text
 import Foreign.Ptr
 import qualified Data.ByteString as BS
 
@@ -27,10 +28,10 @@ import Galua.DlInfo(DlInfo(..),funPtrInfo)
 
 
 data CObjInfo = CObjInfo
-  { cObjAddr  :: !String
-  , cObjName  :: !(Maybe String)
-  , cObjFile  :: !(Maybe String)
-  , cObjLine  :: !(Maybe String)
+  { cObjAddr  :: !Text
+  , cObjName  :: !(Maybe Text)
+  , cObjFile  :: !(Maybe Text)
+  , cObjLine  :: !(Maybe Text)
   } deriving Show
 
 noFunInfo :: FunPtr a -> CObjInfo
@@ -40,8 +41,8 @@ noFunInfo fptr = CObjInfo { cObjAddr = addrName fptr
                           , cObjLine = Nothing
                           }
 
-addrName :: FunPtr a -> String
-addrName fp = if fp == nullFunPtr then "(entry)" else show fp
+addrName :: FunPtr a -> Text
+addrName fp = if fp == nullFunPtr then "(entry)" else Text.pack (show fp)
 
 
 
@@ -49,6 +50,8 @@ addrName fp = if fp == nullFunPtr then "(entry)" else show fp
 cfunInfoFun :: IO (FunPtr () -> IO CObjInfo)
 cfunInfoFun =
 #if defined ( LUA_USE_LINUX )
+  return $ \fptr -> return (noFunInfo fptr)
+{-
   do exe   <- readSymbolicLink "/proc/self/exe"
      bytes <- BS.readFile exe
      let elf = parseElf bytes
@@ -67,30 +70,32 @@ cfunInfoFun =
              , cObjName =
                  case function info of
                    Nothing -> Nothing
-                   Just b  -> let s = Text.decodeUtf8 b
-                              in s `seq` Just (Text.unpack s)
+                   Just b  -> Just $! Text.decodeUtf8 b
              , cObjFile =
                   case file info of
                     Nothing -> Nothing
-                    Just f  -> let s = Text.concat
+                    Just f  -> Just $! Text.concat
                                           [ Text.decodeUtf8 (directory f)
                                           , "/"
                                           , Text.decodeUtf8 (fileName f) ]
-                               in s `seq` Just (Text.unpack s)
              , cObjLine = case line info of
                             Nothing -> Nothing
-                            Just n  -> n `seq` Just (show n)
+                            Just n  -> Just $! Text.pack (show n)
              }
+-}
 #elif LUA_USE_MACOSX
   return $ \fptr ->
   do mb <- funPtrInfo fptr
      case mb of
        Nothing -> return (noFunInfo fptr)
-       Just i -> return CObjInfo { cObjAddr = addrName fptr
-                                 , cObjName = dlinfoSymName i
-                                 , cObjFile = Just (dlinfoFileName i)
-                                 , cObjLine = Nothing
-                                 }
+       Just i -> return $!
+        CObjInfo { cObjAddr = addrName fptr
+                 , cObjName = case dlinfoSymName i of
+                                Nothing -> Nothing
+                                Just s  -> Just $! Text.pack s
+                 , cObjFile = Just $!  (Text.pack (dlinfoFileName i))
+                 , cObjLine = Nothing
+                 }
 #else
   return $ \fptr -> return (noFunInfo fptr)
 #endif

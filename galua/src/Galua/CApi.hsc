@@ -18,6 +18,7 @@ import Data.Maybe (fromMaybe)
 import qualified Data.Vector as Vector
 import           Data.Vector (Vector)
 import qualified Data.Vector.Mutable as IOVector
+import qualified Data.Text as Text
 import Foreign.C.String
 import Foreign.C.Types
 import Foreign.ForeignPtr
@@ -1423,8 +1424,9 @@ lua_getinfo_hs l tid r whatPtr ar out =
 
 
        ExecInC cenv ->
-         do let funName = cfunName (cExecFunction cenv)
-                funNameStr = fromMaybe (cObjAddr funName) (cObjName funName)
+         do let funName    = cfunName (cExecFunction cenv)
+                funNameStr = Text.unpack
+                           $ fromMaybe (cObjAddr funName) (cObjName funName)
 
             when ('n' `elem` what) $
               do pokeLuaDebugName            ar =<< newCAString funNameStr
@@ -1450,8 +1452,8 @@ lua_getinfo_hs l tid r whatPtr ar out =
                  pokeLuaDebugIsVarArg        ar 1 -- always true for C functions
 
 
-     when ('f'`elem`what) (push args (execClosure execEnv))
-     when ('L'`elem`what) (push args Nil)
+     when ('f' `elem` what) (push args (execClosure execEnv))
+     when ('L' `elem` what) (push args Nil)
      result out 1
 
 ------------------------------------------------------------------------
