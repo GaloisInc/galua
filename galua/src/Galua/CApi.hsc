@@ -83,7 +83,7 @@ reentryG ::
   Ptr ()            {- ^ stable pointer -} ->
   Int               {- ^ thread ID      -} ->
   Ptr ()            {- ^ return address -} ->
-  (VM -> SV.SizedVector (IORef Value) -> IO NextStep)
+  (VM -> SV.SizedVector Value -> IO NextStep)
                     {- ^ operation continuation producing optional C return -} ->
   IO CInt
 reentryG = reentryGK 0 nullFunPtr
@@ -96,7 +96,7 @@ reentryGK ::
   Ptr ()            {- ^ stable pointer -} ->
   Int               {- ^ thread ID      -} ->
   Ptr ()            {- ^ return address -} ->
-  (VM -> SV.SizedVector (IORef Value) -> IO NextStep)
+  (VM -> SV.SizedVector Value -> IO NextStep)
                     {- ^ operation continuation producing optional C return -} ->
   IO CInt
 reentryGK kctx kfun label args l tid r impl =
@@ -148,36 +148,35 @@ result ptr res =
 noResult :: IO NextStep
 noResult = endReentry Nothing
 
-push :: SV.SizedVector (IORef a) -> a -> IO ()
-push args x = SV.push args =<< newIORef x
+push :: SV.SizedVector a -> a -> IO ()
+push = SV.push
 
-pop :: SV.SizedVector (IORef Value) -> IO Value
+pop :: SV.SizedVector Value -> IO Value
 pop stack =
   do vs <- popN stack 1
      case vs of
        [v] -> return v
        _   -> throwIO (LuaX "missing argument")
 
-popN :: SV.SizedVector (IORef Value) -> Int -> IO [Value]
+popN :: SV.SizedVector Value -> Int -> IO [Value]
 popN stack n = liftIO $
   do len <- SV.size stack
      let n' = max 0 (min n len)
-     vs <- for [len-n' .. len-1] $ \i ->
-             readIORef =<< SV.get stack i
+     vs <- for [len-n' .. len-1] $ \i -> SV.get stack i
      SV.shrink stack n'
      return vs
 
-stackToList :: SV.SizedVector (IORef a) -> IO [a]
+stackToList :: SV.SizedVector a -> IO [a]
 stackToList stack =
   do n  <- SV.size stack
-     for [0 .. n-1 ] $ \i -> readIORef =<< SV.get stack i
+     for [0 .. n-1 ] $ \i -> SV.get stack i
 
 
-stackFromList :: SV.SizedVector (IORef a) -> [a] -> IO ()
+stackFromList :: SV.SizedVector a -> [a] -> IO ()
 stackFromList stack vs =
   do n <- SV.size stack
      SV.shrink stack n
-     for_ vs $ push stack
+     for_ vs (push stack)
 
 cServiceLoop :: MVar CNextStep -> TMVar CCallState -> IO CInt
 cServiceLoop resultMVar interpMVar =
@@ -412,7 +411,7 @@ lua_settop_hs l tid r ix =
          newLen | i1 < 0    = oldLen + i1 + 1
                 | otherwise = i1
      if oldLen <= newLen
-       then replicateM_ (newLen - oldLen) (SV.push stack =<< newIORef Nil)
+       then replicateM_ (newLen - oldLen) (SV.push stack Nil)
        else SV.shrink stack (oldLen - newLen)
      noResult
 
@@ -1468,7 +1467,7 @@ lua_getlocal_hs l tid r ar n out =
         else getLocalStackArgs (fromIntegral n) out args ar
       noResult
 
-getLocalFunArgs :: VM -> Int -> Ptr CString -> SV.SizedVector (IORef Value) -> IO ()
+getLocalFunArgs :: VM -> Int -> Ptr CString -> SV.SizedVector Value -> IO ()
 getLocalFunArgs vm n out args =
   do clo <- functionArgument vm (-1) args
      void (pop args)
@@ -1479,7 +1478,7 @@ getLocalFunArgs vm n out args =
            Just bs -> poke out =<< newCAString (B8.unpack bs)--XXX: Leak
        _ -> poke out nullPtr
 
-getLocalStackArgs :: Int -> Ptr CString -> SV.SizedVector (IORef Value) -> Ptr LuaDebug -> IO ()
+getLocalStackArgs :: Int -> Ptr CString -> SV.SizedVector Value -> Ptr LuaDebug -> IO ()
 getLocalStackArgs n out args ar =
   do (pc,execEnv) <- importExecEnv =<< peekLuaDebugCallInfo ar
 
@@ -1493,9 +1492,8 @@ getLocalStackArgs n out args ar =
          | Just name <- lookupLocalName func pc (Reg ix) ->
              do len <- SV.size stack
                 if 0 <= ix && ix < len
-                  then do cell <- SV.get stack ix
+                  then do val <- SV.get stack ix
                           poke out =<< newCAString (B8.unpack name)
-                          val <- readIORef cell
                           push args val
 
                   else do poke out nullPtr
@@ -1557,12 +1555,12 @@ lua_setlocal_hs l tid r ar n out =
       case execEnv of
         ExecInLua LuaExecEnv { luaExecFunction = func }
          | Just name <- lookupLocalName func pc (Reg ix) ->
-           do mb <- SV.getMaybe stack ix
-              case mb of
-                Nothing -> return nullPtr
-                Just cell ->
-                     do v <- pop args
-                        writeIORef cell v >> newCAString (B8.unpack name)
+           do n <- SV.size stack
+              if 0 <= ix && ix < n
+                then do v <- pop args
+                        SV.set stack ix v
+                        newCAString (B8.unpack name)
+                else return nullPtr
 
         _ -> return nullPtr
 

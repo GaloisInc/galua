@@ -310,7 +310,7 @@ getValue vp0 = do res <- runExceptionT (getVal vp0)
           ExecInC cenv ->
             do mb <- lift (SV.getMaybe (cExecStack cenv) n)
                case mb of
-                 Just r  -> lift (readIORef r)
+                 Just r  -> return r
                  Nothing -> raise ()
 
       VP_Upvalue eenv n ->
@@ -402,11 +402,7 @@ setValue vp v =
             Just r  -> writeIORef r v
             Nothing -> return ()
 
-      ExecInC cenv ->
-       do mb <- SV.getMaybe (cExecStack cenv) n
-          case mb of
-            Just r  -> writeIORef r v
-            Nothing -> return ()
+      ExecInC cenv -> SV.setMaybe (cExecStack cenv) n v
 
   setUVal n env =
     let uvs = execUpvals env

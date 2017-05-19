@@ -382,7 +382,7 @@ enterClosure vm c vs =
 
        CFunction cfun ->
          do stack <- SV.new
-            traverse_ (SV.push stack <=< newIORef) vs
+            traverse_ (SV.push stack) vs
             apiRef   <- newIORef NoApiCall
 
             let eenv = ExecInC CExecEnv

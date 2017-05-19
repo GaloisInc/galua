@@ -288,23 +288,6 @@ data MachConfig = MachConfig
 data ExecEnv = ExecInLua {-# UNPACK #-} !LuaExecEnv
              | ExecInC   {-# UNPACK #-} !CExecEnv
 
-{- ExecEnv
-  { execStack    :: {-# UNPACK #-} !(SV.SizedVector (IORef Value))
-
-    -- The currently executing function
-  , execUpvals   :: {-# UNPACK #-} !(IOVector (IORef Value))
-  , execFunction :: !FunctionValue
-  , execVarargs  :: {-# UNPACK #-} !(IORef [Value])
-  , execClosure  :: !Value
-    -- ^ This is because the debug API can return the current closure.
-
-    -- Interaction with the C world
-  , execApiCall      :: {-# UNPACK #-} !(IORef ApiCallStatus)
-
-  , execInstructions :: {-# UNPACK #-} !(Vector OpCode)
-  }
--}
-
 -- | Get the up-values for the execution environment.
 execUpvals :: ExecEnv -> IOVector (IORef Value)
 execUpvals env =
@@ -324,7 +307,7 @@ execFun env =
     ExecInLua lenv -> LuaFunction (luaExecFID lenv) (luaExecFunction lenv)
     ExecInC cenv   -> CFunction (cExecFunction cenv)
 
-execCStack :: ExecEnv -> SV.SizedVector (IORef Value)
+execCStack :: ExecEnv -> SV.SizedVector Value
 execCStack env =
   case env of
     ExecInC cenv -> cExecStack cenv
@@ -355,7 +338,7 @@ data LuaExecEnv = LuaExecEnv
 
 -- | Execution environment for a C function
 data CExecEnv = CExecEnv
-  { cExecStack      :: {-# UNPACK #-} !(SV.SizedVector (IORef Value))
+  { cExecStack      :: {-# UNPACK #-} !(SV.SizedVector Value)
     -- ^ XXX: This should be SizedVector Value, no need for the IORef
   , cExecUpvals     :: {-# UNPACK #-} !(IOVector (IORef Value))
 

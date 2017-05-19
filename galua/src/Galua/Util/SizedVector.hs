@@ -8,6 +8,7 @@ module Galua.Util.SizedVector
   , size
   , shrink
   , set
+  , setMaybe
   , get
   , unsafeGet
   , getMaybe
@@ -108,6 +109,12 @@ set (SizedVector ref) i x =
   do SizedVector'{..} <- readIORef ref
      unless (0 <= i && i < svCount) (failure "set: bad index")
      IOVector.unsafeWrite svArray i x
+
+setMaybe :: SizedVector a -> Int -> a -> IO ()
+setMaybe (SizedVector ref) i x =
+  do SizedVector'{..} <- readIORef ref
+     when (0 <= i && i < svCount) (IOVector.unsafeWrite svArray i x)
+
 
 
 -- | Rotate a subset of a vector by a given offset. Positive rotations advance

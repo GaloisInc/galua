@@ -131,10 +131,9 @@ execEnvForCompiledStatment ::
   CompiledStatment                                   ->
   IO ExecEnv
 execEnvForCompiledStatment globals env stat =
-  do let st = case env of
-                ExecInLua lenv -> luaExecStack lenv
-                ExecInC cenv -> cExecStack cenv
-     stack <- prepareStack stat st
+  do stack <- case env of
+                ExecInLua lenv -> prepareLuaStack stat (luaExecStack lenv)
+                ExecInC cenv   -> prepareCStack stat (cExecStack cenv)
      ups   <- do oldUps <- Vector.freeze (execUpvals env)
                  Vector.thaw (Vector.snoc oldUps globals)
      vas   <- case env of
@@ -165,11 +164,31 @@ compileStatementForLocation fun pc statText =
      return CompiledStatment { csFunc = func, csParams = ps }
 
 
-prepareStack ::
+prepareCStack ::
+  CompiledStatment  ->
+  SizedVector Value {- ^ parent's stack     -} ->
+  IO (SizedVector (IORef Value))
+prepareCStack stat parentStack =
+  do stack <- SV.new
+
+     let locals  = harnessLocals (csParams stat)
+         visible = catMaybes (zipWith (<$) [0..] locals)
+         mk n = do v <- SV.get parentStack n
+                   SV.push stack =<< newIORef v
+     traverse_ mk visible
+
+     let extraSpace = funcMaxStackSize (csFunc stat) - length visible
+     replicateM_ extraSpace (SV.push stack =<< newIORef Nil)
+
+     return stack
+
+
+
+prepareLuaStack ::
   CompiledStatment                                     ->
   SizedVector (IORef Value) {- ^ parent's stack     -} ->
   IO (SizedVector (IORef Value))
-prepareStack stat parentStack =
+prepareLuaStack stat parentStack =
   do stack <- SV.new
 
      let locals  = harnessLocals (csParams stat)

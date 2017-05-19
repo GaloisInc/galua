@@ -44,6 +44,5 @@ returnFromC vm n =
   do let stack = execCStack (vmCurExecEnv vm)
      FunReturn <$>
        do sz <- SV.size stack
-          for [ sz - n .. sz - 1 ] $ \i ->
-             readIORef =<< SV.get stack i
+          for [ sz - n .. sz - 1 ] $ \i -> SV.get stack i
 

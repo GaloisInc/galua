@@ -792,8 +792,8 @@ exportCExecEnv funs eid env@CExecEnv
 
      let eenv      = ExecInC env
 
-     regVs <- zipWithM (exportNamed (VP_Register eenv)) [ 0 .. ] vs
-     uVs   <- zipWithM (exportNamed (VP_Upvalue eenv)) [ 0 .. ]
+     regVs <- zipWithM (exportNamed return (VP_Register eenv)) [ 0 .. ] vs
+     uVs   <- zipWithM (exportNamed readIORef (VP_Upvalue eenv)) [ 0 .. ]
                     =<< io (Vector.toList <$> Vector.freeze execUpvals)
 
      return $ JS.object $ [ "registers" .= regVs
@@ -802,8 +802,8 @@ exportCExecEnv funs eid env@CExecEnv
                           , "code"      .= (Nothing :: Maybe String)
                           ] ++ exportCObjInfo (cfunName (cExecFunction env))
   where
-  exportNamed pathCon n ref =
-    do val <- io (readIORef ref)
+  exportNamed getVal pathCon n ref =
+    do val <- io (getVal ref)
        vjs <- exportValue funs (pathCon n) val
        return $ JS.object [ "name" .= (Nothing :: Maybe String)
                           , "val"  .= vjs ]
