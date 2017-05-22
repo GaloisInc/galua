@@ -1,7 +1,3 @@
-{-# LANGUAGE RecordWildCards, NamedFieldPuns #-}
-{-# LANGUAGE ForeignFunctionInterface #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE BangPatterns #-}
 module Galua.OpcodeInterpreter(execute) where
 
