@@ -98,9 +98,9 @@ data NextStep
   = Goto {-# UNPACK #-} !Int
     -- ^ Continue executing this function at a new address
 
-  | FunCall {-# UNPACK #-} !(Reference Closure) [Value]   -- call this
-            (Maybe Handler)               -- using this handler
-            ([Value] -> IO NextStep)      -- result goes here
+  | FunCall {-# UNPACK #-} !(Reference Closure) ![Value]   -- call this
+            !(Maybe Handler)               -- using this handler
+            !([Value] -> IO NextStep)      -- result goes here
 
   | FunReturn ![Value]
     -- ^ Function execution succeeded with results
