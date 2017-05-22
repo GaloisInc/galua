@@ -349,7 +349,7 @@ data LuaExecEnv = LuaExecEnv
 -- | Execution environment for a C function
 data CExecEnv = CExecEnv
   { cExecStack      :: {-# UNPACK #-} !(SV.SizedVector Value)
-    -- ^ XXX: This should be SizedVector Value, no need for the IORef
+
   , cExecUpvals     :: {-# UNPACK #-} !(IOVector (IORef Value))
 
   , cExecApiCall    :: {-# UNPACK #-} !(IORef ApiCallStatus)
