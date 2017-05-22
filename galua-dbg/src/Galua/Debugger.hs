@@ -302,7 +302,7 @@ getValue vp0 = do res <- runExceptionT (getVal vp0)
       VP_Register eenv n ->
         case eenv of
           ExecInLua lenv ->
-            do mb <- lift (SV.getMaybe (luaExecStack lenv) n)
+            do mb <- lift (getMb lenv n)
                case mb of
                  Just r  -> lift (readIORef r)
                  Nothing -> raise ()
@@ -397,7 +397,7 @@ setValue vp v =
   setReg n eenv =
     case eenv of
       ExecInLua lenv ->
-       do mb <- SV.getMaybe (luaExecStack lenv) n
+       do mb <- getMb lenv n
           case mb of
             Just r  -> writeIORef r v
             Nothing -> return ()
@@ -419,6 +419,12 @@ setValue vp v =
             _       -> varargs
 
       _ -> return ()
+
+
+getMb :: LuaExecEnv -> Int -> IO (Maybe (IORef Value))
+getMb lenv n = if n >= IOVector.length (luaExecRegs lenv) || n < 0
+                    then return Nothing
+                    else Just <$> IOVector.unsafeRead (luaExecRegs lenv) n
 
 --------------------------------------------------------------------------------
 
@@ -489,7 +495,8 @@ closureToResolveEnv metaTabs c =
   do (fid,func) <- case luaOpCodes (cloFun c) of
                      Just (fid,func) -> return (fid,func)
                      _ -> nameResolveException "Not in a Lua function."
-     stack <- SV.new
+     let sz = funcMaxStackSize func
+     stack <- IOVector.replicateM sz (newIORef Nil)
      ups <- Vector.freeze (cloUpvalues c)
      let nre = NameResolveEnv
                  { nrUpvals   = ups
@@ -507,7 +514,7 @@ execEnvToNameResolveEnv metaTabs eenv =
      do ups <- Vector.freeze (luaExecUpvals lenv)
         let nre = NameResolveEnv
                     { nrUpvals   = ups
-                    , nrStack    = luaExecStack lenv
+                    , nrStack    = luaExecRegs lenv
                     , nrFunction = luaExecFunction lenv
                     , nrMetas    = metaTabs
                     }

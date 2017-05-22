@@ -10,8 +10,7 @@ import           Control.Monad
 import           Data.Foldable
 import           Data.IORef
 import qualified Data.Vector as Vector
-
-import qualified Galua.Util.SizedVector as SV
+import qualified Data.Vector.Mutable as IOVector
 
 import           Galua.Code
 import           Galua.Value
@@ -20,7 +19,6 @@ import           Galua.Overloading
 import           Galua.Mach
 import           Galua.Number
 import           Galua.LuaString(fromByteString)
-import qualified Data.Vector.Mutable as IOVector
 
 -- | Attempt to load the instruction stored at the given address
 -- in the currently executing function.
@@ -227,19 +225,34 @@ execute !vm !pc =
                      Table tab -> return tab
                      _ -> interpThrow SetListNeedsTable
 
-            count <-
-              case b of
-                CountTop ->
-                  do sz <- getStackSize eenv
-                     let Reg aval = a
-                     return (sz - aval - 1)
-                CountInt i -> return i
+            let setTab i x = setTableRaw tab (Number (Int (offset+i))) x
 
-            forM_ [1..count] $ \i ->
-              do x <- get eenv (plusReg a i)
-                 setTableRaw tab (Number (Int (offset+i))) x
+            case b of
+              CountInt count ->
+                forM_ [1..count] $ \i ->
+                  setTab i =<< get eenv (plusReg a i)
 
-            resetStackSize eenv
+              CountTop ->
+                do let Reg aval = a
+                       count    = IOVector.length (luaExecRegs eenv) - aval - 1
+
+                   stackMode <- atomicModifyIORef' (luaExecExtraRes eenv) $
+                                  \vs -> (StackExact, vs)
+
+                   case stackMode of
+                     StackExact ->
+                       forM_ [1..count] $ \i ->
+                         setTab i =<< (get eenv (plusReg a i))
+
+                     StackMinus n ->
+                       forM_ [1..count - n] $ \i ->
+                         setTab i =<< (get eenv (plusReg a i))
+
+                     StackPlus vs ->
+                        do forM_ [1..count] $ \i ->
+                             setTab i =<< (get eenv (plusReg a i))
+                           zipWithM_ setTab [count+1 ..] vs
+
             jump skip
 
        OP_CLOSURE tgt ix cloFunc ->
@@ -261,13 +274,24 @@ execute !vm !pc =
 getCallArguments ::
   LuaExecEnv -> Reg {- ^ start -} -> Count {- ^ count -} -> IO [Value]
 getCallArguments eenv a b =
-  do end <- case b of
-       CountTop   -> do sz <- getStackSize eenv
-                        return $! Reg (sz-1)
-       CountInt x -> return (plusReg a (x-1))
-     vs <- traverse (get eenv) (regFromTo a end)
-     resetStackSize eenv
-     return vs
+  case b of
+    CountInt x -> traverse (get eenv) (regRange a x)
+    CountTop ->
+      do let lastRegIx = IOVector.length (luaExecRegs eenv) - 1
+         stackMod <- atomicModifyIORef' (luaExecExtraRes eenv) $
+                                                      \vs -> (StackExact, vs)
+         case stackMod of
+
+           StackExact ->
+             traverse (get eenv) (regFromTo a (Reg lastRegIx))
+
+           StackMinus n ->
+             traverse (get eenv) (regFromTo a (Reg (lastRegIx - n)))
+
+           StackPlus vs ->
+             do as <- traverse (get eenv) (regFromTo a (Reg lastRegIx))
+                return (as ++ vs)
+
 
 
 -- | Stores a list of results into a given register range.
@@ -279,23 +303,37 @@ setCallResults ::
   [Value] {- ^ results           -} ->
   IO ()
 setCallResults eenv a b xs =
-  do count <- case b of
-              CountInt x -> return x
-              CountTop   -> n <$ setStackSize eenv sz'
-                 where Reg base = a
-                       sz' = base + n
-                       n   = length xs
+  case b of
+    CountInt count ->
+      zipWithM_ (set eenv) (regRange a count) (xs ++ repeat Nil)
+    CountTop ->
+      do let Reg base        = a
+             hereNum         = IOVector.length (luaExecRegs eenv) - base
+             (here,overflow) = splitAt hereNum xs
+             actualNum       = length here
 
-     zipWithM_ (set eenv) (regRange a count) (xs ++ repeat Nil)
+         zipWithM_ (set eenv) (regRange a hereNum) here
+
+         case compare actualNum hereNum of
+           LT -> do let under = hereNum - actualNum
+                    forM_ (regRange (plusReg a actualNum) under)
+                      $ \r -> set eenv r Nil
+                    writeIORef (luaExecExtraRes eenv) (StackMinus under)
+           EQ -> writeIORef (luaExecExtraRes eenv) StackExact
+           GT -> writeIORef (luaExecExtraRes eenv) $! StackPlus overflow
+
+
 
 -- | Allocate fresh references for all registers from the `start` to the
 -- `TOP` of the stack
 closeStack :: LuaExecEnv -> Reg {- ^ start -} -> IO ()
 closeStack eenv (Reg a) =
-  do let stack = luaExecStack eenv
-     n <- SV.size stack
-     for_ [a .. n-1] $ \i ->
-       SV.set stack i =<< newIORef Nil
+  do let regs = luaExecRegs eenv
+     -- Technically, if the stack mod is "underflow" we could only go up
+     -- to there, but it doesn't hurt to just go all the way, which is
+     -- probably the common case anyway.
+     for_ [a .. IOVector.length regs - 1] $ \i ->
+       IOVector.unsafeWrite regs i =<< newIORef Nil
 
 -- | Interpret a value as an input to a for-loop. If the value
 -- is not a number an error is raised using the given name.
@@ -305,13 +343,8 @@ forloopAsNumber label v cont =
   case valueNumber v of
     Just n  -> cont n
     Nothing -> luaError' ("'for' " ++ label ++ " must be a number")
-{-
-curLuaFunction :: ExecEnv -> IO (FunId,Function)
-curLuaFunction eenv =
-  case env of
-    ExecInLua lenv -> return (luaExecFID lenv, luaExecFunction lenv)
-    ExecInC {}     -> interpThrow NonLuaFunction
--}
+
+
 ------------------------------------------------------------------------
 -- Reference accessors
 ------------------------------------------------------------------------
@@ -327,7 +360,7 @@ instance LValue UpIx where
   {-# INLINE getLValue #-}
 
 instance LValue Reg where
-  getLValue eenv (Reg i) = SV.unsafeGet (luaExecStack eenv) i
+  getLValue eenv (Reg i) = IOVector.unsafeRead (luaExecRegs eenv) i
   {-# INLINE getLValue #-}
 
 instance LValue Upvalue where
@@ -408,38 +441,5 @@ instance Show InterpreterFailure where
     )
 
 
---------------------------------------------------------------------------------
 
-
-
--- | Get the last valid register.
--- This value is meaningful when dealing with
--- variable argument function calls and returns.
-{-# INLINE getStackSize #-}
-getStackSize :: LuaExecEnv -> IO Int
-getStackSize eenv =
-  do let stack = luaExecStack eenv
-     SV.size stack
-
-{-# INLINE resetStackSize #-}
-resetStackSize :: LuaExecEnv -> IO ()
-resetStackSize eenv =
-  do let fun = luaExecFunction eenv
-     setStackSize eenv (funcMaxStackSize fun)
-
--- | Update TOP and ensure that the stack is large enough
--- to index up to (but excluding) TOP.
-setStackSize :: LuaExecEnv -> Int -> IO ()
-setStackSize eenv newLen =
-  do let stack = luaExecStack eenv
-     oldLen <- SV.size stack
-
-     if oldLen <= newLen
-
-       -- Grow to new size
-       then replicateM_ (newLen - oldLen) $
-               SV.push stack =<< newIORef Nil
-
-       -- Release references
-       else SV.shrink stack (oldLen - newLen)
 

@@ -54,6 +54,7 @@ import qualified Data.ByteString as B
 import qualified Data.Map as Map
 import qualified Data.Set as Set
 import qualified Data.Vector as Vector
+import qualified Data.Vector.Mutable as IOVector
 import           Data.Maybe(fromMaybe)
 import           Data.Either(partitionEithers)
 import           Data.Traversable(for)
@@ -815,14 +816,23 @@ exportCExecEnv funs eid env@CExecEnv
 -- view of the machine state.
 exportLuaExecEnv :: Chunks -> Int -> ExecEnvId -> LuaExecEnv -> ExportM JS.Value
 exportLuaExecEnv funs pc eid
-  env@LuaExecEnv { luaExecStack = execStack
+  env@LuaExecEnv { luaExecRegs = execStack
+                 , luaExecExtraRes = extras
                 , luaExecUpvals = execUpvals
                 , luaExecFID = fid
                 , luaExecFunction = fun
                 , luaExecVarargs = execVarargs } =
 
-  do vs <- io $ do n <- SV.size execStack
-                   traverse (SV.get execStack) [0..n-1]
+  do vs <- io $ do let n = IOVector.length execStack
+                       upTo end =
+                          forM [0..end-1] $ \i ->
+                            readIORef =<< IOVector.unsafeRead execStack i
+
+                   stackMod <- readIORef extras
+                   case stackMod of
+                     StackExact -> upTo n
+                     StackMinus m -> upTo (n - m)
+                     StackPlus vs -> (++ vs) <$> upTo n
 
      let code      = Just (exportFun funs (Just pc) (Just eid) fid)
          locNames  = lookupLocalName fun pc . Reg
@@ -831,9 +841,12 @@ exportLuaExecEnv funs pc eid
 
      regVs <- zipWithM (exportNamed (VP_Register eenv) locNames)
                        [ 0 .. ] vs
+
      uVs   <- zipWithM (exportNamed (VP_Upvalue eenv) upNames)
                        [ 0 .. ]
-          =<< io (Vector.toList <$> Vector.freeze execUpvals)
+          =<< io (do v <- Vector.freeze execUpvals
+                     v1 <- mapM readIORef v
+                     return (Vector.toList v1))
 
      vAs <- zipWithM (\n -> named (VP_Varargs eenv n) Nothing) [0..] =<<
                                                     io (readIORef execVarargs)
@@ -850,8 +863,7 @@ exportLuaExecEnv funs pc eid
        return $ JS.object [ "name" .= (nm :: Maybe String)
                           , "val"  .= vjs ]
 
-  exportNamed pathCon names n ref =
-    do val <- io $ readIORef ref
+  exportNamed pathCon names n val =
        named (pathCon n) (fmap unpackUtf8 (names n)) val
 
 

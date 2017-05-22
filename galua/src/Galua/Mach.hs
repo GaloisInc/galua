@@ -321,11 +321,22 @@ execApiCall env =
 
 
 
+data ExtraStack = StackExact          -- ^ No changes to the stack
+                | StackMinus !Int     -- ^ Ignore the last registers
+                | StackPlus ![Value]  -- ^ Some additional values
+
+
 -- | Execution environment for a Lua function
 data LuaExecEnv = LuaExecEnv
-  { luaExecStack    :: {-# UNPACK #-} !(SV.SizedVector (IORef Value))
-  , luaExecUpvals   :: {-# UNPACK #-} !(IOVector (IORef Value))
+  { luaExecRegs     :: {-# UNPACK #-} !(IOVector (IORef Value))
+    -- ^ local variables
+
+  , luaExecExtraRes :: {-# UNPACK #-} !(IORef ExtraStack)
+    -- ^ overflow/underflow space for function results
+
   , luaExecVarargs  :: {-# UNPACK #-} !(IORef [Value])
+
+  , luaExecUpvals   :: {-# UNPACK #-} !(IOVector (IORef Value))
   , luaExecCode     :: {-# UNPACK #-} !(Vector OpCode)
 
     -- The current function
@@ -334,7 +345,6 @@ data LuaExecEnv = LuaExecEnv
   , luaExecFunction :: !Function      -- ^ extra info
   }
 
--- XXX: Add exec env for Micro Lua
 
 -- | Execution environment for a C function
 data CExecEnv = CExecEnv
@@ -348,6 +358,8 @@ data CExecEnv = CExecEnv
   , cExecClosure    :: !Value         -- ^ used by debug API
   , cExecFunction   :: !CFunName      -- ^ extra info
   }
+
+
 
 
 

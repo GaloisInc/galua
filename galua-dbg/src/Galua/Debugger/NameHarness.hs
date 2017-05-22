@@ -7,18 +7,19 @@ module Galua.Debugger.NameHarness
   )
   where
 
-import           Control.Monad ((<=<), replicateM_)
 import           Control.Exception (Exception, try, throwIO)
 import qualified Data.ByteString.Lazy.Char8 as L8
 import qualified Data.ByteString.Char8 as B8
 import           Data.IORef (IORef, newIORef)
-import           Data.Foldable (traverse_)
+import           Data.Foldable (forM_)
 import           Data.List (unfoldr, mapAccumR, intercalate)
 import           Data.Maybe (catMaybes)
 import           Data.Set (Set)
 import qualified Data.Set as Set
 import qualified Data.Vector as Vector
-import           Galua.FunValue (funValueCode, luaFunction, FunCode(..))
+import           Data.Vector.Mutable (IOVector)
+import qualified Data.Vector.Mutable as IOVector
+import           Galua.FunValue (funValueCode, FunCode(..))
 import           Galua.LuaString (fromByteString)
 import           Galua.Mach
 import qualified Galua.Util.SizedVector as SV
@@ -132,16 +133,19 @@ execEnvForCompiledStatment ::
   IO ExecEnv
 execEnvForCompiledStatment globals env stat =
   do stack <- case env of
-                ExecInLua lenv -> prepareLuaStack stat (luaExecStack lenv)
+                ExecInLua lenv -> prepareLuaStack stat (luaExecRegs lenv)
                 ExecInC cenv   -> prepareCStack stat (cExecStack cenv)
      ups   <- do oldUps <- Vector.freeze (execUpvals env)
                  Vector.thaw (Vector.snoc oldUps globals)
      vas   <- case env of
                 ExecInLua lenv -> return $! luaExecVarargs lenv
-                ExecInLua {}   -> newIORef []
+                ExecInC {}    -> newIORef []
+
+     extra <- newIORef StackExact
 
      return $! ExecInLua LuaExecEnv
-        { luaExecStack    = stack
+        { luaExecRegs     = stack
+        , luaExecExtraRes = extra
         , luaExecUpvals   = ups
         , luaExecVarargs  = vas
         , luaExecCode     = funcCode (csFunc stat)
@@ -167,18 +171,20 @@ compileStatementForLocation fun pc statText =
 prepareCStack ::
   CompiledStatment  ->
   SizedVector Value {- ^ parent's stack     -} ->
-  IO (SizedVector (IORef Value))
+  IO (IOVector (IORef Value))
 prepareCStack stat parentStack =
-  do stack <- SV.new
+  do let sz = funcMaxStackSize (csFunc stat)
+     stack <- IOVector.new sz
 
      let locals  = harnessLocals (csParams stat)
          visible = catMaybes (zipWith (<$) [0..] locals)
-         mk n = do v <- SV.get parentStack n
-                   SV.push stack =<< newIORef v
-     traverse_ mk visible
+         lenVis  = length visible
 
-     let extraSpace = funcMaxStackSize (csFunc stat) - length visible
-     replicateM_ extraSpace (SV.push stack =<< newIORef Nil)
+     forM_ (zip [ 0 .. ] visible) $ \(i,x) ->
+        IOVector.write stack i =<< newIORef =<< SV.get parentStack x
+
+     forM_ [ lenVis .. sz - 1 ] $ \i ->
+        IOVector.write stack i =<< newIORef Nil
 
      return stack
 
@@ -186,17 +192,21 @@ prepareCStack stat parentStack =
 
 prepareLuaStack ::
   CompiledStatment                                     ->
-  SizedVector (IORef Value) {- ^ parent's stack     -} ->
-  IO (SizedVector (IORef Value))
+  IOVector (IORef Value) {- ^ parent's stack     -} ->
+  IO (IOVector (IORef Value))
 prepareLuaStack stat parentStack =
-  do stack <- SV.new
+  do let sz = funcMaxStackSize (csFunc stat)
+     stack <- IOVector.new sz
 
      let locals  = harnessLocals (csParams stat)
          visible = catMaybes (zipWith (<$) [0..] locals)
-     traverse_ (SV.push stack <=< SV.get parentStack) visible
+         lenVis  = length visible :: Int
 
-     let extraSpace = funcMaxStackSize (csFunc stat) - length visible
-     replicateM_ extraSpace (SV.push stack =<< newIORef Nil)
+     forM_ (zip [ 0 .. ] visible) $ \(i,x) ->
+        IOVector.write stack i =<< IOVector.read parentStack x
+
+     forM_ [ lenVis .. sz - 1 ] $ \i ->
+        IOVector.write stack i =<< newIORef Nil
 
      return stack
 

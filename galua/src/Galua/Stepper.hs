@@ -9,6 +9,16 @@ module Galua.Stepper
   , oneStep', Cont(..)
   ) where
 
+import           Control.Monad ((<=<))
+import           Control.Concurrent
+import           Control.Concurrent.STM (atomically, takeTMVar)
+import           Data.IORef
+import           Data.Foldable (traverse_)
+import qualified Data.Vector as Vector
+import           Foreign.ForeignPtr
+
+
+
 import           Galua.Mach
 import           Galua.Value
 import           Galua.FunValue(FunctionValue(..))
@@ -21,13 +31,6 @@ import           Galua.Util.Stack (Stack)
 import qualified Galua.Util.Stack as Stack
 import qualified Galua.Util.SizedVector as SV
 
-
-import           Control.Monad ((<=<))
-import           Control.Concurrent
-import           Control.Concurrent.STM (atomically, takeTMVar)
-import           Data.IORef
-import           Data.Foldable (traverse_)
-import           Foreign.ForeignPtr
 
 
 data Cont r = Cont
@@ -363,12 +366,15 @@ enterClosure vm c vs =
                         | otherwise      = []
 
 
-            stack    <- SV.new
-            traverse_ (SV.push stack <=< newIORef) stackElts
+            stack    <- do refs <- mapM newIORef stackElts
+                           Vector.thaw (Vector.fromListN n refs)
+
             vasRef   <- newIORef varargs
+            extraRef <- newIORef StackExact
 
             let eenv = ExecInLua LuaExecEnv
-                         { luaExecStack     = stack
+                         { luaExecRegs      = stack
+                         , luaExecExtraRes  = extraRef
                          , luaExecUpvals    = cloUpvalues
                          , luaExecVarargs   = vasRef
                          , luaExecCode      = funcCode f

@@ -10,6 +10,8 @@ module Galua.Names.Eval
 import           Language.Lua.Syntax(Unop(..))
 import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
+import           Data.Vector.Mutable (IOVector)
+import qualified Data.Vector.Mutable as IOVector
 import           Data.Maybe(fromMaybe)
 import           Data.ByteString(ByteString)
 import           Data.IORef(IORef,readIORef)
@@ -18,11 +20,11 @@ import qualified Data.Text as Text
 import           Data.Bits(complement)
 import           Control.Exception(Exception,throwIO)
 
+
 import Galua.Code
 import Galua.Value(Reference, referenceVal, Value(..),valueBool)
 import Galua.Overloading(get_m__index)
 import Galua.Util.Table(Table,getTableRaw,tableLen)
-import Galua.Util.SizedVector(SizedVector,getMaybe)
 import Galua.LuaString(toByteString,
                         unsafeFromByteString,fromByteString,luaStringLen)
 import Galua.Number(Number(..),numberToInt)
@@ -32,7 +34,7 @@ import Galua.Pretty(Pretty(pp))
 
 data NameResolveEnv = NameResolveEnv
   { nrFunction :: Function
-  , nrStack    :: SizedVector (IORef Value)
+  , nrStack    :: IOVector (IORef Value)
   , nrUpvals   :: Vector (IORef Value)
   , nrMetas    :: TypeMetatables
   }
@@ -225,10 +227,10 @@ readUpValue eenv (UpIx n) =
 
 readReg ::  NameResolveEnv -> Reg -> IO Value
 readReg eenv (Reg n) =
-  do mb <- getMaybe (nrStack eenv) n
-     case mb of
-       Just ref -> readIORef ref
-       Nothing  -> bad $ "Invalid register: " ++ sh (Reg n)
+  do let sz = IOVector.length (nrStack eenv)
+     if n >= sz
+        then bad $ "Invalid register: " ++ sh (Reg n)
+        else readIORef =<< IOVector.unsafeRead (nrStack eenv) n
 
 sh :: Pretty a => a -> String
 sh = show . pp
