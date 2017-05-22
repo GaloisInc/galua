@@ -269,6 +269,7 @@ execute !vm !pc =
 
 
 -- | Get a list of the `count` values stored from `start`.
+{-# INLINE getCallArguments #-}
 getCallArguments ::
   LuaExecEnv -> Reg {- ^ start -} -> Count {- ^ count -} -> IO [Value]
 getCallArguments eenv a b =
@@ -294,6 +295,7 @@ getCallArguments eenv a b =
 
 -- | Stores a list of results into a given register range.
 -- When expected is 'CountTop', values are stored up to TOP
+{-# INLINE setCallResults #-}
 setCallResults ::
   LuaExecEnv ->
   Reg     {- ^ starting register -} ->
@@ -324,6 +326,7 @@ setCallResults eenv a b xs =
 
 -- | Allocate fresh references for all registers from the `start` to the
 -- `TOP` of the stack
+{-# INLINE closeStack #-}
 closeStack :: LuaExecEnv -> Reg {- ^ start -} -> IO ()
 closeStack eenv (Reg a) =
   do let regs = luaExecRegs eenv
