@@ -39,10 +39,11 @@ kst k =
 execute :: VM -> Int -> IO NextStep
 execute !vm !pc =
 
-  do let eenv = case vmCurExecEnv vm of
-                  ExecInLua lenv -> lenv
-                  ExecInC {}     -> error "[bug] `execute` whilte `ExecInC`"
-         advance      = jump 0
+  do eenv <- case vmCurExecEnv vm of
+               ExecInLua lenv -> return lenv
+               ExecInC {}     -> interpThrow ExecuteLuaWhileInC
+
+     let advance      = jump 0
          jump i       = return $! Goto (pc + i + 1)
          tgt =: m     = do a <- m
                            set eenv tgt a
@@ -417,15 +418,9 @@ instance Exception InterpreterFailure
 
 -- | Types of fatal interpreter failures
 data InterpreterFailureType
-  = BadProto Int
-  | BadPc Int
-  | BadStack Int
-  | BadUpval Int
-  | BadConstant Int
-  | ExpectedExtraArg
-  | UnexpectedExtraArg
+  = UnexpectedExtraArg
   | SetListNeedsTable
-  | NonLuaFunction
+  | ExecuteLuaWhileInC
   deriving (Show)
 
 instance Show InterpreterFailure where
