@@ -102,34 +102,34 @@ data NextStep
             (Maybe Handler)               -- using this handler
             ([Value] -> IO NextStep)      -- result goes here
 
-  | FunReturn [Value]
+  | FunReturn ![Value]
     -- ^ Function execution succeeded with results
 
-  | ErrorReturn Value
+  | ErrorReturn !Value
     -- ^ Function execution succeeded with results
 
-  | FunTailcall {-# UNPACK #-} !(Reference Closure) [Value]
+  | FunTailcall {-# UNPACK #-} !(Reference Closure) ![Value]
     -- ^ Call a function and return its result
 
-  | ThrowError Value
+  | ThrowError !Value
     -- ^ An error occured
 
   | WaitForC
     -- ^ Yield to C, wait for a response from the C reentry thread
     -- See 'CCallState' for possible responses
 
-  | Resume !(Reference Thread) (ThreadResult -> IO NextStep)
+  | Resume !(Reference Thread) !(ThreadResult -> IO NextStep)
     -- ^ Resume the given suspended thread
 
-  | Yield (IO NextStep)
+  | Yield !(IO NextStep)
 
-  | ThreadExit [Value]
-  | ThreadFail Value
+  | ThreadExit ![Value]
+  | ThreadFail !Value
 
-  | ApiStart ApiCall (IO NextStep)
-  | ApiEnd (Maybe PrimArgument)
+  | ApiStart !ApiCall !(IO NextStep)
+  | ApiEnd !(Maybe PrimArgument)
 
-  | Interrupt NextStep
+  | Interrupt !NextStep
 
 dumpNextStep :: NextStep -> String
 dumpNextStep next =
