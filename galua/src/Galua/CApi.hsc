@@ -1557,8 +1557,8 @@ lua_setlocal_hs l tid r ar n out =
       case execEnv of
         ExecInLua LuaExecEnv { luaExecFunction = func }
          | Just name <- lookupLocalName func pc (Reg ix) ->
-           do n <- SV.size stack
-              if 0 <= ix && ix < n
+           do sz <- SV.size stack
+              if 0 <= ix && ix < sz
                 then do v <- pop args
                         SV.set stack ix v
                         newCAString (B8.unpack name)
