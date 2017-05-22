@@ -130,7 +130,7 @@ reentryGK kctx kfun label args l tid r impl =
                                 let stack = execCStack eenv
                                 impl vm stack `catch` \(LuaX str) ->
                                     do s <- fromByteString (packUtf8 str)
-                                       return (ThrowError (String s))
+                                       return $! ThrowError (String s)
 
          cServiceLoop (extLuaStateCServer ext) (extLuaStateLuaServer ext)
 
@@ -138,7 +138,7 @@ reentryGK kctx kfun label args l tid r impl =
 
 
 endReentry :: Maybe PrimArgument -> IO NextStep
-endReentry res = return (ApiEnd res)
+endReentry res = return $! ApiEnd res
 
 
 result :: CArg a => Ptr a -> a -> IO NextStep
@@ -236,7 +236,7 @@ lua_error_hs l tid r = reentryG "lua_error" [] l tid r $ \_ args ->
      if n == 0
        then return (ThrowError Nil)
        else do [e] <- popN args 1
-               return (ThrowError e)
+               return $! ThrowError e
 
 --------------------------------------------------------------------------------
 -- Stack push functions
@@ -969,7 +969,7 @@ lua_pcallk_hs l tid r narg nresult msgh ctx k out =
          where
          tabs = machMetatablesRef (vmMachineEnv vm)
          afterResolve (f',xs') =
-           return (FunCall f' xs' (Just hdlr) ifOK)
+           return $! FunCall f' xs' (Just hdlr) ifOK
 
          ifOK rs =
            do traverse_ (push args)
@@ -1239,9 +1239,10 @@ lua_yieldk_hs l tid r nResults ctx func =
        n <- SV.size stack
        SV.shrink stack n
        traverse_ (push stack) outputs
-       return $ Yield $
+       return $ Yield $!
             if nullFunPtr == func
-                then FunReturn <$> stackToList stack
+                then do xs <- stackToList stack
+                        return $! FunReturn xs
                 else do let token = unsafeForeignPtrToPtr (threadCPtr (referenceVal tRef))
                         putMVar (machCServer (vmMachineEnv vm))
                                 (CCallback (capi_entryk ctx func luaYIELD token))

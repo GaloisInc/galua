@@ -165,10 +165,11 @@ execute !vm !pc =
        OP_TAILCALL a b _c ->
          do u       <- get eenv a
             args    <- getCallArguments eenv (plusReg a 1) b
-            let after (f,as) = return (FunTailcall f as)
+            let after (f,as) = return $! FunTailcall f as
             resolveFunction tabs after u args
 
-       OP_RETURN a c -> FunReturn <$> getCallArguments eenv a c
+       OP_RETURN a c -> do vs <- getCallArguments eenv a c
+                           return $! FunReturn vs
 
        OP_FORLOOP a sBx ->
           get eenv a             >>= \v1 ->
