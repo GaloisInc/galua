@@ -319,6 +319,7 @@ forloopAsNumber label v cont =
   case valueNumber v of
     Just n  -> cont n
     Nothing -> luaError' ("'for' " ++ label ++ " must be a number")
+{-# INLINE forloopAsNumber #-}
 
 
 ------------------------------------------------------------------------
