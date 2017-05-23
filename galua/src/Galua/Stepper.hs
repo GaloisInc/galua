@@ -9,7 +9,6 @@ module Galua.Stepper
   , oneStep', Cont(..)
   ) where
 
-import           Control.Monad ((<=<))
 import           Control.Concurrent
 import           Control.Concurrent.STM (atomically, takeTMVar)
 import           Data.IORef
