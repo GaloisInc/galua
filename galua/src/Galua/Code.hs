@@ -48,8 +48,6 @@ import qualified Language.Lua.Bytecode.Pretty as BC
 import qualified Language.Lua.Bytecode.Parser as BC
 import qualified Language.Lua.Bytecode.Debug as BC
 
-import           Data.Coerce
-
 import Galua.Pretty
 import Galua.Util.String(unpackUtf8)
 import {-# SOURCE #-} qualified Galua.Micro.Translate as Micro
@@ -121,16 +119,20 @@ newtype Reg = Reg Int
 
 plusReg :: Reg -> Int -> Reg
 plusReg (Reg r) i = Reg (r+i)
+{-# INLINE plusReg #-}
 
 -- | @plusReg a (regDiff a b) == b@
 regDiff :: Reg -> Reg -> Int
 regDiff (Reg a) (Reg b) = b - a
+{-# INLINE regDiff #-}
 
 regRange :: Reg -> Int -> [Reg]
-regRange = coerce BC.regRange
+regRange r n = [ plusReg r i | i <- take n [ 0 .. ] ]
+{-# INLINE regRange #-}
 
 regFromTo :: Reg -> Reg -> [Reg]
-regFromTo (Reg reg1) (Reg regN) = coerce [reg1 .. regN]
+regFromTo (Reg reg1) (Reg regN) = [ Reg r | r <- [ reg1 .. regN ] ]
+{-# INLINE regFromTo #-}
 
 newtype UpIx = UpIx Int
   deriving (Eq, Ord, Show)
