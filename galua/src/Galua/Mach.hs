@@ -321,9 +321,8 @@ execApiCall env =
 
 
 
-data ExtraStack = StackExact          -- ^ No changes to the stack
-                | StackMinus !Int     -- ^ Ignore the last registers
-                | StackPlus ![Value]  -- ^ Some additional values
+data VarResults = NoVarResults
+                | VarResults !Reg ![Value]
 
 
 -- | Execution environment for a Lua function
@@ -331,10 +330,8 @@ data LuaExecEnv = LuaExecEnv
   { luaExecRegs     :: {-# UNPACK #-} !(IOVector (IORef Value))
     -- ^ local variables
 
-  , luaExecExtraRes :: {-# UNPACK #-} !(IORef ExtraStack)
-    -- ^ overflow/underflow space for function results
-
   , luaExecVarargs  :: {-# UNPACK #-} !(IORef [Value])
+  , luaExecVarress  :: {-# UNPACK #-} !(IORef VarResults)
 
   , luaExecUpvals   :: {-# UNPACK #-} !(IOVector (IORef Value))
   , luaExecCode     :: {-# UNPACK #-} !(Vector OpCode)

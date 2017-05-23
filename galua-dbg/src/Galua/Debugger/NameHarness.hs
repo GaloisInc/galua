@@ -141,11 +141,11 @@ execEnvForCompiledStatment globals env stat =
                 ExecInLua lenv -> return $! luaExecVarargs lenv
                 ExecInC {}    -> newIORef []
 
-     extra <- newIORef StackExact
+     vrs <- newIORef NoVarResults
 
      return $! ExecInLua LuaExecEnv
         { luaExecRegs     = stack
-        , luaExecExtraRes = extra
+        , luaExecVarress  = vrs
         , luaExecUpvals   = ups
         , luaExecVarargs  = vas
         , luaExecCode     = funcCode (csFunc stat)

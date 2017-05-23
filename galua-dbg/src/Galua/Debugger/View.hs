@@ -817,7 +817,7 @@ exportCExecEnv funs eid env@CExecEnv
 exportLuaExecEnv :: Chunks -> Int -> ExecEnvId -> LuaExecEnv -> ExportM JS.Value
 exportLuaExecEnv funs pc eid
   env@LuaExecEnv { luaExecRegs = execStack
-                 , luaExecExtraRes = extras
+                 , luaExecVarress = vrRef
                 , luaExecUpvals = execUpvals
                 , luaExecFID = fid
                 , luaExecFunction = fun
@@ -828,11 +828,10 @@ exportLuaExecEnv funs pc eid
                           forM [0..end-1] $ \i ->
                             readIORef =<< IOVector.unsafeRead execStack i
 
-                   stackMod <- readIORef extras
-                   case stackMod of
-                     StackExact -> upTo n
-                     StackMinus m -> upTo (n - m)
-                     StackPlus vs -> (++ vs) <$> upTo n
+                   vrs <- readIORef vrRef
+                   case vrs of
+                     NoVarResults -> upTo n
+                     VarResults (Reg c) vs -> (++ vs) <$> upTo c
 
      let code      = Just (exportFun funs (Just pc) (Just eid) fid)
          locNames  = lookupLocalName fun pc . Reg

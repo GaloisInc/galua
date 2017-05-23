@@ -231,26 +231,15 @@ execute !vm !pc =
                   setTab i =<< get eenv (plusReg a i)
 
               CountTop ->
-                do let Reg aval = a
-                       count    = IOVector.length (luaExecRegs eenv) - aval - 1
-
-                   stackMode <- atomicModifyIORef' (luaExecExtraRes eenv) $
-                                  \vs -> (StackExact, vs)
-
-                   case stackMode of
-                     StackExact ->
-                       forM_ [1..count] $ \i ->
-                         setTab i =<< (get eenv (plusReg a i))
-
-                     StackMinus n ->
-                       forM_ [1..count - n] $ \i ->
-                         setTab i =<< (get eenv (plusReg a i))
-
-                     StackPlus vs ->
-                        do forM_ [1..count] $ \i ->
-                             setTab i =<< (get eenv (plusReg a i))
-                           zipWithM_ setTab [count+1 ..] vs
-
+                do vrs <- readIORef (luaExecVarress eenv)
+                   case vrs of
+                     NoVarResults -> interpThrow MissingVarResults
+                     VarResults c vs ->
+                       do let count = regDiff a c - 1
+                          forM_ [1..count] $ \i ->
+                             setTab i =<< get eenv (plusReg a i)
+                          zipWithM_ setTab [count+1 ..] vs
+                          writeIORef (luaExecVarress eenv) NoVarResults
             jump skip
 
        OP_CLOSURE tgt ix cloFunc ->
@@ -276,22 +265,17 @@ getCallArguments eenv a b =
   case b of
     CountInt x -> traverse (get eenv) (regRange a x)
     CountTop ->
-      do let lastRegIx = IOVector.length (luaExecRegs eenv) - 1
-         stackMod <- atomicModifyIORef' (luaExecExtraRes eenv) $
-                                                      \vs -> (StackExact, vs)
-         case stackMod of
-
-           StackExact ->
-             traverse (get eenv) (regFromTo a (Reg lastRegIx))
-
-           StackMinus n ->
-             traverse (get eenv) (regFromTo a (Reg (lastRegIx - n)))
-
-           StackPlus vs ->
-             do as <- traverse (get eenv) (regFromTo a (Reg lastRegIx))
-                return (as ++ vs)
-
-
+      do vrs <- readIORef (luaExecVarress eenv)
+         case vrs of
+           NoVarResults -> interpThrow MissingVarResults
+           VarResults c vs
+             | a < c ->
+                  do xs <- traverse (get eenv) (regFromTo a (plusReg c (-1)))
+                     writeIORef (luaExecVarress eenv) NoVarResults
+                     return $! xs ++ vs
+             | otherwise ->
+                  do writeIORef (luaExecVarress eenv) NoVarResults
+                     return vs
 
 -- | Stores a list of results into a given register range.
 -- When expected is 'CountTop', values are stored up to TOP
@@ -307,20 +291,10 @@ setCallResults eenv a b xs =
     CountInt count ->
       zipWithM_ (set eenv) (regRange a count) (xs ++ repeat Nil)
     CountTop ->
-      do let Reg base        = a
-             hereNum         = IOVector.length (luaExecRegs eenv) - base
-             (here,overflow) = splitAt hereNum xs
-             actualNum       = length here
-
-         zipWithM_ (set eenv) (regRange a hereNum) here
-
-         case compare actualNum hereNum of
-           LT -> do let under = hereNum - actualNum
-                    forM_ (regRange (plusReg a actualNum) under)
-                      $ \r -> set eenv r Nil
-                    writeIORef (luaExecExtraRes eenv) (StackMinus under)
-           EQ -> writeIORef (luaExecExtraRes eenv) StackExact
-           GT -> writeIORef (luaExecExtraRes eenv) $! StackPlus overflow
+      do writeIORef (luaExecVarress eenv) $! VarResults a xs
+         let end = Reg (IOVector.length (luaExecRegs eenv) - 1)
+         for_ (regFromTo a end) $ \(Reg i) ->
+           IOVector.unsafeWrite (luaExecRegs eenv) i =<< newIORef Nil
 
 
 
@@ -328,12 +302,13 @@ setCallResults eenv a b xs =
 -- `TOP` of the stack
 {-# INLINE closeStack #-}
 closeStack :: LuaExecEnv -> Reg {- ^ start -} -> IO ()
-closeStack eenv (Reg a) =
+closeStack eenv start =
   do let regs = luaExecRegs eenv
-     -- Technically, if the stack mod is "underflow" we could only go up
-     -- to there, but it doesn't hurt to just go all the way, which is
-     -- probably the common case anyway.
-     for_ [a .. IOVector.length regs - 1] $ \i ->
+     vrs <- readIORef (luaExecVarress eenv)
+     let end = case vrs of
+                 NoVarResults   -> Reg (IOVector.length regs - 1)
+                 VarResults b _ -> plusReg b (-1)
+     for_ (regFromTo start end) $ \(Reg i) ->
        IOVector.unsafeWrite regs i =<< newIORef Nil
 
 -- | Interpret a value as an input to a for-loop. If the value
@@ -425,6 +400,7 @@ data InterpreterFailureType
   = UnexpectedExtraArg
   | SetListNeedsTable
   | ExecuteLuaWhileInC
+  | MissingVarResults
   deriving (Show)
 
 instance Show InterpreterFailure where

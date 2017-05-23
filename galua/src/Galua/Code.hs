@@ -8,6 +8,7 @@ module Galua.Code
   , UpIx(..)
   , Reg(..)
   , plusReg
+  , regDiff
   , Kst
   , RK(..)
   , Count(..)
@@ -120,6 +121,10 @@ newtype Reg = Reg Int
 
 plusReg :: Reg -> Int -> Reg
 plusReg (Reg r) i = Reg (r+i)
+
+-- | @plusReg a (regDiff a b) == b@
+regDiff :: Reg -> Reg -> Int
+regDiff (Reg a) (Reg b) = b - a
 
 regRange :: Reg -> Int -> [Reg]
 regRange = coerce BC.regRange

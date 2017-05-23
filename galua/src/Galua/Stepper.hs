@@ -370,13 +370,13 @@ enterClosure vm c vs =
                            Vector.thaw (Vector.fromListN n refs)
 
             vasRef   <- newIORef varargs
-            extraRef <- newIORef StackExact
+            vrsRef   <- newIORef NoVarResults
 
             let eenv = ExecInLua LuaExecEnv
                          { luaExecRegs      = stack
-                         , luaExecExtraRes  = extraRef
                          , luaExecUpvals    = cloUpvalues
                          , luaExecVarargs   = vasRef
+                         , luaExecVarress   = vrsRef
                          , luaExecCode      = funcCode f
                          , luaExecClosure   = Closure  c
                          , luaExecFID       = fid
