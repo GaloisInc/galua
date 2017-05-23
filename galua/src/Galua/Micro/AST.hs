@@ -36,10 +36,33 @@ data ListReg    = ArgReg  -- ^ Function arguments, var-args in particualr
                 | ListReg -- ^ Function results, mostly(?)
                   deriving (Eq,Ord,Show)
 
-data BlockName  = PCBlock !Int
+data BlockName  = EntryBlock
+                | PCBlock !Int
                 | NewBlock !Int !Int
-                | EntryBlock
-                  deriving (Eq,Ord,Show)
+                  deriving (Eq,Show)
+
+instance Ord BlockName where
+  compare EntryBlock EntryBlock = EQ
+  compare EntryBlock _          = LT
+  compare _ EntryBlock          = GT
+
+  compare (PCBlock x) (PCBlock y) = compare x y
+  compare (PCBlock x) (NewBlock y _) =
+    case compare x y of
+      LT -> LT
+      GT -> GT
+      EQ -> LT
+  compare (NewBlock x _) (PCBlock y) =
+    case compare x y of
+      LT -> LT
+      GT -> GT
+      EQ -> GT
+
+  compare (NewBlock x y) (NewBlock a b) = compare (x,y) (a,b)
+
+
+
+
 
 blockNamePC :: BlockName -> Int
 blockNamePC pc =
@@ -202,6 +225,11 @@ funcUpvalExprs = map toExpr . Vector.toList . Code.funcUpvalues
 
 
 --------------------------------------------------------------------------------
+
+instance Pretty MicroFunction where
+  pp = vcat . map sh . Map.toList . functionCode
+    where
+    sh (x,vs) = pp x <> colon $$ nest 2 (vcat (map pp (Vector.toList vs))) $$ text " "
 
 instance Pretty Reg where
   pp reg =
