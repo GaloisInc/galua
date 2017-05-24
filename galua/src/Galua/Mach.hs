@@ -98,17 +98,19 @@ data NextStep
   = Goto {-# UNPACK #-} !Int
     -- ^ Continue executing this function at a new address
 
-  | FunCall {-# UNPACK #-} !(Reference Closure) ![Value]   -- call this
-            !(Maybe Handler)               -- using this handler
-            !([Value] -> IO NextStep)      -- result goes here
+  | FunCall {-# UNPACK #-} !(Reference Closure) -- call this
+            {-# UNPACK #-} !(Vector Value)      -- using these arguments
+            !(Maybe Handler)                    -- using this handler
+            !(Vector Value -> IO NextStep)      -- result goes here
 
-  | FunReturn ![Value]
+  | FunReturn {-# UNPACK #-} !(Vector Value)
     -- ^ Function execution succeeded with results
 
   | ErrorReturn !Value
     -- ^ Function execution succeeded with results
 
-  | FunTailcall {-# UNPACK #-} !(Reference Closure) ![Value]
+  | FunTailcall {-# UNPACK #-} !(Reference Closure)
+                {-# UNPACK #-} !(Vector Value)
     -- ^ Call a function and return its result
 
   | ThrowError !Value
@@ -123,7 +125,7 @@ data NextStep
 
   | Yield !(IO NextStep)
 
-  | ThreadExit ![Value]
+  | ThreadExit {-# UNPACK #-} !(Vector Value)
   | ThreadFail !Value
 
   | ApiStart !ApiCall !(IO NextStep)
@@ -162,7 +164,7 @@ data StackFrame
   | CallFrame Int -- PC
               ExecEnv
               (Maybe (Value -> IO NextStep)) -- Error
-              ([Value] -> IO NextStep) -- Normal
+              (Vector Value -> IO NextStep) -- Normal
 
 
 data Thread = MkThread
@@ -210,7 +212,7 @@ isThreadRunning _             = False
 
 data ThreadResult
   = ThreadYield                 -- ^ The resumed thread yielded back to us.
-  | ThreadReturn [Value]        -- ^ The resuemd thread completed normally.
+  | ThreadReturn (Vector Value) -- ^ The resuemd thread completed normally.
   | ThreadError Value           -- ^ The resumed thread crashed.
 
 
@@ -608,7 +610,7 @@ chunkToClosure vm name bytes env =
   parser | luaSignature `B.isPrefixOf` bytes = parseLuaBytecode name bytesL
          | otherwise                         = parseLua name bytesL
 
-activateThread :: Reference Closure -> [Value] -> Reference Thread -> IO ()
+activateThread :: Reference Closure -> Vector Value -> Reference Thread -> IO ()
 activateThread cRef vs tRef =
   setThreadField threadStatus tRef
       (ThreadSuspended (return (FunCall cRef vs Nothing (return . FunReturn))))

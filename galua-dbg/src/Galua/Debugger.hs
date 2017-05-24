@@ -877,7 +877,7 @@ executeStatement dbg frame statement =
                    let stat = Text.unpack statement
                    (next',vm') <-
                       executeStatementInContext vm pc env stat $ \vs ->
-                        Interrupt next <$ recordConsoleValues vs
+                        Interrupt next <$ recordConsoleValues (Vector.toList vs)
                    writeIORef (dbgStateVM dbg) (Running vm' next')
 
               runNonBlock dbg

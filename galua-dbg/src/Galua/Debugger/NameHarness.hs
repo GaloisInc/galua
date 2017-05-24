@@ -16,6 +16,7 @@ import           Data.List (unfoldr, mapAccumR, intercalate)
 import           Data.Maybe (catMaybes)
 import           Data.Set (Set)
 import qualified Data.Set as Set
+import           Data.Vector ( Vector )
 import qualified Data.Vector as Vector
 import           Data.Vector.Mutable (IOVector)
 import qualified Data.Vector.Mutable as IOVector
@@ -216,7 +217,7 @@ executeCompiledStatment ::
   VM                  {- ^ For globals, and the currently executing thread -} ->
   ExecEnv             {- ^ Lookup free variables here -} ->
   CompiledStatment    {- ^ "Code pointer" -} ->
-  ([Value] -> IO NextStep) {- ^ Do this when we return -} ->
+  (Vector Value -> IO NextStep) {- ^ Do this when we return -} ->
   IO (NextStep, VM)
 executeCompiledStatment vm cenv cs resume =
   do globRef <- newIORef (Table (machGlobals (vmMachineEnv vm)))
@@ -228,7 +229,7 @@ executeCompiledStatment vm cenv cs resume =
      thStack    <- getThreadField stStack th
      thHandlers <- getThreadField stHandlers th
 
-     let recover e  = resume [e]
+     let recover e  = resume (Vector.singleton e)
          frame      = CallFrame thPc thEnv (Just recover) resume
 
      setThreadField stExecEnv th env
@@ -241,14 +242,15 @@ executeCompiledStatment vm cenv cs resume =
 
 
 executeStatementInContext ::
-  VM -> Int -> ExecEnv -> String -> ([Value] -> IO NextStep) -> IO (NextStep,VM)
+  VM -> Int -> ExecEnv -> String -> (Vector Value -> IO NextStep) ->
+                                                          IO (NextStep,VM)
 executeStatementInContext vm pc env statement resume =
   do let fun = funValueCode (execFun env)
      res <- try (compileStatementForLocation fun pc statement)
      case res of
        Left (ParseError e) ->
           do b <- fromByteString (B8.pack e)
-             next <- resume [String b]
+             next <- resume (Vector.singleton (String b))
              return (next, vm)
        Right cs -> executeCompiledStatment vm env cs resume
 

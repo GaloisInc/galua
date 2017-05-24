@@ -12,6 +12,7 @@ import           Control.Concurrent
 import           Data.Traversable
 import           Data.IORef
 import           Foreign.Ptr
+import qualified Data.Vector as Vector
 
 execCFunction :: Ptr () -> MVar CNextStep -> CFunName -> IO NextStep
 execCFunction l mvar cfun =
@@ -44,5 +45,6 @@ returnFromC vm n =
   do let stack = execCStack (vmCurExecEnv vm)
      FunReturn <$>
        do sz <- SV.size stack
-          for [ sz - n .. sz - 1 ] $ \i -> SV.get stack i
+          rs <- for [ sz - n .. sz - 1 ] $ \i -> SV.get stack i
+          return $! Vector.fromList rs
 

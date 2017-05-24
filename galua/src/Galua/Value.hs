@@ -66,6 +66,8 @@ import           Data.ByteString (ByteString)
 import           Data.Function(on)
 import           Data.IORef
 import           Data.Vector.Mutable (IOVector)
+import           Data.Vector ( Vector )
+import qualified Data.Vector as Vector
 import           GHC.Generics (Generic)
 import           Foreign.Ptr (FunPtr, Ptr,ptrToIntPtr)
 import           Foreign.ForeignPtr (ForeignPtr)
@@ -290,9 +292,8 @@ valueString v =
 -- | Trim a list of values down to the first value.
 -- The empty list is replaced with 'Nil'
 {-# INLINE trimResult1 #-}
-trimResult1 :: [Value] -> Value
-trimResult1 [] = Nil
-trimResult1 (x:_) = x
+trimResult1 :: Vector Value -> Value
+trimResult1 vs = if Vector.null vs then Nil else Vector.unsafeHead vs
 
 --------------------------------------------------------------------------------
 

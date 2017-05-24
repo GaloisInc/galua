@@ -938,13 +938,10 @@ lua_callk_hs l tid r narg nresult ctx k =
        f:xs ->
          do let tabs = machMetatablesRef (vmMachineEnv vm)
                 after rs =
-                  do traverse_ (push args)
-                       $ if nresult == lua_multret
-                           then rs
-                           else take (fromIntegral nresult) (rs ++ repeat Nil)
+                  do traverse_ (push args) (padTo (fromIntegral nresult) rs)
                      noResult
 
-            m__call tabs after f xs
+            m__call tabs after f (Vector.fromList xs)
 
        _ -> luaError' "lua_callk: invalid narg"
 
@@ -965,7 +962,7 @@ lua_pcallk_hs l tid r narg nresult msgh ctx k out =
      fxs <- popN args (fromIntegral narg + 1)
      case fxs of
        [] -> luaError' "lua_pcallk: invalid narg"
-       f:xs -> resolveFunction tabs afterResolve f xs
+       f:xs -> resolveFunction tabs afterResolve f (Vector.fromList xs)
          where
          tabs = machMetatablesRef (vmMachineEnv vm)
          afterResolve (f',xs') =
@@ -975,7 +972,7 @@ lua_pcallk_hs l tid r narg nresult msgh ctx k out =
            do traverse_ (push args)
                 $ if nresult == lua_multret
                     then rs
-                    else take (fromIntegral nresult) (rs ++ repeat Nil)
+                    else padTo (fromIntegral nresult) rs
               result out luaOK
 
          ifErr e =
@@ -987,7 +984,12 @@ lua_pcallk_hs l tid r narg nresult msgh ctx k out =
                  , handlerK = ifErr
                  }
 
-
+padTo :: Int -> Vector Value -> Vector Value
+padTo n vs = case compare n l of
+               LT -> Vector.take n vs
+               EQ -> vs
+               GT -> vs Vector.++ Vector.replicate (n - l) Nil
+  where l = Vector.length vs
 
 
 ------------------------------------------------------------------------
@@ -1201,7 +1203,7 @@ lua_resume_hs l tid r from nargs out =
                closure <- functionArgument vm (-1) args
                void (pop args)
 
-               activateThread closure resumeArgs tRef
+               activateThread closure (Vector.fromList resumeArgs) tRef
                doResume tRef args
 
          _ -> do e <- fromByteString "Thread not resumable"
@@ -1217,7 +1219,7 @@ lua_resume_hs l tid r from nargs out =
       case res of
         ThreadReturn rs ->
           do eenv <- getThreadField stExecEnv tRef
-             stackFromList (execCStack eenv) rs
+             stackFromList (execCStack eenv) (Vector.toList rs)
              result out luaOK
 
         ThreadYield -> result out luaYIELD
@@ -1242,7 +1244,7 @@ lua_yieldk_hs l tid r nResults ctx func =
        return $ Yield $!
             if nullFunPtr == func
                 then do xs <- stackToList stack
-                        return $! FunReturn xs
+                        return $! FunReturn (Vector.fromList xs)
                 else do let token = unsafeForeignPtrToPtr (threadCPtr (referenceVal tRef))
                         putMVar (machCServer (vmMachineEnv vm))
                                 (CCallback (capi_entryk ctx func luaYIELD token))

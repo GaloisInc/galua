@@ -13,6 +13,7 @@ import           Control.Concurrent
 import           Control.Concurrent.STM (atomically, takeTMVar)
 import           Data.IORef
 import           Data.Foldable (traverse_)
+import           Data.Vector ( Vector )
 import qualified Data.Vector as Vector
 import           Foreign.ForeignPtr
 
@@ -94,7 +95,7 @@ performTailCall ::
   Cont r ->
   VM                {- ^ current vm state -} ->
   Reference Closure {- ^ closure to enter -} ->
-  [Value]           {- ^ arguments        -} ->
+  (Vector Value)    {- ^ arguments        -} ->
   IO r
 performTailCall c vm f vs =
   do (newEnv, start) <- enterClosure vm f vs
@@ -112,9 +113,9 @@ performFunCall ::
   Cont r ->
   VM                    {- ^ current vm state       -} ->
   Reference Closure     {- ^ closure to enter       -} ->
-  [Value]               {- ^ arguments              -} ->
+  (Vector Value)        {- ^ arguments              -} ->
   Maybe Handler         {- ^ optional error handler -} ->
-  ([Value] -> IO NextStep) {- ^ return continuation    -} ->
+  (Vector Value -> IO NextStep) {- ^ return continuation    -} ->
   IO r
 performFunCall c vm f vs mb k =
   do (newEnv, start) <- enterClosure vm f vs
@@ -137,10 +138,10 @@ performFunCall c vm f vs mb k =
 
 
 
-performThreadExit :: Cont r -> VM -> [Value] -> IO r
+performThreadExit :: Cont r -> VM -> Vector Value -> IO r
 performThreadExit c vm vs =
   case Stack.pop (vmBlocked vm) of
-    Nothing      -> finishedOk c vs
+    Nothing      -> finishedOk c (Vector.toList vs)
     Just (t, ts) ->
       do setThreadField threadStatus (vmCurThread vm) ThreadNew
          eenv <- getThreadField stExecEnv t
@@ -153,7 +154,7 @@ performThreadExit c vm vs =
 -- on the stack. In the case that the next frame is an error marker, it
 -- begins unwinding the stack until a suitable handler is found.
 {-# INLINE performFunReturn #-}
-performFunReturn :: Cont r -> VM -> [Value] -> IO r
+performFunReturn :: Cont r -> VM -> Vector Value -> IO r
 performFunReturn c vm vs =
   do let th = vmCurThread vm
 
@@ -213,7 +214,7 @@ performThrowError c vm e =
        FunHandler x : _ ->
          do stack <- getThreadField stStack th
             setThreadField stStack th (Stack.push ErrorFrame stack)
-            running c vm (FunTailcall x [e])
+            running c vm (FunTailcall x (Vector.singleton e))
 
        DefaultHandler : _ -> running c vm (ErrorReturn e)
 
@@ -350,9 +351,10 @@ consMb (Just x) xs = x : xs
 
 
 enterClosure ::
-  VM -> Reference Closure -> [Value] -> IO (ExecEnv, IO NextStep)
-enterClosure vm c vs =
+  VM -> Reference Closure -> Vector Value -> IO (ExecEnv, IO NextStep)
+enterClosure vm c vs0 =
   do let MkClosure { cloFun, cloUpvalues } = referenceVal c
+         vs = Vector.toList vs0
      case cloFun of
 
        LuaFunction fid f ->

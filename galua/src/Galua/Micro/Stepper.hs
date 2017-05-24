@@ -4,6 +4,7 @@ module Galua.Micro.Stepper (runClosure) where
 import           Data.Vector(Vector)
 import           Data.Vector.Mutable (IOVector)
 import qualified Data.Vector.Mutable as IOVector
+import qualified Data.Vector as Vector
 import qualified Data.Map as Map
 import           Data.IORef(IORef,newIORef)
 
@@ -26,13 +27,13 @@ run opCodeNum aref frame block pc =
           Nothing       -> crash ("Missing block: " ++ show b)
 
        MakeCall clo args -> return $!
-         FunCall clo args Nothing $ \vs ->
-           do setListReg frame vs
+         FunCall clo (Vector.fromList args) Nothing $ \vs ->
+           do setListReg frame (Vector.toList vs)
               run opCodeNum aref frame block (pc + 1)
 
-       MakeTailCall clo args -> return $! FunTailcall clo args
+       MakeTailCall clo args -> return $! FunTailcall clo (Vector.fromList args)
        RaiseError v          -> return $! ThrowError v
-       ReturnWith vs         -> return $! FunReturn vs
+       ReturnWith vs         -> return $! FunReturn (Vector.fromList vs)
 
 
 

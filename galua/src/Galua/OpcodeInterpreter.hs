@@ -158,18 +158,18 @@ execute !vm !pc =
        OP_CALL a b c ->
          do u      <- get eenv a
             args   <- getCallArguments eenv (plusReg a 1) b
-            let after result = do setCallResults eenv a c result
+            let after result = do setCallResults eenv a c (Vector.toList result)
                                   advance
-            m__call tabs after u args
+            m__call tabs after u (Vector.fromList args)
 
        OP_TAILCALL a b _c ->
          do u       <- get eenv a
             args    <- getCallArguments eenv (plusReg a 1) b
             let after (f,as) = return $! FunTailcall f as
-            resolveFunction tabs after u args
+            resolveFunction tabs after u (Vector.fromList args)
 
        OP_RETURN a c -> do vs <- getCallArguments eenv a c
-                           return $! FunReturn vs
+                           return $! FunReturn (Vector.fromList vs)
 
        OP_FORLOOP a sBx ->
           get eenv a             >>= \v1 ->
@@ -206,9 +206,10 @@ execute !vm !pc =
             a1 <- get eenv (plusReg a 1)
             a2 <- get eenv (plusReg a 2)
             let after result =
-                 do setCallResults eenv (plusReg a 3) (CountInt c) result
+                 do setCallResults eenv (plusReg a 3) (CountInt c)
+                                                        (Vector.toList result)
                     advance
-            m__call tabs after f [a1,a2]
+            m__call tabs after f (Vector.fromListN 2 [a1,a2])
 
        OP_TFORLOOP a sBx ->
          do v <- get eenv (plusReg a 1)
