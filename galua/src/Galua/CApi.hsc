@@ -8,7 +8,6 @@ import Control.Concurrent (MVar, takeMVar, putMVar)
 import Control.Concurrent.STM (TMVar, atomically, putTMVar)
 import Control.Exception(catch,SomeException(..),throwIO,try,displayException)
 import Control.Monad (replicateM_,when,unless)
-import Control.Monad.IO.Class
 import Data.Int
 import Data.IORef
 import Data.Foldable (toList, for_, traverse_)
@@ -153,19 +152,11 @@ push :: SV.SizedVector a -> a -> IO ()
 push = SV.push
 
 pop :: SV.SizedVector Value -> IO Value
-pop stack =
-  do vs <- popN stack 1
-     case vs of
-       [v] -> return v
-       _   -> throwIO (LuaX "missing argument")
+pop stack = SV.pop stack `catch`
+              \SomeException{} -> throwIO (LuaX "missing args")
 
-popN :: SV.SizedVector Value -> Int -> IO [Value]
-popN stack n = liftIO $
-  do len <- SV.size stack
-     let n' = max 0 (min n len)
-     vs <- for [len-n' .. len-1] $ \i -> SV.get stack i
-     SV.shrink stack n'
-     return vs
+popN :: SV.SizedVector Value -> Int -> IO (Vector Value)
+popN = SV.popN
 
 stackToList :: SV.SizedVector a -> IO [a]
 stackToList stack =
@@ -232,11 +223,7 @@ foreign export ccall lua_error_hs :: EntryPoint (IO CInt)
 
 lua_error_hs :: EntryPoint (IO CInt)
 lua_error_hs l tid r = reentryG "lua_error" [] l tid r $ \_ args ->
-  do n <- SV.size args
-     if n == 0
-       then return (ThrowError Nil)
-       else do [e] <- popN args 1
-               return $! ThrowError e
+  ThrowError <$> (pop args `catch` \SomeException{} -> return Nil)
 
 --------------------------------------------------------------------------------
 -- Stack push functions
@@ -334,7 +321,7 @@ lua_pushcclosure_hs l tid r func nup =
   reentryG "lua_pushcclosure" [cArg func, cArg nup] l tid r $ \vm args ->
   do upvals <- popN args (fromIntegral nup)
      info   <- machLookupCFun vm func
-     vs     <- Vector.thaw =<< traverse newIORef (Vector.fromList upvals)
+     vs     <- Vector.thaw =<< traverse newIORef upvals
      c      <- machNewClosure vm (cFunction CFunName { cfunName = info
                                                      , cfunAddr = func}) vs
      push args (Closure c)
@@ -466,9 +453,12 @@ lua_settable_hs l tid r ix =
   reentryG "lua_settable" [cArg ix] l tid r $ \vm args ->
   do t  <- valueArgument vm (fromIntegral ix) args
      kv <- popN args 2
-     case kv of
-       [k,v] -> m__newindex (machMetatablesRef (vmMachineEnv vm)) noResult t k v
-       _ -> luaError' "lua_settable: bad arguments"
+     if Vector.length kv /= 2
+       then luaError' "lua_settable: bad arguments"
+        else
+          let k = Vector.unsafeIndex kv 0
+              v = Vector.unsafeIndex kv 1
+          in m__newindex (machMetatablesRef (vmMachineEnv vm)) noResult t k v
 
 --------------------------------------------------------------------------------
 
@@ -748,12 +738,16 @@ lua_rawset_hs l tid r ix =
   reentryG "lua_rawset" [cArg ix] l tid r $ \vm args ->
   do t <- tableArgument vm (fromIntegral ix) args
      kv <- popN args 2
-     case kv of
-       [Number (Double nan),_] | isNaN nan
-                -> luaError' "Invalid table index NaN"
-       [Nil,_]  -> luaError' "Invalid table index nil"
-       [k,v]    -> setTableRaw t k v >> noResult
-       _        -> luaError' "lua_rawset: missing arguments"
+     if Vector.length kv /= 2
+       then luaError' "lua_rawset: missing arguments"
+       else
+         let k = Vector.unsafeIndex kv 0
+             v = Vector.unsafeIndex kv 1
+         in case k of
+              Number (Double nan) | isNaN nan
+                  -> luaError' "Invalid table index NaN"
+              Nil -> luaError' "Invalid table index nil"
+              _   -> setTableRaw t k v >> noResult
 
 foreign export ccall lua_seti_hs
   :: EntryPoint (CInt -> Lua_Integer -> IO CInt)
@@ -934,16 +928,17 @@ lua_callk_hs l tid r narg nresult ctx k =
      "lua_callk" [cArg narg, cArg nresult, cArg ctx, cArg k] l tid r $
   \vm args ->
   do fxs <- popN args (fromIntegral narg + 1)
-     case fxs of
-       f:xs ->
-         do let tabs = machMetatablesRef (vmMachineEnv vm)
-                after rs =
-                  do traverse_ (push args) (padTo (fromIntegral nresult) rs)
-                     noResult
+     if Vector.null fxs
+       then luaError' "lua_callk: invalid narg"
+       else
+         let f    = Vector.unsafeHead fxs
+             xs   = Vector.tail fxs
+             tabs = machMetatablesRef (vmMachineEnv vm)
+             after rs =
+               do traverse_ (push args) (padTo (fromIntegral nresult) rs)
+                  noResult
 
-            m__call tabs after f (Vector.fromList xs)
-
-       _ -> luaError' "lua_callk: invalid narg"
+         in m__call tabs after f xs
 
 
 type ApiLuaPcallk = EntryPoint
@@ -960,29 +955,31 @@ lua_pcallk_hs l tid r narg nresult msgh ctx k out =
             then return DefaultHandler
             else FunHandler <$> functionArgument vm (fromIntegral msgh) args
      fxs <- popN args (fromIntegral narg + 1)
-     case fxs of
-       [] -> luaError' "lua_pcallk: invalid narg"
-       f:xs -> resolveFunction tabs afterResolve f (Vector.fromList xs)
-         where
-         tabs = machMetatablesRef (vmMachineEnv vm)
-         afterResolve (f',xs') =
-           return $! FunCall f' xs' (Just hdlr) ifOK
+     if Vector.null fxs
+        then luaError' "lua_pcallk: invalid narg"
+        else
+          let f    = Vector.unsafeHead fxs
+              xs   = Vector.tail fxs
+              tabs = machMetatablesRef (vmMachineEnv vm)
+              afterResolve (f',xs') = return $! FunCall f' xs' (Just hdlr) ifOK
 
-         ifOK rs =
-           do traverse_ (push args)
-                $ if nresult == lua_multret
-                    then rs
-                    else padTo (fromIntegral nresult) rs
-              result out luaOK
+              ifOK rs =
+                do traverse_ (push args)
+                     $ if nresult == lua_multret
+                         then rs
+                         else padTo (fromIntegral nresult) rs
+                   result out luaOK
 
-         ifErr e =
-           do push args e
-              result out luaERRRUN
+              ifErr e =
+                do push args e
+                   result out luaERRRUN
 
-         hdlr = Handler
-                 { handlerType = h
-                 , handlerK = ifErr
-                 }
+              hdlr = Handler
+                      { handlerType = h
+                      , handlerK = ifErr
+                      }
+
+          in resolveFunction tabs afterResolve f xs
 
 padTo :: Int -> Vector Value -> Vector Value
 padTo n vs = case compare n l of
@@ -1203,7 +1200,7 @@ lua_resume_hs l tid r from nargs out =
                closure <- functionArgument vm (-1) args
                void (pop args)
 
-               activateThread closure (Vector.fromList resumeArgs) tRef
+               activateThread closure resumeArgs tRef
                doResume tRef args
 
          _ -> do e <- fromByteString "Thread not resumable"

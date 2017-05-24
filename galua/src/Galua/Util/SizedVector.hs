@@ -5,11 +5,13 @@ module Galua.Util.SizedVector
   , newN
   , push
   , pop
+  , popN
   , size
   , shrink
   , set
   , setMaybe
   , get
+  , getLastN
   , unsafeGet
   , getMaybe
   , rotateSubset
@@ -20,6 +22,7 @@ module Galua.Util.SizedVector
 
 import Data.IORef
 import qualified Data.Vector.Mutable as IOVector
+import           Data.Vector ( Vector )
 import qualified Data.Vector as Vector
 import Data.Vector.Mutable (IOVector)
 import Data.Foldable (for_)
@@ -56,6 +59,7 @@ newN n =
      svArray <- IOVector.unsafeNew (max initialAllocation n)
      SizedVector <$> newIORef SizedVector'{..}
 
+-- | The "top" of the stack is the end
 push :: SizedVector a -> a -> IO ()
 push (SizedVector ref) x =
   do SizedVector'{..} <- readIORef ref
@@ -64,15 +68,24 @@ push (SizedVector ref) x =
             then return svArray
             else do let l = IOVector.length svArray
                     unless (l < maxBound`div`2) (failure "push: vector too big")
-                    let l' = max initialAllocation -- avoid doubling 0 due to fromList
+                    let l' = max initialAllocation
+                              -- avoid doubling 0 due to fromList
                            $ 2*IOVector.length svArray
                     IOVector.unsafeGrow svArray l'
 
      IOVector.write v svCount x
      writeIORef ref $! SizedVector' (svCount+1) v
 
-pop :: SizedVector a -> IO ()
-pop v = shrink v 1
+-- | The "top" is the end
+pop :: SizedVector a -> IO a
+pop (SizedVector ref) =
+  do SizedVector' { .. } <- readIORef ref
+     when (svCount < 1) (failure "pop: empty stack")
+     let end = svCount - 1
+     v <- IOVector.unsafeRead svArray end
+     IOVector.unsafeWrite svArray end (error "uninitialized")
+     writeIORef ref $! SizedVector' { svCount = svCount - 1, .. }
+     return v
 
 shrink :: SizedVector a -> Int -> IO ()
 shrink (SizedVector ref) n =
@@ -91,6 +104,29 @@ size (SizedVector ref) = svCount <$> readIORef ref
 
 get :: SizedVector a -> Int -> IO a
 get sv i = maybe (failure "Get: bad index") return =<< getMaybe sv i
+
+-- | Get the elements from the given index to then end (aka "top") of the stack.
+getLastN :: SizedVector a -> Int -> IO (Vector a)
+getLastN (SizedVector ref) len0 =
+  do SizedVector' { .. } <- readIORef ref
+     let len  = max 0 (min len0 svCount)
+         from = svCount - len
+     Vector.freeze (IOVector.unsafeSlice from len svArray)
+
+-- | Pop the last elements from the stack.
+popN :: SizedVector a -> Int -> IO (Vector a)
+popN (SizedVector ref) len0 =
+  do SizedVector' { .. } <- readIORef ref
+     let len  = max 0 (min len0 svCount)
+         from = svCount - len
+     v <- Vector.freeze (IOVector.unsafeSlice from len svArray)
+     for_ [ from .. svCount - 1] $ \i ->
+       IOVector.unsafeWrite svArray i (error "uninitialized")
+     writeIORef ref $! SizedVector' { svCount = svCount - len, .. }
+     return v
+
+
+
 
 unsafeGet :: SizedVector a -> Int -> IO a
 unsafeGet (SizedVector ref) i =

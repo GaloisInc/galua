@@ -9,10 +9,8 @@ import           Galua.Overloading
 import qualified Galua.Util.SizedVector as SV
 
 import           Control.Concurrent
-import           Data.Traversable
 import           Data.IORef
 import           Foreign.Ptr
-import qualified Data.Vector as Vector
 
 execCFunction :: Ptr () -> MVar CNextStep -> CFunName -> IO NextStep
 execCFunction l mvar cfun =
@@ -43,8 +41,6 @@ returnFromC ::
   IO NextStep
 returnFromC vm n =
   do let stack = execCStack (vmCurExecEnv vm)
-     FunReturn <$>
-       do sz <- SV.size stack
-          rs <- for [ sz - n .. sz - 1 ] $ \i -> SV.get stack i
-          return $! Vector.fromList rs
+     vs <- SV.getLastN stack n
+     return $! FunReturn vs
 

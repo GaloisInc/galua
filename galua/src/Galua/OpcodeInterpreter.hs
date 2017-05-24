@@ -134,7 +134,7 @@ execute !vm !pc =
 
        OP_CONCAT tgt start end ->
          do xs  <- traverse (get eenv) (regFromTo start end)
-            m__concat tabs (storeIn tgt) xs
+            m__concat tabs (storeIn tgt) (Vector.fromList xs)
 
        OP_JMP mbCloseReg jmp ->
          do traverse_ (closeStack eenv) mbCloseReg
