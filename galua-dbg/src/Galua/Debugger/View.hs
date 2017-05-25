@@ -831,7 +831,7 @@ exportLuaExecEnv funs pc eid
                    vrs <- readIORef vrRef
                    case vrs of
                      NoVarResults -> upTo n
-                     VarResults (Reg c) vs -> (++ vs) <$> upTo c
+                     VarResults (Reg c) vs -> (++ Vector.toList vs) <$> upTo c
 
      let code      = Just (exportFun funs (Just pc) (Just eid) fid)
          locNames  = lookupLocalName fun pc . Reg

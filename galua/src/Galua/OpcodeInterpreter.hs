@@ -5,6 +5,7 @@ import           Control.Exception hiding (Handler)
 import           Control.Monad
 import           Data.Foldable
 import           Data.IORef
+import           Data.Vector ( Vector )
 import qualified Data.Vector as Vector
 import qualified Data.Vector.Mutable as IOVector
 
@@ -15,6 +16,7 @@ import           Galua.Overloading
 import           Galua.Mach
 import           Galua.Number
 import           Galua.LuaString(fromByteString)
+import           GHC.Exts(inline)
 
 -- | Attempt to load the instruction stored at the given address
 -- in the currently executing function.
@@ -133,8 +135,8 @@ execute !vm !pc =
 
 
        OP_CONCAT tgt start end ->
-         do xs  <- traverse (get eenv) (regFromTo start end)
-            m__concat tabs (storeIn tgt) (Vector.fromList xs)
+         do xs  <- getRegsFromTo eenv start end
+            m__concat tabs (storeIn tgt) xs
 
        OP_JMP mbCloseReg jmp ->
          do traverse_ (closeStack eenv) mbCloseReg
@@ -158,18 +160,18 @@ execute !vm !pc =
        OP_CALL a b c ->
          do u      <- get eenv a
             args   <- getCallArguments eenv (plusReg a 1) b
-            let after result = do setCallResults eenv a c (Vector.toList result)
+            let after result = do setCallResults eenv a c result
                                   advance
-            m__call tabs after u (Vector.fromList args)
+            m__call tabs after u args
 
        OP_TAILCALL a b _c ->
          do u       <- get eenv a
             args    <- getCallArguments eenv (plusReg a 1) b
             let after (f,as) = return $! FunTailcall f as
-            resolveFunction tabs after u (Vector.fromList args)
+            resolveFunction tabs after u args
 
        OP_RETURN a c -> do vs <- getCallArguments eenv a c
-                           return $! FunReturn (Vector.fromList vs)
+                           return $! FunReturn vs
 
        OP_FORLOOP a sBx ->
           get eenv a             >>= \v1 ->
@@ -206,8 +208,7 @@ execute !vm !pc =
             a1 <- get eenv (plusReg a 1)
             a2 <- get eenv (plusReg a 2)
             let after result =
-                 do setCallResults eenv (plusReg a 3) (CountInt c)
-                                                        (Vector.toList result)
+                 do setCallResults eenv (plusReg a 3) (CountInt c) result
                     advance
             m__call tabs after f (Vector.fromListN 2 [a1,a2])
 
@@ -239,7 +240,8 @@ execute !vm !pc =
                        do let count = regDiff a c - 1
                           forM_ [1..count] $ \i ->
                              setTab i =<< get eenv (plusReg a i)
-                          zipWithM_ setTab [count+1 ..] vs
+                          forM_ (Vector.indexed vs) $ \(i,v) ->
+                             setTab (count+1+i) v
                           writeIORef (luaExecVarress eenv) NoVarResults
             jump skip
 
@@ -252,7 +254,7 @@ execute !vm !pc =
 
        OP_VARARG a b ->
          do let varargs = luaExecVarargs eenv
-            setCallResults eenv a b =<< readIORef varargs
+            setCallResults eenv a b . Vector.fromList =<< readIORef varargs
             advance
 
        OP_EXTRAARG{} -> interpThrow UnexpectedExtraArg
@@ -261,19 +263,19 @@ execute !vm !pc =
 -- | Get a list of the `count` values stored from `start`.
 {-# INLINE getCallArguments #-}
 getCallArguments ::
-  LuaExecEnv -> Reg {- ^ start -} -> Count {- ^ count -} -> IO [Value]
+  LuaExecEnv -> Reg {- ^ start -} -> Count {- ^ count -} -> IO (Vector Value)
 getCallArguments eenv a b =
   case b of
-    CountInt x -> traverse (get eenv) (regRange a x)
+    CountInt x -> getRegsFromLen eenv a x
     CountTop ->
       do vrs <- readIORef (luaExecVarress eenv)
          case vrs of
            NoVarResults -> interpThrow MissingVarResults
            VarResults c vs
              | a < c ->
-                  do xs <- traverse (get eenv) (regFromTo a (plusReg c (-1)))
+                  do xs <- getRegsFromTo eenv a (plusReg c (-1))
                      writeIORef (luaExecVarress eenv) NoVarResults
-                     return $! xs ++ vs
+                     return (xs Vector.++ vs)
              | otherwise ->
                   do writeIORef (luaExecVarress eenv) NoVarResults
                      return vs
@@ -283,14 +285,20 @@ getCallArguments eenv a b =
 {-# INLINE setCallResults #-}
 setCallResults ::
   LuaExecEnv ->
-  Reg     {- ^ starting register -} ->
-  Count   {- ^ results expected  -} ->
-  [Value] {- ^ results           -} ->
+  Reg           {- ^ starting register -} ->
+  Count         {- ^ results expected  -} ->
+  Vector Value  {- ^ results           -} ->
   IO ()
 setCallResults eenv a b xs =
   case b of
     CountInt count ->
-      zipWithM_ (set eenv) (regRange a count) (xs ++ repeat Nil)
+      do forM_ (Vector.indexed xs) $ \(i,v) ->
+           set eenv (plusReg a i) v
+         let have = inline (Vector.length xs)
+         when (have < count) $
+           forM_ [ have .. count - 1 ] $ \i ->
+             set eenv (plusReg a i) Nil
+
     CountTop ->
       do writeIORef (luaExecVarress eenv) $! VarResults a xs
          let end = Reg (IOVector.length (luaExecRegs eenv) - 1)
@@ -377,6 +385,19 @@ instance RValue RK where
   get _    (RK_Kst k) = kst k
   {-# INLINE get #-}
 
+
+{-# INLINE getRegsFromLen #-}
+getRegsFromLen :: LuaExecEnv -> Reg -> Int -> IO (Vector Value)
+getRegsFromLen eenv (Reg r) len =
+  do let regs = luaExecRegs eenv
+         area = IOVector.unsafeSlice r len regs
+     Vector.generateM len (\i -> readIORef =<< IOVector.unsafeRead area i)
+     -- maybe unsafeFreeze?
+
+{-# INLINE getRegsFromTo #-}
+getRegsFromTo :: LuaExecEnv -> Reg -> Reg -> IO (Vector Value)
+getRegsFromTo eenv (Reg r1) (Reg r2) =
+  getRegsFromLen eenv (Reg r1) (r2 - r1 + 1)
 
 
 ------------------------------------------------------------------------

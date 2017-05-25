@@ -36,7 +36,7 @@ import qualified Galua.Util.SizedVector as SV
 data Cont r = Cont
   { running           :: VM -> NextStep -> IO r
   , runningInC        :: VM -> IO r
-  , finishedOk        :: [Value] -> IO r
+  , finishedOk        :: Vector Value -> IO r
   , finishedWithError :: Value -> IO r
   }
 
@@ -141,7 +141,7 @@ performFunCall c vm f vs mb k =
 performThreadExit :: Cont r -> VM -> Vector Value -> IO r
 performThreadExit c vm vs =
   case Stack.pop (vmBlocked vm) of
-    Nothing      -> finishedOk c (Vector.toList vs)
+    Nothing      -> finishedOk c vs
     Just (t, ts) ->
       do setThreadField threadStatus (vmCurThread vm) ThreadNew
          eenv <- getThreadField stExecEnv t
@@ -317,7 +317,7 @@ performErrorReturn c vm e =
           ErrorFrame -> unwind s'
 
 
-runAllSteps :: VM -> NextStep -> IO (Either Value [Value])
+runAllSteps :: VM -> NextStep -> IO (Either Value (Vector Value))
 runAllSteps !vm i = oneStep' cont vm i
   where
   cont = Cont { running    = runAllSteps
@@ -352,25 +352,25 @@ consMb (Just x) xs = x : xs
 
 enterClosure ::
   VM -> Reference Closure -> Vector Value -> IO (ExecEnv, IO NextStep)
-enterClosure vm c vs0 =
+enterClosure vm c vs =
   do let MkClosure { cloFun, cloUpvalues } = referenceVal c
-         vs = Vector.toList vs0
      case cloFun of
 
        LuaFunction fid f ->
-         do let n = funcMaxStackSize f
-                (normalArgs,extraArgs) = splitAt (funcNumParams f) vs
+         do let regNum                 = funcMaxStackSize f
+                (normalArgs,extraArgs) = Vector.splitAt (funcNumParams f) vs
+                blankNum               = regNum - Vector.length normalArgs
 
-                stackElts = take n (normalArgs ++ repeat Nil)
+                stackElts = normalArgs Vector.++
+                                        Vector.replicate blankNum Nil
 
-                varargs | funcIsVararg f = extraArgs
-                        | otherwise      = []
+                varargs | funcIsVararg f = Vector.force extraArgs
+                        | otherwise      = Vector.empty
 
 
-            stack    <- do refs <- mapM newIORef stackElts
-                           Vector.thaw (Vector.fromListN n refs)
+            stack    <- Vector.thaw =<< traverse newIORef stackElts
 
-            vasRef   <- newIORef varargs
+            vasRef   <- newIORef (Vector.toList varargs)
             vrsRef   <- newIORef NoVarResults
 
             let eenv = ExecInLua LuaExecEnv

@@ -39,6 +39,7 @@ import           Galua.Value
 import           Galua.FunValue(FunctionValue(..))
 import           Galua.LuaString
 import           Galua.CObjInfo(CObjInfo,cfunInfoFun)
+import           Galua.Util.SmallVec(SmallVec)
 import           Galua.Util.Stack(Stack)
 import qualified Galua.Util.Stack as Stack
 import qualified Galua.Util.SizedVector as SV
@@ -80,7 +81,7 @@ emptyVM aref menv =
                }
 
 
-data VMState  = FinishedOk ![Value]
+data VMState  = FinishedOk {-# UNPACK #-} !(Vector Value)
               | FinishedWithError !Value
               | Running !VM !NextStep
               | RunningInC !VM
@@ -324,7 +325,7 @@ execApiCall env =
 
 
 data VarResults = NoVarResults
-                | VarResults !Reg ![Value]
+                | VarResults !Reg {-# UNPACK #-} !(Vector Value)
 
 
 -- | Execution environment for a Lua function
@@ -333,7 +334,13 @@ data LuaExecEnv = LuaExecEnv
     -- ^ local variables
 
   , luaExecVarargs  :: {-# UNPACK #-} !(IORef [Value])
+    -- ^ List of additional function arguments (for vararg functions)
+
   , luaExecVarress  :: {-# UNPACK #-} !(IORef VarResults)
+    {- ^ Stores results of function callls.  Used when we need all results
+    of a function, but we don't know how many results will be returned
+    by the function.  For example, if all results of a function are
+    placed in a table, or passed on to another function. -}
 
   , luaExecUpvals   :: {-# UNPACK #-} !(IOVector (IORef Value))
   , luaExecCode     :: {-# UNPACK #-} !(Vector OpCode)

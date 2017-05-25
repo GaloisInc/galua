@@ -3,6 +3,7 @@ module Galua.Util.SizedVector
   ( SizedVector
   , new
   , newN
+  , resetTo
   , push
   , pop
   , popN
@@ -12,6 +13,7 @@ module Galua.Util.SizedVector
   , setMaybe
   , get
   , getLastN
+  , getAll
   , unsafeGet
   , getMaybe
   , rotateSubset
@@ -46,6 +48,13 @@ failure str = throwIO (SizedVectorException str)
 
 initialAllocation :: Int
 initialAllocation = 4
+
+resetTo :: SizedVector a -> Vector a -> IO ()
+resetTo (SizedVector ref) vs =
+  do mvs <- Vector.thaw vs
+     writeIORef ref $! SizedVector' { svCount = Vector.length vs
+                                    , svArray = mvs
+                                    }
 
 -- | Allocate a new, empty, resizable vector with a default initial allocation.
 new :: IO (SizedVector a)
@@ -112,6 +121,11 @@ getLastN (SizedVector ref) len0 =
      let len  = max 0 (min len0 svCount)
          from = svCount - len
      Vector.freeze (IOVector.unsafeSlice from len svArray)
+
+getAll :: SizedVector a -> IO (Vector a)
+getAll (SizedVector ref) =
+  do SizedVector' { .. } <- readIORef ref
+     Vector.freeze (IOVector.take svCount svArray)
 
 -- | Pop the last elements from the stack.
 popN :: SizedVector a -> Int -> IO (Vector a)

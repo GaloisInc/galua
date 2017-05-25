@@ -158,18 +158,6 @@ pop stack = SV.pop stack `catch`
 popN :: SV.SizedVector Value -> Int -> IO (Vector Value)
 popN = SV.popN
 
-stackToList :: SV.SizedVector a -> IO [a]
-stackToList stack =
-  do n  <- SV.size stack
-     for [0 .. n-1 ] $ \i -> SV.get stack i
-
-
-stackFromList :: SV.SizedVector a -> [a] -> IO ()
-stackFromList stack vs =
-  do n <- SV.size stack
-     SV.shrink stack n
-     for_ vs (push stack)
-
 cServiceLoop :: MVar CNextStep -> TMVar CCallState -> IO CInt
 cServiceLoop resultMVar interpMVar =
   do res <- takeMVar resultMVar
@@ -1216,7 +1204,7 @@ lua_resume_hs l tid r from nargs out =
       case res of
         ThreadReturn rs ->
           do eenv <- getThreadField stExecEnv tRef
-             stackFromList (execCStack eenv) (Vector.toList rs)
+             SV.resetTo (execCStack eenv) rs
              result out luaOK
 
         ThreadYield -> result out luaYIELD
@@ -1235,13 +1223,11 @@ lua_yieldk_hs l tid r nResults ctx func =
 
        tRef  <- extToThreadRef vm tid
        stack <- execCStack <$> getThreadField stExecEnv tRef
-       n <- SV.size stack
-       SV.shrink stack n
-       traverse_ (push stack) outputs
+       SV.resetTo stack outputs
        return $ Yield $!
             if nullFunPtr == func
-                then do xs <- stackToList stack
-                        return $! FunReturn (Vector.fromList xs)
+                then do xs <- SV.getAll stack
+                        return $! FunReturn xs
                 else do let token = unsafeForeignPtrToPtr (threadCPtr (referenceVal tRef))
                         putMVar (machCServer (vmMachineEnv vm))
                                 (CCallback (capi_entryk ctx func luaYIELD token))

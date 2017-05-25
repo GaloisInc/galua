@@ -488,7 +488,8 @@ m__len tabs cont v =
 
 
 m__concat :: MetaTabRef -> Cont Value -> Vector Value -> IO NextStep
-m__concat tabs cont = concat2 tabs cont . reverse . Vector.toList
+m__concat tabs cont vs = concat2 tabs cont args
+  where args = [ Vector.unsafeIndex vs i | i <- [ Vector.length vs - 1 .. 0 ] ]
 
 -- Take the arguments in REVERSE order
 concat2 :: MetaTabRef -> Cont Value -> [Value] -> IO NextStep
