@@ -1347,6 +1347,7 @@ atBottomOfStack :: ExecEnv -> Bool
 atBottomOfStack env =
   case env of
     ExecInLua {} -> False
+    ExecInMLua {} -> False
     ExecInC cenv -> cfunAddr (cExecFunction cenv) == nullFunPtr
 
 
@@ -1369,35 +1370,36 @@ lua_getinfo_hs l tid r whatPtr ar out =
 
      let luaWhat fid = if isRootFun fid then "main" else "Lua"
 
+         reportLua fid fun =
+           do when ('n' `elem` what) $
+                do pokeLuaDebugName            ar =<< newCAString ("(FID " ++ show fid ++ ")") -- track this
+                   pokeLuaDebugNameWhat        ar =<< newCAString (luaWhat fid)
+
+              when ('S' `elem` what) $
+                do pokeLuaDebugSource          ar =<< newCAString (maybe "=(unknown source)" B8.unpack (funcSource fun))
+                   pokeLuaDebugShortSrc        ar (maybe "(unknown source)" B8.unpack (funcSource fun))
+                   pokeLuaDebugLineDefined     ar (fromIntegral (funcLineDefined fun))
+                   pokeLuaDebugLastLineDefined ar (fromIntegral (funcLastLineDefined fun))
+                   pokeLuaDebugWhat            ar =<< newCAString (luaWhat fid)
+
+              when ('l' `elem` what) $
+                do pokeLuaDebugCurrentLine     ar (maybe 0 fromIntegral (lookupLineNumber fun pc))
+
+              when ('t' `elem` what) $
+                do pokeLuaDebugIsTailCall      ar 0 -- XXX: Track tail calls
+
+              when ('u' `elem` what) $
+                do pokeLuaDebugNUps            ar (fromIntegral (IOVector.length (execUpvals execEnv)))
+                   pokeLuaDebugNParams         ar (fromIntegral (funcNumParams fun))
+                   pokeLuaDebugIsVarArg        ar (if funcIsVararg fun then 1 else 0)
+
+
+
      case execEnv of
 
 
-       ExecInLua lenv ->
-
-         do let fid = luaExecFID lenv
-                fun = luaExecFunction lenv
-            when ('n' `elem` what) $
-              do pokeLuaDebugName            ar =<< newCAString ("(FID " ++ show fid ++ ")") -- track this
-                 pokeLuaDebugNameWhat        ar =<< newCAString (luaWhat fid)
-
-            when ('S' `elem` what) $
-              do pokeLuaDebugSource          ar =<< newCAString (maybe "=(unknown source)" B8.unpack (funcSource fun))
-                 pokeLuaDebugShortSrc        ar (maybe "(unknown source)" B8.unpack (funcSource fun))
-                 pokeLuaDebugLineDefined     ar (fromIntegral (funcLineDefined fun))
-                 pokeLuaDebugLastLineDefined ar (fromIntegral (funcLastLineDefined fun))
-                 pokeLuaDebugWhat            ar =<< newCAString (luaWhat fid)
-
-            when ('l' `elem` what) $
-              do pokeLuaDebugCurrentLine     ar (maybe 0 fromIntegral (lookupLineNumber fun pc))
-
-            when ('t' `elem` what) $
-              do pokeLuaDebugIsTailCall      ar 0 -- XXX: Track tail calls
-
-            when ('u' `elem` what) $
-              do pokeLuaDebugNUps            ar (fromIntegral (IOVector.length (execUpvals execEnv)))
-                 pokeLuaDebugNParams         ar (fromIntegral (funcNumParams fun))
-                 pokeLuaDebugIsVarArg        ar (if funcIsVararg fun then 1 else 0)
-
+       ExecInLua lenv -> reportLua (luaExecFID lenv) (luaExecFunction lenv)
+       ExecInMLua lenv -> reportLua (mluaExecFID lenv) (mluaExecFunction lenv)
 
        ExecInC cenv ->
          do let funName    = cfunName (cExecFunction cenv)

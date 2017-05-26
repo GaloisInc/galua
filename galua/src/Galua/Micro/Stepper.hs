@@ -2,17 +2,10 @@
 module Galua.Micro.Stepper where
 
 import           Data.Vector(Vector)
-import           Data.Vector.Mutable (IOVector)
-import qualified Data.Vector.Mutable as IOVector
 import qualified Data.Map as Map
-import           Data.IORef(IORef,newIORef)
 
-import Galua.Value(Value,refLocCaller)
-import Galua.Mach(TypeMetatables)
-import Galua.Code(FunId,Function(..))
-import Galua.Reference(AllocRef)
 import Galua.Mach(VM,MLuaExecEnv(..),NextStep(..))
-import Galua.Micro.AST(BlockStmt,BlockName(..),functionCode)
+import Galua.Micro.AST(BlockStmt)
 import Galua.Micro.OpcodeInterpreter
         (runStmtAt,Next(..),crash,setListReg)
 import qualified Galua.Util.SmallVec as SMV

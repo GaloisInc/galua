@@ -288,39 +288,45 @@ data MachConfig = MachConfig
 
 
 
-data ExecEnv = ExecInLua {-# UNPACK #-} !LuaExecEnv
-             | ExecInC   {-# UNPACK #-} !CExecEnv
+data ExecEnv = ExecInLua  {-# UNPACK #-} !LuaExecEnv
+             | ExecInMLua {-# UNPACK #-} !MLuaExecEnv
+             | ExecInC    {-# UNPACK #-} !CExecEnv
 
 -- | Get the up-values for the execution environment.
 execUpvals :: ExecEnv -> IOVector (IORef Value)
 execUpvals env =
   case env of
-    ExecInLua LuaExecEnv { luaExecUpvals } -> luaExecUpvals
-    ExecInC   CExecEnv   { cExecUpvals   } -> cExecUpvals
+    ExecInLua   LuaExecEnv  { luaExecUpvals }   -> luaExecUpvals
+    ExecInMLua  MLuaExecEnv { mluaExecUpvals }  -> mluaExecUpvals
+    ExecInC     CExecEnv    { cExecUpvals   }   -> cExecUpvals
 
 execClosure :: ExecEnv -> Value
 execClosure env =
   case env of
     ExecInLua lenv -> luaExecClosure lenv
+    ExecInMLua menv -> mluaExecClosure menv
     ExecInC   cenv -> cExecClosure cenv
 
 execFun :: ExecEnv -> FunctionValue
 execFun env =
   case env of
-    ExecInLua lenv -> LuaFunction (luaExecFID lenv) (luaExecFunction lenv)
-    ExecInC cenv   -> CFunction (cExecFunction cenv)
+    ExecInLua lenv  -> LuaFunction (luaExecFID lenv) (luaExecFunction lenv)
+    ExecInMLua menv -> LuaFunction (mluaExecFID menv) (mluaExecFunction menv)
+    ExecInC cenv    -> CFunction (cExecFunction cenv)
 
 execCStack :: ExecEnv -> SV.SizedVector Value
 execCStack env =
   case env of
-    ExecInC cenv -> cExecStack cenv
-    ExecInLua {} -> error "[bug] execCStack: not a C execution environment"
+    ExecInC cenv  -> cExecStack cenv
+    ExecInLua {}  -> error "[bug] execCStack: not a C execution environment"
+    ExecInMLua {} -> error "[bug] execCStack: not a C execution environment"
 
 execApiCall :: ExecEnv -> IORef ApiCallStatus
 execApiCall env =
   case env of
     ExecInC cenv -> cExecApiCall cenv
     ExecInLua {} -> error "[bug] execApiCall: not a C execution environment"
+    ExecInMLua {} -> error "[bug] execApiCall: not a C execution environment"
 
 
 
@@ -405,6 +411,7 @@ execFunId :: ExecEnv -> Maybe FunId
 execFunId env =
   case env of
     ExecInLua x -> Just (luaExecFID x)
+    ExecInMLua x -> Just (mluaExecFID x)
     ExecInC _   -> Nothing
 
 
@@ -555,8 +562,9 @@ machRefLoc vm =
                    Nothing -> MachSetup -- XXX: or can this happen?
 
   mkLoc env pc = case env of
-                   ExecInLua lenv -> InLua (luaExecFID lenv) pc
-                   ExecInC cenv   -> InC (cExecFunction cenv)
+                   ExecInLua lenv  -> InLua (luaExecFID lenv) pc
+                   ExecInMLua lenv -> InLua (mluaExecFID lenv) pc
+                   ExecInC cenv    -> InC (cExecFunction cenv)
 
 
 

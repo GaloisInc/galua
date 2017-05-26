@@ -229,6 +229,7 @@ abortApiCall :: MVar CNextStep -> ExecEnv -> IO ()
 abortApiCall mvar eenv =
   case eenv of
     ExecInLua {} -> return ()
+    ExecInMLua {} -> return ()
     ExecInC cenv ->
      do let ref = cExecApiCall cenv
         st <- readIORef ref
