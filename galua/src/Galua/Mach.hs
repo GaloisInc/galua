@@ -81,7 +81,7 @@ emptyVM aref menv =
                }
 
 
-data VMState  = FinishedOk {-# UNPACK #-} !(Vector Value)
+data VMState  = FinishedOk !(SmallVec Value)
               | FinishedWithError !Value
               | Running !VM !NextStep
               | RunningInC !VM
@@ -100,18 +100,17 @@ data NextStep
     -- ^ Continue executing this function at a new address
 
   | FunCall {-# UNPACK #-} !(Reference Closure) -- call this
-            {-# UNPACK #-} !(Vector Value)      -- using these arguments
+            !(SmallVec Value)                   -- using these arguments
             !(Maybe Handler)                    -- using this handler
-            !(Vector Value -> IO NextStep)      -- result goes here
+            !(SmallVec Value -> IO NextStep)    -- result goes here
 
-  | FunReturn {-# UNPACK #-} !(Vector Value)
+  | FunReturn !(SmallVec Value)
     -- ^ Function execution succeeded with results
 
   | ErrorReturn !Value
     -- ^ Function execution succeeded with results
 
-  | FunTailcall {-# UNPACK #-} !(Reference Closure)
-                {-# UNPACK #-} !(Vector Value)
+  | FunTailcall {-# UNPACK #-} !(Reference Closure) !(SmallVec Value)
     -- ^ Call a function and return its result
 
   | ThrowError !Value
@@ -126,7 +125,7 @@ data NextStep
 
   | Yield !(IO NextStep)
 
-  | ThreadExit {-# UNPACK #-} !(Vector Value)
+  | ThreadExit !(SmallVec Value)
   | ThreadFail !Value
 
   | ApiStart !ApiCall !(IO NextStep)
@@ -165,7 +164,7 @@ data StackFrame
   | CallFrame Int -- PC
               ExecEnv
               (Maybe (Value -> IO NextStep)) -- Error
-              (Vector Value -> IO NextStep) -- Normal
+              (SmallVec Value -> IO NextStep) -- Normal
 
 
 data Thread = MkThread
@@ -213,7 +212,7 @@ isThreadRunning _             = False
 
 data ThreadResult
   = ThreadYield                 -- ^ The resumed thread yielded back to us.
-  | ThreadReturn (Vector Value) -- ^ The resuemd thread completed normally.
+  | ThreadReturn (SmallVec Value) -- ^ The resuemd thread completed normally.
   | ThreadError Value           -- ^ The resumed thread crashed.
 
 
@@ -320,12 +319,12 @@ execApiCall :: ExecEnv -> IORef ApiCallStatus
 execApiCall env =
   case env of
     ExecInC cenv -> cExecApiCall cenv
-    ExecInLua {} -> error "[bug] execApiCall: not a C execturion evironment"
+    ExecInLua {} -> error "[bug] execApiCall: not a C execution environment"
 
 
 
 data VarResults = NoVarResults
-                | VarResults !Reg {-# UNPACK #-} !(Vector Value)
+                | VarResults !Reg !(SmallVec Value)
 
 
 -- | Execution environment for a Lua function
@@ -617,10 +616,11 @@ chunkToClosure vm name bytes env =
   parser | luaSignature `B.isPrefixOf` bytes = parseLuaBytecode name bytesL
          | otherwise                         = parseLua name bytesL
 
-activateThread :: Reference Closure -> Vector Value -> Reference Thread -> IO ()
+activateThread :: Reference Closure -> SmallVec Value -> Reference Thread ->
+                                                                        IO ()
 activateThread cRef vs tRef =
   setThreadField threadStatus tRef
-      (ThreadSuspended (return (FunCall cRef vs Nothing (return . FunReturn))))
+     (ThreadSuspended (return (FunCall cRef vs Nothing (return . FunReturn))))
 
 parseLua :: Maybe String -> L.ByteString -> IO (Either String Chunk)
 parseLua mbName src =

@@ -28,6 +28,8 @@ import           Galua.Util.SizedVector (SizedVector)
 import qualified Galua.Util.Stack as Stack
 import           Galua.Value (Value(String,Table,Nil))
 import           Galua.Code
+import           Galua.Util.SmallVec (SmallVec)
+import qualified Galua.Util.SmallVec as SMV
 
 data HarnessParams = HarnessParams
    { harnessLocals :: [Maybe String]
@@ -217,7 +219,7 @@ executeCompiledStatment ::
   VM                  {- ^ For globals, and the currently executing thread -} ->
   ExecEnv             {- ^ Lookup free variables here -} ->
   CompiledStatment    {- ^ "Code pointer" -} ->
-  (Vector Value -> IO NextStep) {- ^ Do this when we return -} ->
+  (SmallVec Value -> IO NextStep) {- ^ Do this when we return -} ->
   IO (NextStep, VM)
 executeCompiledStatment vm cenv cs resume =
   do globRef <- newIORef (Table (machGlobals (vmMachineEnv vm)))
@@ -229,7 +231,7 @@ executeCompiledStatment vm cenv cs resume =
      thStack    <- getThreadField stStack th
      thHandlers <- getThreadField stHandlers th
 
-     let recover e  = resume (Vector.singleton e)
+     let recover e  = resume (SMV.vec1 e)
          frame      = CallFrame thPc thEnv (Just recover) resume
 
      setThreadField stExecEnv th env
@@ -242,7 +244,7 @@ executeCompiledStatment vm cenv cs resume =
 
 
 executeStatementInContext ::
-  VM -> Int -> ExecEnv -> String -> (Vector Value -> IO NextStep) ->
+  VM -> Int -> ExecEnv -> String -> (SmallVec Value -> IO NextStep) ->
                                                           IO (NextStep,VM)
 executeStatementInContext vm pc env statement resume =
   do let fun = funValueCode (execFun env)
@@ -250,7 +252,7 @@ executeStatementInContext vm pc env statement resume =
      case res of
        Left (ParseError e) ->
           do b <- fromByteString (B8.pack e)
-             next <- resume (Vector.singleton (String b))
+             next <- resume (SMV.vec1 (String b))
              return (next, vm)
        Right cs -> executeCompiledStatment vm env cs resume
 

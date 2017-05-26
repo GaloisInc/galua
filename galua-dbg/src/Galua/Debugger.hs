@@ -65,6 +65,7 @@ import           Galua.FunValue
 import           Galua.Names.Eval
 import           Galua.Names.Find(LocatedExprName(..),ppExprName)
 import qualified Galua.Util.SizedVector as SV
+import qualified Galua.Util.SmallVec as SMV
 import           Galua.Util.IOURef
 
 import qualified Galua.Spec.AST as Spec
@@ -877,7 +878,7 @@ executeStatement dbg frame statement =
                    let stat = Text.unpack statement
                    (next',vm') <-
                       executeStatementInContext vm pc env stat $ \vs ->
-                        Interrupt next <$ recordConsoleValues (Vector.toList vs)
+                        Interrupt next <$ recordConsoleValues (SMV.toList vs)
                    writeIORef (dbgStateVM dbg) (Running vm' next')
 
               runNonBlock dbg

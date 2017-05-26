@@ -28,6 +28,7 @@ import Galua.Debugger.Console
 import Galua.Debugger.View.Analysis(exportResult)
 import qualified Galua.Util.Table as Tab
 import qualified Galua.Util.SizedVector as SV
+import qualified Galua.Util.SmallVec as SMV
 import Galua.Util.IOURef
 import Galua.Code
 import Galua.Debugger.CommandQueue
@@ -395,7 +396,7 @@ exportVMState funs vms =
   case vms of
 
     FinishedOk vs       ->
-      do js <- mapM (exportValue funs VP_None) vs
+      do js <- mapM (exportValue funs VP_None) (SMV.toList vs)
          return $ JS.object [ tag "finished", "result" .= js ]
 
     FinishedWithError v ->
@@ -831,7 +832,7 @@ exportLuaExecEnv funs pc eid
                    vrs <- readIORef vrRef
                    case vrs of
                      NoVarResults -> upTo n
-                     VarResults (Reg c) vs -> (++ Vector.toList vs) <$> upTo c
+                     VarResults (Reg c) vs -> (++ SMV.toList vs) <$> upTo c
 
      let code      = Just (exportFun funs (Just pc) (Just eid) fid)
          locNames  = lookupLocalName fun pc . Reg

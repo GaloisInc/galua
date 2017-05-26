@@ -15,6 +15,7 @@ import           Data.IORef
 import           Data.Foldable (traverse_)
 import           Data.Vector ( Vector )
 import qualified Data.Vector as Vector
+import qualified Data.Vector.Mutable as IOVector
 import           Foreign.ForeignPtr
 
 
@@ -30,13 +31,14 @@ import           Galua.Code
 import           Galua.Util.Stack (Stack)
 import qualified Galua.Util.Stack as Stack
 import qualified Galua.Util.SizedVector as SV
-
+import           Galua.Util.SmallVec(SmallVec)
+import qualified Galua.Util.SmallVec as SMV
 
 
 data Cont r = Cont
   { running           :: VM -> NextStep -> IO r
   , runningInC        :: VM -> IO r
-  , finishedOk        :: Vector Value -> IO r
+  , finishedOk        :: SmallVec Value -> IO r
   , finishedWithError :: Value -> IO r
   }
 
@@ -95,7 +97,7 @@ performTailCall ::
   Cont r ->
   VM                {- ^ current vm state -} ->
   Reference Closure {- ^ closure to enter -} ->
-  (Vector Value)    {- ^ arguments        -} ->
+  (SmallVec Value)    {- ^ arguments        -} ->
   IO r
 performTailCall c vm f vs =
   do (newEnv, start) <- enterClosure vm f vs
@@ -113,9 +115,9 @@ performFunCall ::
   Cont r ->
   VM                    {- ^ current vm state       -} ->
   Reference Closure     {- ^ closure to enter       -} ->
-  (Vector Value)        {- ^ arguments              -} ->
+  (SmallVec Value)        {- ^ arguments              -} ->
   Maybe Handler         {- ^ optional error handler -} ->
-  (Vector Value -> IO NextStep) {- ^ return continuation    -} ->
+  (SmallVec Value -> IO NextStep) {- ^ return continuation    -} ->
   IO r
 performFunCall c vm f vs mb k =
   do (newEnv, start) <- enterClosure vm f vs
@@ -138,7 +140,7 @@ performFunCall c vm f vs mb k =
 
 
 
-performThreadExit :: Cont r -> VM -> Vector Value -> IO r
+performThreadExit :: Cont r -> VM -> SmallVec Value -> IO r
 performThreadExit c vm vs =
   case Stack.pop (vmBlocked vm) of
     Nothing      -> finishedOk c vs
@@ -154,7 +156,7 @@ performThreadExit c vm vs =
 -- on the stack. In the case that the next frame is an error marker, it
 -- begins unwinding the stack until a suitable handler is found.
 {-# INLINE performFunReturn #-}
-performFunReturn :: Cont r -> VM -> Vector Value -> IO r
+performFunReturn :: Cont r -> VM -> SmallVec Value -> IO r
 performFunReturn c vm vs =
   do let th = vmCurThread vm
 
@@ -214,7 +216,7 @@ performThrowError c vm e =
        FunHandler x : _ ->
          do stack <- getThreadField stStack th
             setThreadField stStack th (Stack.push ErrorFrame stack)
-            running c vm (FunTailcall x (Vector.singleton e))
+            running c vm (FunTailcall x (SMV.vec1 e))
 
        DefaultHandler : _ -> running c vm (ErrorReturn e)
 
@@ -227,14 +229,17 @@ abortReentryFrames mvar = traverse_ $ \frame ->
 
 abortApiCall :: MVar CNextStep -> ExecEnv -> IO ()
 abortApiCall mvar eenv =
-  do let ref = execApiCall eenv
-     st <- readIORef ref
-     case st of
-       NoApiCall        -> return ()
-       ApiCallAborted{} -> return ()
-       ApiCallActive api ->
-         do putMVar mvar CAbort
-            writeIORef ref (ApiCallAborted api)
+  case eenv of
+    ExecInLua {} -> return ()
+    ExecInC cenv ->
+     do let ref = cExecApiCall cenv
+        st <- readIORef ref
+        case st of
+          NoApiCall        -> return ()
+          ApiCallAborted{} -> return ()
+          ApiCallActive api ->
+            do putMVar mvar CAbort
+               writeIORef ref (ApiCallAborted api)
 
 performResume ::
   Cont r ->
@@ -263,6 +268,7 @@ performYield :: Cont r -> VM -> IO NextStep -> IO r
 performYield c vm k =
   do let eenv   = vmCurExecEnv vm
          apiRef = execApiCall eenv
+
      writeIORef apiRef NoApiCall
      putMVar (machCServer (vmMachineEnv vm)) CAbort
 
@@ -287,6 +293,7 @@ performErrorReturn :: Cont r -> VM -> Value -> IO r
 performErrorReturn c vm e =
   do let ref = vmCurThread vm
          eenv = vmCurExecEnv vm
+
      abortApiCall (machCServer (vmMachineEnv vm)) eenv
 
      stack <- getThreadField stStack ref
@@ -317,7 +324,7 @@ performErrorReturn c vm e =
           ErrorFrame -> unwind s'
 
 
-runAllSteps :: VM -> NextStep -> IO (Either Value (Vector Value))
+runAllSteps :: VM -> NextStep -> IO (Either Value (SmallVec Value))
 runAllSteps !vm i = oneStep' cont vm i
   where
   cont = Cont { running    = runAllSteps
@@ -351,26 +358,23 @@ consMb (Just x) xs = x : xs
 
 
 enterClosure ::
-  VM -> Reference Closure -> Vector Value -> IO (ExecEnv, IO NextStep)
+  VM -> Reference Closure -> SmallVec Value -> IO (ExecEnv, IO NextStep)
 enterClosure vm c vs =
   do let MkClosure { cloFun, cloUpvalues } = referenceVal c
      case cloFun of
 
        LuaFunction fid f ->
-         do let regNum                 = funcMaxStackSize f
-                (normalArgs,extraArgs) = Vector.splitAt (funcNumParams f) vs
-                blankNum               = regNum - Vector.length normalArgs
-
-                stackElts = normalArgs Vector.++
-                                        Vector.replicate blankNum Nil
-
-                varargs | funcIsVararg f = Vector.force extraArgs
-                        | otherwise      = Vector.empty
+         do let regNum = funcMaxStackSize f
+                varargs
+                  | funcIsVararg f = drop (funcNumParams f) (SMV.toList vs)
+                  | otherwise      = []
 
 
-            stack    <- Vector.thaw =<< traverse newIORef stackElts
+            stack <- IOVector.new regNum
+            SMV.ipadForM_ vs regNum Nil $ \i v ->
+               IOVector.unsafeWrite stack i =<< newIORef v
 
-            vasRef   <- newIORef (Vector.toList varargs)
+            vasRef   <- newIORef varargs
             vrsRef   <- newIORef NoVarResults
 
             let eenv = ExecInLua LuaExecEnv
@@ -389,7 +393,7 @@ enterClosure vm c vs =
 
        CFunction cfun ->
          do stack <- SV.new
-            traverse_ (SV.push stack) vs
+            SMV.forM_ vs (SV.push stack)
             apiRef   <- newIORef NoApiCall
 
             let eenv = ExecInC CExecEnv

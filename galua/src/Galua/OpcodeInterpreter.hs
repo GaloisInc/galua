@@ -8,6 +8,7 @@ import           Data.IORef
 import           Data.Vector ( Vector )
 import qualified Data.Vector as Vector
 import qualified Data.Vector.Mutable as IOVector
+import           GHC.Exts(inline)
 
 import           Galua.Code
 import           Galua.Value
@@ -16,7 +17,8 @@ import           Galua.Overloading
 import           Galua.Mach
 import           Galua.Number
 import           Galua.LuaString(fromByteString)
-import           GHC.Exts(inline)
+import           Galua.Util.SmallVec(SmallVec)
+import qualified Galua.Util.SmallVec as SMV
 
 -- | Attempt to load the instruction stored at the given address
 -- in the currently executing function.
@@ -210,7 +212,7 @@ execute !vm !pc =
             let after result =
                  do setCallResults eenv (plusReg a 3) (CountInt c) result
                     advance
-            m__call tabs after f (Vector.fromListN 2 [a1,a2])
+            m__call tabs after f (SMV.vec2 a1 a2)
 
        OP_TFORLOOP a sBx ->
          do v <- get eenv (plusReg a 1)
@@ -240,21 +242,25 @@ execute !vm !pc =
                        do let count = regDiff a c - 1
                           forM_ [1..count] $ \i ->
                              setTab i =<< get eenv (plusReg a i)
-                          forM_ (Vector.indexed vs) $ \(i,v) ->
+                          SMV.iForM_ vs $ \i v ->
                              setTab (count+1+i) v
                           writeIORef (luaExecVarress eenv) NoVarResults
             jump skip
 
        OP_CLOSURE tgt ix cloFunc ->
-         do vs <- traverse (getLValue eenv) (funcUpvalues cloFunc)
-            closureUpvals <- Vector.thaw vs
+         do let ups   = funcUpvalues cloFunc
+
+            closureUpvals <- IOVector.new (Vector.length ups)
+            forM_ (Vector.indexed ups) $ \(i,e) ->
+               IOVector.unsafeWrite closureUpvals i =<< getLValue eenv e
+
             let fid = luaExecFID eenv
                 f   = luaFunction (subFun fid ix) cloFunc
             tgt =: (Closure <$> machNewClosure vm f closureUpvals)
 
        OP_VARARG a b ->
          do let varargs = luaExecVarargs eenv
-            setCallResults eenv a b . Vector.fromList =<< readIORef varargs
+            setCallResults eenv a b . SMV.fromList =<< readIORef varargs
             advance
 
        OP_EXTRAARG{} -> interpThrow UnexpectedExtraArg
@@ -263,7 +269,7 @@ execute !vm !pc =
 -- | Get a list of the `count` values stored from `start`.
 {-# INLINE getCallArguments #-}
 getCallArguments ::
-  LuaExecEnv -> Reg {- ^ start -} -> Count {- ^ count -} -> IO (Vector Value)
+  LuaExecEnv -> Reg {- ^ start -} -> Count {- ^ count -} -> IO (SmallVec Value)
 getCallArguments eenv a b =
   case b of
     CountInt x -> getRegsFromLen eenv a x
@@ -275,7 +281,7 @@ getCallArguments eenv a b =
              | a < c ->
                   do xs <- getRegsFromTo eenv a (plusReg c (-1))
                      writeIORef (luaExecVarress eenv) NoVarResults
-                     return (xs Vector.++ vs)
+                     return (xs SMV.++ vs)
              | otherwise ->
                   do writeIORef (luaExecVarress eenv) NoVarResults
                      return vs
@@ -287,17 +293,13 @@ setCallResults ::
   LuaExecEnv ->
   Reg           {- ^ starting register -} ->
   Count         {- ^ results expected  -} ->
-  Vector Value  {- ^ results           -} ->
+  SmallVec Value  {- ^ results           -} ->
   IO ()
 setCallResults eenv a b xs =
   case b of
     CountInt count ->
-      do forM_ (Vector.take count (Vector.indexed xs)) $ \(i,v) ->
-           set eenv (plusReg a i) v
-         let have = inline (Vector.length xs)
-         when (have < count) $
-           forM_ [ have .. count - 1 ] $ \i ->
-             set eenv (plusReg a i) Nil
+      SMV.ipadForM_ xs count Nil $ \i v ->
+        set eenv (plusReg a i) v
 
     CountTop ->
       do writeIORef (luaExecVarress eenv) $! VarResults a xs
@@ -387,15 +389,15 @@ instance RValue RK where
 
 
 {-# INLINE getRegsFromLen #-}
-getRegsFromLen :: LuaExecEnv -> Reg -> Int -> IO (Vector Value)
+getRegsFromLen :: LuaExecEnv -> Reg -> Int -> IO (SmallVec Value)
 getRegsFromLen eenv (Reg r) len =
   do let regs = luaExecRegs eenv
          area = IOVector.unsafeSlice r len regs
-     Vector.generateM len (\i -> readIORef =<< IOVector.unsafeRead area i)
+     SMV.generateM len (\i -> readIORef =<< IOVector.unsafeRead area i)
      -- maybe unsafeFreeze?
 
 {-# INLINE getRegsFromTo #-}
-getRegsFromTo :: LuaExecEnv -> Reg -> Reg -> IO (Vector Value)
+getRegsFromTo :: LuaExecEnv -> Reg -> Reg -> IO (SmallVec Value)
 getRegsFromTo eenv (Reg r1) (Reg r2) =
   getRegsFromLen eenv (Reg r1) (r2 - r1 + 1)
 

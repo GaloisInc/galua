@@ -15,6 +15,7 @@ import Galua.Mach(VM(..),NextStep(..),MachineEnv(..),machRefLoc)
 import Galua.Micro.AST(BlockStmt,BlockName(..),functionCode)
 import Galua.Micro.OpcodeInterpreter
         (runStmtAt,Frame(..),Next(..),crash,setListReg)
+import qualified Galua.Util.SmallVec as SMV
 
 run :: Int -> AllocRef -> Frame -> Vector BlockStmt -> Int -> IO NextStep
 run opCodeNum aref frame block pc =
@@ -27,13 +28,13 @@ run opCodeNum aref frame block pc =
           Nothing       -> crash ("Missing block: " ++ show b)
 
        MakeCall clo args -> return $!
-         FunCall clo (Vector.fromList args) Nothing $ \vs ->
-           do setListReg frame (Vector.toList vs)
+         FunCall clo (SMV.fromList args) Nothing $ \vs ->
+           do setListReg frame (SMV.toList vs)
               run opCodeNum aref frame block (pc + 1)
 
-       MakeTailCall clo args -> return $! FunTailcall clo (Vector.fromList args)
+       MakeTailCall clo args -> return $! FunTailcall clo (SMV.fromList args)
        RaiseError v          -> return $! ThrowError v
-       ReturnWith vs         -> return $! FunReturn (Vector.fromList vs)
+       ReturnWith vs         -> return $! FunReturn (SMV.fromList vs)
 
 
 

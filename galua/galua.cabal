@@ -60,6 +60,7 @@ library
                        Galua.Util.SizedVector
                        Galua.Util.Weak
                        Galua.Util.IOURef
+                       Galua.Util.SmallVec
 
   other-modules:       CMath
                        Process

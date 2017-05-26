@@ -86,6 +86,7 @@ import Galua.ValueType
 import Galua.Reference
 import Galua.LuaString
 import Galua.Util.Weak (MakeWeak(..), mkWeakIORef', mkWeakMVector')
+import Galua.Util.SmallVec(SmallVec,maybeHead)
 
 data Value
   = Bool     !Bool
@@ -292,8 +293,8 @@ valueString v =
 -- | Trim a list of values down to the first value.
 -- The empty list is replaced with 'Nil'
 {-# INLINE trimResult1 #-}
-trimResult1 :: Vector Value -> Value
-trimResult1 vs = if Vector.null vs then Nil else Vector.unsafeHead vs
+trimResult1 :: SmallVec Value -> Value
+trimResult1 vs = maybeHead vs Nil
 
 --------------------------------------------------------------------------------
 

@@ -31,6 +31,9 @@ import Data.Foldable (for_)
 import Control.Exception
 import Control.Monad
 
+import           Galua.Util.SmallVec (SmallVec)
+import qualified Galua.Util.SmallVec as SMV
+
 newtype SizedVector a = SizedVector (IORef (SizedVector' a))
 
 data SizedVector' a = SizedVector'
@@ -49,10 +52,10 @@ failure str = throwIO (SizedVectorException str)
 initialAllocation :: Int
 initialAllocation = 4
 
-resetTo :: SizedVector a -> Vector a -> IO ()
+resetTo :: SizedVector a -> SmallVec a -> IO ()
 resetTo (SizedVector ref) vs =
-  do mvs <- Vector.thaw vs
-     writeIORef ref $! SizedVector' { svCount = Vector.length vs
+  do mvs <- SMV.thaw vs
+     writeIORef ref $! SizedVector' { svCount = SMV.length vs
                                     , svArray = mvs
                                     }
 
@@ -115,25 +118,25 @@ get :: SizedVector a -> Int -> IO a
 get sv i = maybe (failure "Get: bad index") return =<< getMaybe sv i
 
 -- | Get the elements from the given index to then end (aka "top") of the stack.
-getLastN :: SizedVector a -> Int -> IO (Vector a)
+getLastN :: SizedVector a -> Int -> IO (SmallVec a)
 getLastN (SizedVector ref) len0 =
   do SizedVector' { .. } <- readIORef ref
      let len  = max 0 (min len0 svCount)
          from = svCount - len
-     Vector.freeze (IOVector.unsafeSlice from len svArray)
+     SMV.freeze (IOVector.unsafeSlice from len svArray)
 
-getAll :: SizedVector a -> IO (Vector a)
+getAll :: SizedVector a -> IO (SmallVec a)
 getAll (SizedVector ref) =
   do SizedVector' { .. } <- readIORef ref
-     Vector.freeze (IOVector.take svCount svArray)
+     SMV.freeze (IOVector.take svCount svArray)
 
 -- | Pop the last elements from the stack.
-popN :: SizedVector a -> Int -> IO (Vector a)
+popN :: SizedVector a -> Int -> IO (SmallVec a)
 popN (SizedVector ref) len0 =
   do SizedVector' { .. } <- readIORef ref
      let len  = max 0 (min len0 svCount)
          from = svCount - len
-     v <- Vector.freeze (IOVector.unsafeSlice from len svArray)
+     v <- SMV.freeze (IOVector.unsafeSlice from len svArray)
      for_ [ from .. svCount - 1] $ \i ->
        IOVector.unsafeWrite svArray i (error "uninitialized")
      writeIORef ref $! SizedVector' { svCount = svCount - len, .. }

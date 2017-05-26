@@ -43,14 +43,14 @@ import qualified Data.ByteString as B
 import           Data.IORef (IORef,readIORef, writeIORef, modifyIORef')
 import qualified Data.Map as Map
 import           Data.Bits((.&.),(.|.),xor,complement)
-import           Data.Vector ( Vector )
-import qualified Data.Vector as Vector
 
 import           Galua.Mach
 import           Galua.Number
 import           Galua.Value
 import           Galua.LuaString
 import           Galua.Util.Table (tableGetMeta)
+import           Galua.Util.SmallVec(SmallVec)
+import qualified Galua.Util.SmallVec as SMV
 
 
 type Cont a = a -> IO NextStep
@@ -152,7 +152,7 @@ m__gc tabs next val =
   do metamethod <- valueMetamethod tabs val str__gc
      case metamethod of
         Nil -> next
-        _   -> m__call tabs (const next) metamethod (vec1 val)
+        _   -> m__call tabs (const next) metamethod (SMV.vec1 val)
 
 
 
@@ -165,9 +165,9 @@ m__gc tabs next val =
 -- when calling a value.
 resolveFunction ::
   MetaTabRef ->
-  Cont (Reference Closure, Vector Value) {- ^ function and arugments -} ->
+  Cont (Reference Closure, SmallVec Value) {- ^ function and arugments -} ->
   Value   {- ^ function-like value -} ->
-  Vector Value {- ^ arguments -} ->
+  SmallVec Value {- ^ arguments -} ->
   IO NextStep
 resolveFunction _ next (Closure c) args = next (c, args)
 resolveFunction tabs next x args =
@@ -175,7 +175,7 @@ resolveFunction tabs next x args =
      case metamethod of
        Nil -> luaError' ("attempt to call a " ++
                                   prettyValueType (valueType x) ++ " value")
-       _   -> resolveFunction tabs next metamethod (Vector.cons x args)
+       _   -> resolveFunction tabs next metamethod (SMV.cons x args)
 
 
 
@@ -184,9 +184,9 @@ resolveFunction tabs next x args =
 -- metamethods to resolve the call on non-closures.
 m__call ::
   MetaTabRef ->
-  Cont (Vector Value) ->
-  Value          {- ^ function -} ->
-  Vector Value   {- ^ arguments -} ->
+  Cont (SmallVec Value) ->
+  Value            {- ^ function -} ->
+  SmallVec Value   {- ^ arguments -} ->
   IO NextStep
 m__call tabs cont x args = resolveFunction tabs after x args
   where
@@ -230,7 +230,7 @@ m__newindex tabs cont t k v =
   metaCase onFailure =
     do metamethod <- valueMetamethod tabs t str__newindex
        case metamethod of
-         Closure c -> return (FunCall c (vec3 t k v) Nothing (const cont))
+         Closure c -> return (FunCall c (SMV.vec3 t k v) Nothing (const cont))
          Nil       -> onFailure
          _         -> m__newindex tabs cont metamethod k v
 
@@ -261,21 +261,10 @@ m__index tabs cont m key =
   metaCase onFailure =
     do metamethod <- valueMetamethod tabs m str__index
        case metamethod of
-         Closure c -> return (FunCall c (vec2 m key) Nothing
+         Closure c -> return (FunCall c (SMV.vec2 m key) Nothing
                                         (cont . trimResult1))
          Nil       -> onFailure
          _         -> m__index tabs cont metamethod key
-
-
-vec1 :: a -> Vector a
-vec1 = Vector.singleton
-
-vec2 :: a -> a -> Vector a
-vec2 a b = Vector.fromListN 2 [a,b]
-
-vec3 :: a -> a -> a -> Vector a
-vec3 a b c = Vector.fromListN 3 [a,b,c]
-
 
 
 
@@ -311,7 +300,7 @@ m__eq tabs cont x y =
     do metamethod <- valueMetamethod2 tabs x y str__eq
        case metamethod of
          Nil -> cont False
-         _   -> m__call tabs (cont . boolRes) metamethod (vec2 x y)
+         _   -> m__call tabs (cont . boolRes) metamethod (SMV.vec2 x y)
 
 -- | Return 'True' the first value is "less-than" than the second.
 -- This operation can be overloaded using the `__lt` metamethod.
@@ -322,7 +311,7 @@ m__lt tabs cont x y =
   do metamethod <- valueMetamethod2 tabs x y str__lt
      case metamethod of
        Nil -> badCompare x y
-       _   -> m__call tabs (cont . boolRes) metamethod (vec2 x y)
+       _   -> m__call tabs (cont . boolRes) metamethod (SMV.vec2 x y)
 
 -- | Return 'True' the first value is "less-then-or-equal-to" than the second.
 -- This operation can be overloaded using the `__le` metamethod.
@@ -333,9 +322,9 @@ m__le tabs cont x y =
   do metamethod <- valueMetamethod2 tabs x y str__le
      case metamethod of
        Nil -> m__lt tabs (cont . not) y x
-       _   -> m__call tabs (cont . boolRes) metamethod (vec2 x y)
+       _   -> m__call tabs (cont . boolRes) metamethod (SMV.vec2 x y)
 
-boolRes :: Vector Value -> Bool
+boolRes :: SmallVec Value -> Bool
 boolRes = valueBool . trimResult1
 
 
@@ -361,7 +350,8 @@ valueArith1 event f = \tabs cont x ->
     Nothing -> do metamethod <- valueMetamethod tabs x event
                   case metamethod of
                     Nil -> badArithmetic x
-                    _   -> m__call tabs (cont . trimResult1) metamethod (vec1 x)
+                    _   -> m__call tabs (cont . trimResult1) metamethod
+                                                                  (SMV.vec1 x)
 
 
 {-# INLINE valueInt1 #-}
@@ -376,7 +366,7 @@ valueInt1 event f = \tabs cont x1 ->
       do metamethod <- valueMetamethod tabs x1 event
          case metamethod of
            Nil -> badInt
-           _   -> m__call tabs (cont . trimResult1) metamethod (vec1 x1)
+           _   -> m__call tabs (cont . trimResult1) metamethod (SMV.vec1 x1)
 
 
 {-# INLINE valueArith2 #-}
@@ -389,7 +379,7 @@ valueArith2 event f = \tabs cont x y ->
         do metamethod <- valueMetamethod2 tabs x y event
            case metamethod of
              Nil -> badArithmetic bad
-             _   -> m__call tabs (cont . trimResult1) metamethod (vec2 x y)
+             _   -> m__call tabs (cont . trimResult1) metamethod (SMV.vec2 x y)
   in case valueNumber x of
        Nothing -> overload x
        Just l ->
@@ -407,7 +397,8 @@ valueInt2 event f = \tabs cont x1 x2 ->
         do metamethod <- valueMetamethod2 tabs x1 x2 event
            case metamethod of
              Nil -> badInt
-             _   -> m__call tabs (cont . trimResult1) metamethod (vec2 x1 x2)
+             _   -> m__call tabs (cont . trimResult1) metamethod
+                                                              (SMV.vec2 x1 x2)
 
   in case valueInt x1 of
        Nothing -> overload
@@ -483,15 +474,15 @@ m__len tabs cont v =
             case (metamethod,v) of
               (Nil,Table t) -> cont . Number . Int =<< tableLen t
               (Nil,_      ) -> badLength v
-              _ -> m__call tabs (cont . trimResult1) metamethod (vec1 v)
+              _ -> m__call tabs (cont . trimResult1) metamethod (SMV.vec1 v)
 
 
 
-m__concat :: MetaTabRef -> Cont Value -> Vector Value -> IO NextStep
+m__concat :: MetaTabRef -> Cont Value -> SmallVec Value -> IO NextStep
 m__concat tabs cont vs = concat2 tabs cont args
   where
-  lst  = Vector.length vs - 1
-  args = [ Vector.unsafeIndex vs i | i <- [ lst, lst - 1 .. 0 ] ]
+  lst  = SMV.length vs - 1
+  args = [ SMV.unsafeIndex vs i | i <- [ lst, lst - 1 .. 0 ] ]
 
 -- Take the arguments in REVERSE order
 concat2 :: MetaTabRef -> Cont Value -> [Value] -> IO NextStep
@@ -513,7 +504,7 @@ concat2 tabs cont (x:y:z) =
     _ -> do metamethod <- valueMetamethod2 tabs y x str__concat
             case metamethod of
               Nil -> badConcat y x
-              _   -> m__call tabs after metamethod (vec2 y x)
+              _   -> m__call tabs after metamethod (SMV.vec2 y x)
                 where after rs = concat2 tabs cont (trimResult1 rs : z)
                       -- the list of arguments is reverse
                       -- so we pass y before x here

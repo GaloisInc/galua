@@ -50,8 +50,8 @@ addrName fp = if fp == nullFunPtr then "(entry)" else Text.pack (show fp)
 cfunInfoFun :: IO (FunPtr () -> IO CObjInfo)
 cfunInfoFun =
 #if defined ( LUA_USE_LINUX )
-  return $ \fptr -> return (noFunInfo fptr)
-{-
+--  return $ \fptr -> return (noFunInfo fptr)
+--{-
   do exe   <- readSymbolicLink "/proc/self/exe"
      bytes <- BS.readFile exe
      let elf = parseElf bytes
@@ -82,7 +82,7 @@ cfunInfoFun =
                             Nothing -> Nothing
                             Just n  -> Just $! Text.pack (show n)
              }
--}
+---}
 #elif LUA_USE_MACOSX
   return $ \fptr ->
   do mb <- funPtrInfo fptr

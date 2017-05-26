@@ -49,6 +49,8 @@ import Galua.Value
 import Galua.LuaString
 import Galua.FunValue
 import qualified Galua.Util.IOVector as IOVector
+import           Galua.Util.SmallVec (SmallVec)
+import qualified Galua.Util.SmallVec as SMV
 
 #include "lua.h"
 
@@ -155,7 +157,7 @@ pop :: SV.SizedVector Value -> IO Value
 pop stack = SV.pop stack `catch`
               \SomeException{} -> throwIO (LuaX "missing args")
 
-popN :: SV.SizedVector Value -> Int -> IO (Vector Value)
+popN :: SV.SizedVector Value -> Int -> IO (SmallVec Value)
 popN = SV.popN
 
 cServiceLoop :: MVar CNextStep -> TMVar CCallState -> IO CInt
@@ -309,7 +311,10 @@ lua_pushcclosure_hs l tid r func nup =
   reentryG "lua_pushcclosure" [cArg func, cArg nup] l tid r $ \vm args ->
   do upvals <- popN args (fromIntegral nup)
      info   <- machLookupCFun vm func
-     vs     <- Vector.thaw =<< traverse newIORef upvals
+     let upNum = SMV.length upvals
+     vs <- IOVector.new upNum
+     SMV.iForM_ upvals $ \i v -> IOVector.unsafeWrite vs i =<< newIORef v
+
      c      <- machNewClosure vm (cFunction CFunName { cfunName = info
                                                      , cfunAddr = func}) vs
      push args (Closure c)
@@ -441,12 +446,10 @@ lua_settable_hs l tid r ix =
   reentryG "lua_settable" [cArg ix] l tid r $ \vm args ->
   do t  <- valueArgument vm (fromIntegral ix) args
      kv <- popN args 2
-     if Vector.length kv /= 2
-       then luaError' "lua_settable: bad arguments"
-        else
-          let k = Vector.unsafeIndex kv 0
-              v = Vector.unsafeIndex kv 1
-          in m__newindex (machMetatablesRef (vmMachineEnv vm)) noResult t k v
+     case SMV.isVec2 kv of
+       Nothing -> luaError' "lua_settable: bad arguments"
+       Just (k,v) ->
+         m__newindex (machMetatablesRef (vmMachineEnv vm)) noResult t k v
 
 --------------------------------------------------------------------------------
 
@@ -726,16 +729,14 @@ lua_rawset_hs l tid r ix =
   reentryG "lua_rawset" [cArg ix] l tid r $ \vm args ->
   do t <- tableArgument vm (fromIntegral ix) args
      kv <- popN args 2
-     if Vector.length kv /= 2
-       then luaError' "lua_rawset: missing arguments"
-       else
-         let k = Vector.unsafeIndex kv 0
-             v = Vector.unsafeIndex kv 1
-         in case k of
-              Number (Double nan) | isNaN nan
+     case SMV.isVec2 kv of
+       Nothing -> luaError' "lua_rawset: missing arguments"
+       Just (k,v) ->
+         case k of
+           Number (Double nan) | isNaN nan
                   -> luaError' "Invalid table index NaN"
-              Nil -> luaError' "Invalid table index nil"
-              _   -> setTableRaw t k v >> noResult
+           Nil -> luaError' "Invalid table index nil"
+           _   -> setTableRaw t k v >> noResult
 
 foreign export ccall lua_seti_hs
   :: EntryPoint (CInt -> Lua_Integer -> IO CInt)
@@ -916,16 +917,15 @@ lua_callk_hs l tid r narg nresult ctx k =
      "lua_callk" [cArg narg, cArg nresult, cArg ctx, cArg k] l tid r $
   \vm args ->
   do fxs <- popN args (fromIntegral narg + 1)
-     if Vector.null fxs
-       then luaError' "lua_callk: invalid narg"
-       else
-         let f    = Vector.unsafeHead fxs
-             xs   = Vector.tail fxs
-             tabs = machMetatablesRef (vmMachineEnv vm)
+     case SMV.uncons fxs of
+       Nothing -> luaError' "lua_callk: invalid narg"
+       Just (f,xs) ->
+         let tabs = machMetatablesRef (vmMachineEnv vm)
              after rs =
-               do traverse_ (push args) (padTo (fromIntegral nresult) rs)
+               do if nresult == lua_multret
+                    then SMV.forM_ rs (push args)
+                    else SMV.padForM_ rs (fromIntegral nresult) Nil (push args)
                   noResult
-
          in m__call tabs after f xs
 
 
@@ -938,43 +938,34 @@ foreign export ccall lua_pcallk_hs :: ApiLuaPcallk
 lua_pcallk_hs :: ApiLuaPcallk
 lua_pcallk_hs l tid r narg nresult msgh ctx k out =
   reentryGK ctx k
-     "lua_callk" [cArg narg, cArg nresult, cArg msgh, cArg ctx, cArg k] l tid r $ \vm args ->
+     "lua_pcallk" [cArg narg, cArg nresult, cArg msgh, cArg ctx, cArg k] l tid r $ \vm args ->
   do h <- if msgh == 0
             then return DefaultHandler
             else FunHandler <$> functionArgument vm (fromIntegral msgh) args
      fxs <- popN args (fromIntegral narg + 1)
-     if Vector.null fxs
-        then luaError' "lua_pcallk: invalid narg"
-        else
-          let f    = Vector.unsafeHead fxs
-              xs   = Vector.tail fxs
-              tabs = machMetatablesRef (vmMachineEnv vm)
-              afterResolve (f',xs') = return $! FunCall f' xs' (Just hdlr) ifOK
+     case SMV.uncons fxs of
+       Nothing -> luaError' "lua_pcallk: invalid narg"
+       Just (f,xs) ->
+         let tabs = machMetatablesRef (vmMachineEnv vm)
+             afterResolve (f',xs') = return $! FunCall f' xs' (Just hdlr) ifOK
 
-              ifOK rs =
-                do traverse_ (push args)
-                     $ if nresult == lua_multret
-                         then rs
-                         else padTo (fromIntegral nresult) rs
-                   result out luaOK
+             ifOK rs =
+               do if nresult == lua_multret
+                     then SMV.forM_ rs (push args)
+                     else SMV.padForM_ rs (fromIntegral nresult) Nil (push args)
+                  result out luaOK
 
-              ifErr e =
-                do push args e
-                   result out luaERRRUN
+             ifErr e =
+               do push args e
+                  result out luaERRRUN
 
-              hdlr = Handler
-                      { handlerType = h
-                      , handlerK = ifErr
-                      }
+             hdlr = Handler
+                     { handlerType = h
+                     , handlerK = ifErr
+                     }
 
-          in resolveFunction tabs afterResolve f xs
+         in resolveFunction tabs afterResolve f xs
 
-padTo :: Int -> Vector Value -> Vector Value
-padTo n vs = case compare n l of
-               LT -> Vector.take n vs
-               EQ -> vs
-               GT -> vs Vector.++ Vector.replicate (n - l) Nil
-  where l = Vector.length vs
 
 
 ------------------------------------------------------------------------
@@ -1598,7 +1589,7 @@ lua_xmove_hs l tid r to n =
          do transfer <- popN fromArgs (fromIntegral n)
 
             toStack <- execCStack <$> getThreadField stExecEnv toRef
-            traverse_ (push toStack) transfer
+            SMV.forM_ transfer (push toStack)
        noResult
 
 ------------------------------------------------------------------------
