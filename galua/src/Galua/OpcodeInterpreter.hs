@@ -292,7 +292,7 @@ setCallResults ::
 setCallResults eenv a b xs =
   case b of
     CountInt count ->
-      do forM_ (Vector.indexed xs) $ \(i,v) ->
+      do forM_ (Vector.take count (Vector.indexed xs)) $ \(i,v) ->
            set eenv (plusReg a i) v
          let have = inline (Vector.length xs)
          when (have < count) $
