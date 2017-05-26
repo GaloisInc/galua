@@ -10,9 +10,8 @@ import Control.Exception(catch,SomeException(..),throwIO,try,displayException)
 import Control.Monad (replicateM_,when,unless)
 import Data.Int
 import Data.IORef
-import Data.Foldable (toList, for_, traverse_)
+import Data.Foldable (toList, for_)
 import Data.Functor (void)
-import Data.Traversable (for)
 import Data.Maybe (fromMaybe)
 import qualified Data.Vector as Vector
 import           Data.Vector (Vector)

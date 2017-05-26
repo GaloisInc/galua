@@ -24,7 +24,6 @@ module Galua.Util.SizedVector
 
 import Data.IORef
 import qualified Data.Vector.Mutable as IOVector
-import           Data.Vector ( Vector )
 import qualified Data.Vector as Vector
 import Data.Vector.Mutable (IOVector)
 import Data.Foldable (for_)

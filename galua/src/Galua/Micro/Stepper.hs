@@ -4,7 +4,6 @@ module Galua.Micro.Stepper (runClosure) where
 import           Data.Vector(Vector)
 import           Data.Vector.Mutable (IOVector)
 import qualified Data.Vector.Mutable as IOVector
-import qualified Data.Vector as Vector
 import qualified Data.Map as Map
 import           Data.IORef(IORef,newIORef)
 

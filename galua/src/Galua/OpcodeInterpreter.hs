@@ -5,10 +5,8 @@ import           Control.Exception hiding (Handler)
 import           Control.Monad
 import           Data.Foldable
 import           Data.IORef
-import           Data.Vector ( Vector )
 import qualified Data.Vector as Vector
 import qualified Data.Vector.Mutable as IOVector
-import           GHC.Exts(inline)
 
 import           Galua.Code
 import           Galua.Value

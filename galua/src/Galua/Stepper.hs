@@ -13,8 +13,6 @@ import           Control.Concurrent
 import           Control.Concurrent.STM (atomically, takeTMVar)
 import           Data.IORef
 import           Data.Foldable (traverse_)
-import           Data.Vector ( Vector )
-import qualified Data.Vector as Vector
 import qualified Data.Vector.Mutable as IOVector
 import           Foreign.ForeignPtr
 

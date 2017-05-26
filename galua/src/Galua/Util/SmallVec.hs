@@ -4,7 +4,7 @@ import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
 import           Data.Vector.Mutable (IOVector)
 import qualified Data.Vector.Mutable as IOVector
-import Control.Monad(replicateM_,zipWithM_)
+import Control.Monad(replicateM_)
 
 data SmallVec a = Vec0
                 | Vec1 a
