@@ -131,7 +131,7 @@ performFunCall c vm f vs mb k =
 
      setThreadField stExecEnv th newEnv
      setThreadField stHandlers th (consMb (fmap handlerType mb) handlers)
-     setThreadField stStack th (Stack.push frame stack)
+     frame `seq` setThreadField stStack th (Stack.push frame stack)
 
      let newVM = vm { vmCurExecEnv = newEnv }
      running c newVM =<< start
@@ -355,6 +355,7 @@ consMb Nothing xs = xs
 consMb (Just x) xs = x : xs
 
 
+{-# INLINE enterClosure #-}
 enterClosure ::
   VM -> Reference Closure -> SmallVec Value -> IO (ExecEnv, IO NextStep)
 enterClosure vm c vs =

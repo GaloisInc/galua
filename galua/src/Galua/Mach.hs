@@ -161,10 +161,10 @@ data HandlerType = FunHandler (Reference Closure)
 
 data StackFrame
   = ErrorFrame
-  | CallFrame Int -- PC
-              ExecEnv
-              (Maybe (Value -> IO NextStep)) -- Error
-              (SmallVec Value -> IO NextStep) -- Normal
+  | CallFrame !Int -- PC
+              !ExecEnv
+              !(Maybe (Value -> IO NextStep)) -- Error
+              !(SmallVec Value -> IO NextStep) -- Normal
 
 
 data Thread = MkThread

@@ -38,6 +38,7 @@ kst k =
 
 -- | Compute the result of executing the opcode at the given address
 -- within the current function execution environment.
+{-# INLINE execute #-}
 execute :: VM -> Int -> IO NextStep
 execute !vm !pc =
 
