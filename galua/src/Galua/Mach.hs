@@ -34,6 +34,7 @@ import           System.IO.Error (isDoesNotExistError)
 import           System.Environment (lookupEnv)
 
 import           Galua.Code
+import           Galua.Micro.AST(BlockName,BlockStmt)
 import           Galua.Reference
 import           Galua.Value
 import           Galua.FunValue(FunctionValue(..))
@@ -349,6 +350,36 @@ data LuaExecEnv = LuaExecEnv
   , luaExecFID      :: !FunId         -- ^ extra info
   , luaExecFunction :: !Function      -- ^ extra info
   }
+
+
+
+data V = VRef {-# UNPACK #-} !(IORef Value)
+       | VVal !Value
+
+data MLuaExecEnv = MLuaExecEnv
+  { mluaExecRegs :: {-# UNPACK #-} !(IOVector V)
+    -- ^ Local values
+
+  , mluaExecRegsTMP :: {-# UNPACK #-} !(IORef (Map (Int,Int) Value))
+    -- ^ Additional--temporary--registers
+    -- XXX: no need for a Map here, we can compile to a mutable vector
+    -- just assign sequential numbers to TMP vars.
+
+  , mluaExecArgReg  :: {-# UNPACK #-} !(IORef [Value]) -- varars
+  , mluaExecListReg :: {-# UNPACK #-} !(IORef [Value])  -- varres
+
+
+  , mluaExecUpvals :: {-# UNPACK #-} !(IOVector (IORef Value))
+  , mluaExecCode   :: !(Map BlockName (Vector BlockStmt)) -- ^ Our CFG
+
+
+  -- The current functions
+  , mluaExecClosure   :: !Value
+  , mluaExecFID       :: !FunId                         -- ^ Our functoin ID
+  , mluaExecFunction  :: !Function
+  }
+
+
 
 
 -- | Execution environment for a C function

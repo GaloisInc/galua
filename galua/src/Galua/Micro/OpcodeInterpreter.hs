@@ -3,7 +3,6 @@ module Galua.Micro.OpcodeInterpreter
   ( runStmtAt
   , Next(..)
   , crash
-  , Frame(..)
   , setListReg
   ) where
 
@@ -11,9 +10,7 @@ import           Data.IORef(IORef,newIORef,modifyIORef',modifyIORef,readIORef,
                             writeIORef)
 import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
-import           Data.Vector.Mutable(IOVector)
 import qualified Data.Vector.Mutable as IOVector
-import           Data.Map (Map)
 import qualified Data.Map as Map
 import           Data.Bits(complement,(.&.),(.|.),xor)
 import qualified Data.ByteString as BS
@@ -23,43 +20,13 @@ import           Galua.Value
 import           Galua.FunValue(luaFunction)
 import           Galua.Number(Number(..),wordshiftL,wordshiftR,nummod,
                               numberPow,numberDiv)
-import           Galua.Reference(AllocRef)
 import           Galua.LuaString
                    (LuaString,toByteString,fromByteString,luaStringLen)
 import           Galua.Micro.AST
 import qualified Galua.Code as Code
 import           Galua.Pretty(pp)
-import           Galua.Mach(TypeMetatables)
-
-data V = VRef {-# UNPACK #-} !(IORef Value)
-       | VVal !Value
-
-
-data Frame = Frame
-  { regs         :: !(IOVector V)
-    -- ^ Local values
-
-  , regsTMP      :: !(IORef (Map (Int,Int) Value))
-    -- ^ Additional--temporary--registers
-    -- XXX: no need for a Map here, we can compile to a mutable vector
-    -- just assign sequential numbers to TMP vars.
-
-  , upvals       :: !(IOVector (IORef Value))
-    -- ^ Upvalues available to this function
-
-  , argRegRef    :: !(IORef [Value])
-    -- ^ A special "list" register for storing function arguments
-
-  , listRegRef   :: !(IORef [Value])
-    -- ^ A special "list" register for storing results of functions
-
-  , metaTables   :: !(IORef TypeMetatables)
-
-  , ourCode      :: !(Map BlockName (Vector BlockStmt)) -- ^ Our CFG
-
-  , ourFID       :: !Code.FunId                         -- ^ Our functoin ID
-  , ourCaller    :: !CodeLoc                            -- ^ Who called us
-  }
+import           Galua.Mach(V(..),MLuaExecEnv(..),VM(..)
+                           , machNewClosure, machNewTable, MachineEnv(..) )
 
 data Next = EnterBlock BlockName
           | Continue
@@ -107,39 +74,40 @@ instance IsValue (Reference Closure) where
 instance IsValue (Reference UserData) where
   toValue = toValue . UserData
 
-setListReg :: Frame -> [Value] -> IO ()
-setListReg Frame{..} vs = writeIORef listRegRef vs
+setListReg :: MLuaExecEnv -> [Value] -> IO ()
+setListReg MLuaExecEnv{..} vs = writeIORef mluaExecListReg vs
 
-getListReg :: Frame -> IO [Value]
-getListReg Frame{..} = readIORef listRegRef
+getListReg :: MLuaExecEnv -> IO [Value]
+getListReg MLuaExecEnv{..} = readIORef mluaExecListReg
 
-setReg :: IsValue v => Frame -> Reg -> v -> IO ()
-setReg Frame { .. } reg v0 =
+setReg :: IsValue v => MLuaExecEnv -> Reg -> v -> IO ()
+setReg MLuaExecEnv { .. } reg v0 =
   case reg of
-    Reg (Code.Reg r) -> IOVector.write regs r val
+    Reg (Code.Reg r) -> IOVector.write mluaExecRegs r val
     TMP a b        -> case toValue v0 of
-                        VVal v -> modifyIORef' regsTMP (Map.insert (a,b) v)
+                        VVal v -> modifyIORef' mluaExecRegsTMP
+                                                          (Map.insert (a,b) v)
                         VRef _ -> error "[bug] reference in a TMP register"
 
   where
   val = toValue v0
 
 
-getReg :: Frame -> Reg -> IO V
-getReg Frame { .. } reg =
+getReg :: MLuaExecEnv -> Reg -> IO V
+getReg MLuaExecEnv { .. } reg =
   case reg of
-    Reg (Code.Reg r) -> IOVector.read regs r
-    TMP a b -> do m <- readIORef regsTMP
+    Reg (Code.Reg r) -> IOVector.read mluaExecRegs r
+    TMP a b -> do m <- readIORef mluaExecRegsTMP
                   case Map.lookup (a,b) m of
                     Just v  -> return (VVal v)
                     Nothing -> crash ("Read from bad reg: " ++ show (pp reg))
 
 
-getExpr :: Frame -> Expr -> IO V
+getExpr :: MLuaExecEnv -> Expr -> IO V
 getExpr f expr =
   case expr of
     EReg r -> getReg f r
-    EUp (Code.UpIx x)  -> VRef <$> IOVector.read (upvals f) x
+    EUp (Code.UpIx x)  -> VRef <$> IOVector.read (mluaExecUpvals f) x
     ELit l ->
       case l of
         LNil           -> return (VVal Nil)
@@ -148,7 +116,7 @@ getExpr f expr =
         LInt n         -> return (VVal (Number (Int n)))
         LStr bs        -> (VVal . String) <$> fromByteString bs
 
-getProp :: Frame -> Prop -> IO Bool
+getProp :: MLuaExecEnv -> Prop -> IO Bool
 getProp f (Prop pre es) =
   do vs <- mapM (getExpr f) es
      let unary cvt f' = case vs of
@@ -249,21 +217,18 @@ isBool val =
 
 --------------------------------------------------------------------------------
 
-performAssign :: Frame -> Reg -> Expr -> IO Next
+performAssign :: MLuaExecEnv -> Reg -> Expr -> IO Next
 performAssign f r e = do setReg f r =<< getExpr f e
                          return Continue
 
 
-performNewTable :: AllocRef -> Frame -> Int -> Reg -> IO Next
-performNewTable aref f pc r =
-  do let refLoc = RefLoc { refLocSite   = InLua (ourFID f) pc
-                         , refLocCaller = ourCaller f
-                         }
-     setReg f r =<< newTable aref refLoc 0 0
+performNewTable :: VM -> MLuaExecEnv -> Reg -> IO Next
+performNewTable vm f r =
+  do setReg f r =<< machNewTable vm 0 0
      return Continue
 
 
-performLookupTable :: Frame -> Reg -> Reg -> Expr -> IO Next
+performLookupTable :: MLuaExecEnv -> Reg -> Reg -> Expr -> IO Next
 performLookupTable f res tab ix =
   do t <- isTable =<< getReg f tab
      v <- isValue =<< getExpr f ix
@@ -271,7 +236,7 @@ performLookupTable f res tab ix =
      return Continue
 
 
-performSetTable :: Frame -> Reg -> Expr -> Expr -> IO Next
+performSetTable :: MLuaExecEnv -> Reg -> Expr -> Expr -> IO Next
 performSetTable f tab ix val =
   do t <- isTable =<< getReg f tab
      i <- isValue =<< getExpr f ix
@@ -280,7 +245,7 @@ performSetTable f tab ix val =
      return Continue
 
 
-performSetTableList :: Frame -> Reg -> Int -> IO Next
+performSetTableList :: MLuaExecEnv -> Reg -> Int -> IO Next
 performSetTableList f tab ix =
   do t  <- isTable =<< getReg f tab
      xs <- getListReg f
@@ -288,14 +253,15 @@ performSetTableList f tab ix =
      return Continue
 
 
-performGetMeta :: Frame -> Reg -> Expr -> IO Next
-performGetMeta f r e =
+performGetMeta :: VM -> MLuaExecEnv -> Reg -> Expr -> IO Next
+performGetMeta vm f r e =
   do v <- isValue =<< getExpr f e
      let setMb mb = do case mb of
                          Nothing -> setReg f r ()
                          Just t  -> setReg f r t
                        return Continue
-     tabs <- readIORef (metaTables f)
+
+     tabs <- readIORef (machMetatablesRef (vmMachineEnv vm))
      let tyMeta t = setMb (Map.lookup t tabs)
 
      case v of
@@ -305,13 +271,13 @@ performGetMeta f r e =
        _            -> tyMeta (valueType v)
 
 
-performRaise :: Frame -> Expr -> IO Next
+performRaise :: MLuaExecEnv -> Expr -> IO Next
 performRaise f e =
   do v <- isValue =<< getExpr f e
      return (RaiseError v)
 
 
-performCase :: Frame ->
+performCase :: MLuaExecEnv ->
                Expr -> [(ValueType,BlockName)] -> Maybe BlockName -> IO Next
 performCase f e as d =
   do v <- isValue =<< getExpr f e
@@ -323,7 +289,7 @@ performCase f e as d =
            Just b  -> return (EnterBlock b)
 
 
-performIf :: Frame -> Prop -> BlockName -> BlockName -> IO Next
+performIf :: MLuaExecEnv -> Prop -> BlockName -> BlockName -> IO Next
 performIf f p tr fa =
   do b <- getProp f p
      return (EnterBlock (if b then tr else fa))
@@ -333,70 +299,64 @@ performGoto :: BlockName -> IO Next
 performGoto b = return (EnterBlock b)
 
 
-performCall :: Frame -> Reg -> IO Next
+performCall :: MLuaExecEnv -> Reg -> IO Next
 performCall f clo =
   do fun <- isFunction =<< getReg f clo
      vs  <- getListReg f
      return (MakeCall fun vs)
 
 
-performTailCall :: Frame -> Reg -> IO Next
+performTailCall :: MLuaExecEnv -> Reg -> IO Next
 performTailCall f clo =
   do fun <- isFunction =<< getReg f clo
      vs  <- getListReg f
      return (MakeTailCall fun vs)
 
 
-performReturn :: Frame -> IO Next
+performReturn :: MLuaExecEnv -> IO Next
 performReturn f =
   do vs <- getListReg f
      return (ReturnWith vs)
 
 
-performNewClosure :: AllocRef -> Frame -> Int ->
-                                        Reg -> Int -> Code.Function -> IO Next
-performNewClosure aref f pc res ix fun =
+performNewClosure :: VM -> MLuaExecEnv -> Reg -> Int -> Code.Function -> IO Next
+performNewClosure vm f res ix fun =
   do rs <- mapM (isReference <=< getExpr f) (funcUpvalExprs fun)
 
-     let fid    = ourFID f
+     let fid    = mluaExecFID f
          fu     = luaFunction (Code.subFun fid ix) fun
-         refLoc = RefLoc { refLocSite   = InLua fid pc
-                         , refLocCaller = ourCaller f
-                         }
 
-     clo <- newClosure aref refLoc fu =<< Vector.thaw (Vector.fromList rs)
-     setReg f res clo
+     setReg f res =<< machNewClosure vm fu =<< Vector.thaw (Vector.fromList rs)
      return Continue
 
-
-lregRef :: Frame -> ListReg -> IORef [Value]
+lregRef :: MLuaExecEnv -> ListReg -> IORef [Value]
 lregRef f r =
   case r of
-    ArgReg  -> argRegRef f
-    ListReg -> listRegRef f
+    ArgReg  -> mluaExecArgReg f
+    ListReg -> mluaExecListReg f
 
 
-performDrop :: Frame -> ListReg -> Int -> IO Next
+performDrop :: MLuaExecEnv -> ListReg -> Int -> IO Next
 performDrop f res n =
   do modifyIORef' (lregRef f res) (drop n)
      return Continue
 
 
-performSetList :: Frame -> ListReg -> [Expr] -> IO Next
+performSetList :: MLuaExecEnv -> ListReg -> [Expr] -> IO Next
 performSetList f res es =
   do vs <- mapM (isValue <=< getExpr f) es
      writeIORef (lregRef f res) vs
      return Continue
 
 
-performAppend :: Frame -> ListReg -> [Expr] -> IO Next
+performAppend :: MLuaExecEnv -> ListReg -> [Expr] -> IO Next
 performAppend f res es =
   do vs <- mapM (isValue <=< getExpr f) es
      modifyIORef (lregRef f res) (vs ++)
      return Continue
 
 
-performIndexList :: Frame -> Reg -> ListReg -> Int -> IO Next
+performIndexList :: MLuaExecEnv -> Reg -> ListReg -> Int -> IO Next
 performIndexList f res lst ix =
   do vs <- readIORef (lregRef f lst)
      case splitAt ix vs of
@@ -405,20 +365,20 @@ performIndexList f res lst ix =
      return Continue
 
 
-performNewRef :: Frame -> Reg -> Expr -> IO Next
+performNewRef :: MLuaExecEnv -> Reg -> Expr -> IO Next
 performNewRef f res val =
   do setReg f res =<< newIORef =<< isValue =<< getExpr f val
      return Continue
 
 
-performReadRef :: Frame -> Reg -> Expr -> IO Next
+performReadRef :: MLuaExecEnv -> Reg -> Expr -> IO Next
 performReadRef f res ref =
   do r <- isReference =<< getExpr f ref
      setReg f res =<< readIORef r
      return Continue
 
 
-performWriteRef :: Frame -> Expr -> Expr -> IO Next
+performWriteRef :: MLuaExecEnv -> Expr -> Expr -> IO Next
 performWriteRef f ref val =
   do r <- isReference =<< getExpr f ref
      v <- isValue =<< getExpr f val
@@ -427,7 +387,7 @@ performWriteRef f ref val =
 
 
 
-performArith1 :: Frame -> Reg -> Op1 -> Expr -> IO Next
+performArith1 :: MLuaExecEnv -> Reg -> Op1 -> Expr -> IO Next
 performArith1 f res op e =
   do vv <- getExpr f e
      case op of
@@ -480,7 +440,7 @@ performArith1 f res op e =
      return Continue
 
 
-performArith2 :: Frame -> Reg -> Op2 -> Expr -> Expr -> IO Next
+performArith2 :: MLuaExecEnv -> Reg -> Op2 -> Expr -> Expr -> IO Next
 performArith2 f res op e1 e2 =
   do vv1 <- getExpr f e1
      vv2 <- getExpr f e2
@@ -521,18 +481,18 @@ performArith2 f res op e1 e2 =
      return Continue
 
 
-runStmt :: AllocRef -> Frame -> Int -> BlockStmt -> IO Next
-runStmt aref f pc stmt =
+runStmt :: VM -> MLuaExecEnv -> BlockStmt -> IO Next
+runStmt vm f stmt =
   case stmtCode stmt of
     Comment _               -> return Continue
     Assign r e              -> performAssign f r e
 
     -- Tables
-    NewTable r              -> performNewTable aref f pc r
+    NewTable r              -> performNewTable vm f r
     LookupTable res tab ix  -> performLookupTable f res tab ix
     SetTable tab ix val     -> performSetTable f tab ix val
     SetTableList tab ix     -> performSetTableList f tab ix
-    GetMeta r e             -> performGetMeta f r e
+    GetMeta r e             -> performGetMeta vm f r e
 
     -- Local control flow
     Case e as d             -> performCase f e as d
@@ -540,7 +500,7 @@ runStmt aref f pc stmt =
     Goto b                  -> performGoto b
 
     -- Functions
-    NewClosure res ix fun   -> performNewClosure aref f pc res ix fun
+    NewClosure res ix fun   -> performNewClosure vm f res ix fun
     Call clo                -> performCall f clo
     TailCall clo            -> performTailCall f clo
     Return                  -> performReturn f
@@ -568,10 +528,10 @@ runStmt aref f pc stmt =
     SetUpVal _ _            -> crash "SetUpVal in phase 2"
 
 
-runStmtAt :: AllocRef -> Frame -> Vector BlockStmt -> Int -> IO Next
-runStmtAt aref f curBlock pc =
+runStmtAt :: VM -> MLuaExecEnv -> Vector BlockStmt -> Int -> IO Next
+runStmtAt vm f curBlock pc =
   case curBlock Vector.!? pc of
-    Just stmt -> runStmt aref f pc stmt
+    Just stmt -> runStmt vm f stmt
     Nothing   -> crash ("Invalid PC: " ++ show pc)
 
 
