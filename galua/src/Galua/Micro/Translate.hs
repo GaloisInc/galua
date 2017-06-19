@@ -194,7 +194,13 @@ micro fun pc =
         do let a' = Code.plusReg a 1
            getCallArguments a' b
            resolveFunction (Reg a) $
-             emit (TailCall (Reg a))
+             do emit (TailCall (Reg a))
+
+                -- To make the following RETURN happy.
+                -- LuaC put it there because it support disabling
+                -- of tail calls.
+                setCallResults a ListReg c
+                advance
 
       Code.OP_RETURN a c ->
         do getCallArguments a c
@@ -309,9 +315,6 @@ micro fun pc =
     case rk of
       Code.RK_Reg r -> toExpr r
       Code.RK_Kst k -> toExpr k
-
-
-
 
 
 --------------------------------------------------------------------------------
@@ -665,9 +668,7 @@ callValue f fin =
     do emit $ Call f
        fin
 
-getCallArguments :: Code.Reg {- ^ start -} ->
-                    Code.Count  {- ^ count -} ->
-                    M ()
+getCallArguments :: Code.Reg {- ^ start -} -> Code.Count  {- ^ count -} -> M ()
 getCallArguments from count =
   case count of
     Code.CountInt x ->
