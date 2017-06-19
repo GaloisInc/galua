@@ -359,12 +359,12 @@ data LuaExecEnv = LuaExecEnv
 
 
 
-data V = VRef {-# UNPACK #-} !(IORef Value)
-       | VVal !Value
-
 data MLuaExecEnv = MLuaExecEnv
-  { mluaExecRegs :: {-# UNPACK #-} !(IOVector V)
-    -- ^ Local values
+  { mluaExecRegsValue :: {-# UNPACK #-} !(IOVector Value)
+  , mluaExecRegsRefs  :: {-# UNPACK #-} !(IOVector (IORef Value))
+    -- ^ Local values, split across two arrays.
+    -- INVARIANT: if an index is defined in one of the arrays, it
+    -- will be undefined in the other.
 
   , mluaExecRegsTMP :: {-# UNPACK #-} !(IOVector Value)
     -- ^ Additional--temporary--registers

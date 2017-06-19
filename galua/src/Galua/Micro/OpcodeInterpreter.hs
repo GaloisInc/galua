@@ -14,7 +14,7 @@ import qualified Data.Vector.Mutable as IOVector
 import qualified Data.Map as Map
 import           Data.Bits(complement,(.&.),(.|.),xor)
 import qualified Data.ByteString as BS
-import           Control.Monad(zipWithM_,(<=<))
+import           Control.Monad(zipWithM_)
 
 import           Galua.Value
 import           Galua.FunValue(luaFunction)
@@ -24,8 +24,7 @@ import           Galua.LuaString
                    (LuaString,toByteString,fromByteString,luaStringLen)
 import           Galua.Micro.AST
 import qualified Galua.Code as Code
-import           Galua.Pretty(pp)
-import           Galua.Mach(V(..),MLuaExecEnv(..),VM(..)
+import           Galua.Mach(MLuaExecEnv(..),VM(..)
                            , machNewClosure, machNewTable, MachineEnv(..) )
 
 data Next = EnterBlock BlockName
@@ -36,16 +35,10 @@ data Next = EnterBlock BlockName
           | ReturnWith [Value]
 
 class IsValue t where
-  toValue :: t -> V
-
-instance IsValue V where
-  toValue = id
-
-instance IsValue (IORef Value) where
-  toValue = VRef
+  toValue :: t -> Value
 
 instance IsValue Value where
-  toValue = VVal
+  toValue = id
 
 instance IsValue Bool where
   toValue = toValue . Bool
@@ -83,34 +76,55 @@ getListReg MLuaExecEnv{..} = readIORef mluaExecListReg
 setReg :: IsValue v => MLuaExecEnv -> Reg -> v -> IO ()
 setReg MLuaExecEnv { .. } reg v0 =
   case reg of
-    Reg (Code.Reg r) -> IOVector.write mluaExecRegs r val
-    TMP _renumbured b ->
-      case val of
-       VVal v -> IOVector.write mluaExecRegsTMP b v
-       VRef _ -> error "[bug] reference in a TMP register"
+    Reg (Code.Reg r)  -> do IOVector.unsafeWrite mluaExecRegsValue r $! val
+                            IOVector.unsafeWrite mluaExecRegsRefs r
+                             (error "(do not use)") -- to avoid memory leads
+    TMP _renumbured b -> IOVector.unsafeWrite mluaExecRegsTMP b   $! val
 
   where
   val = toValue v0
 
-
-getReg :: MLuaExecEnv -> Reg -> IO V
+getReg :: MLuaExecEnv -> Reg -> IO Value
 getReg MLuaExecEnv { .. } reg =
   case reg of
-    Reg (Code.Reg r) -> IOVector.read mluaExecRegs r
-    TMP _renumbured b -> VVal <$> IOVector.read mluaExecRegsTMP b
+    Reg (Code.Reg r)  -> IOVector.unsafeRead mluaExecRegsValue r
+    TMP _renumbured b -> IOVector.unsafeRead mluaExecRegsTMP b
 
-getExpr :: MLuaExecEnv -> Expr -> IO V
+
+setRefReg :: MLuaExecEnv -> Reg -> IORef Value -> IO ()
+setRefReg MLuaExecEnv { .. } reg v0 =
+  case reg of
+    Reg (Code.Reg r) -> do IOVector.unsafeWrite mluaExecRegsRefs r v0
+                           IOVector.unsafeWrite mluaExecRegsValue r
+                             (error "(do not use)") -- to avoid memory leads
+    TMP {} -> crash "setRefReg: temporary registers do not contain references"
+
+getRefReg :: MLuaExecEnv -> Reg -> IO (IORef Value)
+getRefReg MLuaExecEnv { .. } reg =
+  case reg of
+    Reg (Code.Reg r) -> IOVector.unsafeRead mluaExecRegsRefs r
+    TMP {}           -> crash "[bug] getRefReg: not a reference"
+
+
+getRefExpr :: MLuaExecEnv -> Expr -> IO (IORef Value)
+getRefExpr f expr =
+  case expr of
+    EReg r             -> getRefReg f r
+    EUp (Code.UpIx x)  -> IOVector.unsafeRead (mluaExecUpvals f) x
+    ELit {}            -> crash "getRefExpr: literals are not references"
+
+getExpr :: MLuaExecEnv -> Expr -> IO Value
 getExpr f expr =
   case expr of
     EReg r -> getReg f r
-    EUp (Code.UpIx x)  -> VRef <$> IOVector.read (mluaExecUpvals f) x
+    EUp {} -> crash "getExpr: upvalues are references"
     ELit l ->
       case l of
-        LNil           -> return (VVal Nil)
-        LBool b        -> return (VVal (Bool b))
-        LNum d         -> return (VVal (Number (Double d)))
-        LInt n         -> return (VVal (Number (Int n)))
-        LStr bs        -> (VVal . String) <$> fromByteString bs
+        LNil           -> return Nil
+        LBool b        -> return (Bool b)
+        LNum d         -> return (Number (Double d))
+        LInt n         -> return (Number (Int n))
+        LStr bs        -> String <$> fromByteString bs
 
 getProp :: MLuaExecEnv -> Prop -> IO Bool
 getProp f (Prop pre es) =
@@ -126,8 +140,8 @@ getProp f (Prop pre es) =
 
      case pre of
        IsNone -> case vs of
-                   [VVal (Bool b)] -> return b
-                   [VVal Nil]    -> return False
+                   [Bool b] -> return b
+                   [Nil]    -> return False
                    [_]      -> return True
                    _        -> typeError "exactly 1 parameter"
        IsInteger -> unary isNumber $ \n -> case n of
@@ -138,7 +152,7 @@ getProp f (Prop pre es) =
                                          Int _    -> False
                                          Double d -> isNaN d
 
-       Equals     -> binary isValue  (==)
+       Equals     -> binary return   (==)
        NumberLT   -> binary isNumber (<)
        NumberLEQ  -> binary isNumber (<=)
        StringLT   -> binary isString (<)
@@ -153,63 +167,48 @@ crash :: String -> IO a
 crash msg = fail msg
 
 
-isTable :: V -> IO (Reference Table)
+isTable :: Value -> IO (Reference Table)
 isTable val =
   case val of
-    VVal (Table t) -> return t
-    _              -> typeError "table"
+    Table t -> return t
+    _       -> typeError "table"
 
-isFunction :: V -> IO (Reference Closure)
+isFunction :: Value -> IO (Reference Closure)
 isFunction val =
   case val of
-    VVal (Closure c) -> return c
-    _                -> typeError "function"
+    Closure c -> return c
+    _         -> typeError "function"
 
 
-
-isValue :: V -> IO Value
-isValue val =
-  case val of
-    VVal v -> return v
-    _      -> typeError "Lua value"
-
-isReference :: V -> IO (IORef Value)
-isReference val =
-    case val of
-      VRef r -> return r
-      _      -> typeError "reference"
-
-
-isNumber :: V -> IO Number
+isNumber :: Value -> IO Number
 isNumber val =
   case val of
-    VVal (Number n) -> return n
-    _ -> typeError "number"
+    Number n -> return n
+    _        -> typeError "number"
 
-isInt :: V -> IO Int
+isInt :: Value -> IO Int
 isInt val =
   case val of
-    VVal (Number (Int n)) -> return n
-    _ -> typeError "integer"
+    Number (Int n) -> return n
+    _              -> typeError "integer"
 
-isDouble :: V -> IO Double
+isDouble :: Value -> IO Double
 isDouble val =
   case val of
-    VVal (Number (Double d)) -> return d
-    _ -> typeError "double"
+    Number (Double d) -> return d
+    _                 -> typeError "double"
 
-isString :: V -> IO LuaString
+isString :: Value -> IO LuaString
 isString val =
   case val of
-    VVal (String s) -> return s
-    _ -> typeError "string"
+    String s -> return s
+    _        -> typeError "string"
 
-
-isBool :: V -> IO Bool
+isBool :: Value -> IO Bool
 isBool val =
   case val of
-    VVal (Bool b) -> return b
-    _ -> typeError "boolean"
+    Bool b -> return b
+    _      -> typeError "boolean"
 
 --------------------------------------------------------------------------------
 
@@ -227,7 +226,7 @@ performNewTable vm f r =
 performLookupTable :: MLuaExecEnv -> Reg -> Reg -> Expr -> IO Next
 performLookupTable f res tab ix =
   do t <- isTable =<< getReg f tab
-     v <- isValue =<< getExpr f ix
+     v <- getExpr f ix
      setReg f res =<< getTableRaw t v
      return Continue
 
@@ -235,8 +234,8 @@ performLookupTable f res tab ix =
 performSetTable :: MLuaExecEnv -> Reg -> Expr -> Expr -> IO Next
 performSetTable f tab ix val =
   do t <- isTable =<< getReg f tab
-     i <- isValue =<< getExpr f ix
-     v <- isValue =<< getExpr f val
+     i <- getExpr f ix
+     v <- getExpr f val
      setTableRaw t i v
      return Continue
 
@@ -251,7 +250,7 @@ performSetTableList f tab ix =
 
 performGetMeta :: VM -> MLuaExecEnv -> Reg -> Expr -> IO Next
 performGetMeta vm f r e =
-  do v <- isValue =<< getExpr f e
+  do v <- getExpr f e
      let setMb mb = do case mb of
                          Nothing -> setReg f r ()
                          Just t  -> setReg f r t
@@ -269,14 +268,14 @@ performGetMeta vm f r e =
 
 performRaise :: MLuaExecEnv -> Expr -> IO Next
 performRaise f e =
-  do v <- isValue =<< getExpr f e
+  do v <- getExpr f e
      return (RaiseError v)
 
 
 performCase :: MLuaExecEnv ->
                Expr -> [(ValueType,BlockName)] -> Maybe BlockName -> IO Next
 performCase f e as d =
-  do v <- isValue =<< getExpr f e
+  do v <- getExpr f e
      case lookup (valueType v) as of
        Just b  -> return (EnterBlock b)
        Nothing ->
@@ -317,7 +316,7 @@ performReturn f =
 
 performNewClosure :: VM -> MLuaExecEnv -> Reg -> Int -> Code.Function -> IO Next
 performNewClosure vm f res ix fun =
-  do rs <- mapM (isReference <=< getExpr f) (funcUpvalExprs fun)
+  do rs <- mapM (getRefExpr f) (funcUpvalExprs fun)
 
      let fid    = mluaExecFID f
          fu     = luaFunction (Code.subFun fid ix) fun
@@ -340,14 +339,14 @@ performDrop f res n =
 
 performSetList :: MLuaExecEnv -> ListReg -> [Expr] -> IO Next
 performSetList f res es =
-  do vs <- mapM (isValue <=< getExpr f) es
+  do vs <- mapM (getExpr f) es
      writeIORef (lregRef f res) vs
      return Continue
 
 
 performAppend :: MLuaExecEnv -> ListReg -> [Expr] -> IO Next
 performAppend f res es =
-  do vs <- mapM (isValue <=< getExpr f) es
+  do vs <- mapM (getExpr f) es
      modifyIORef (lregRef f res) (vs ++)
      return Continue
 
@@ -363,21 +362,21 @@ performIndexList f res lst ix =
 
 performNewRef :: MLuaExecEnv -> Reg -> Expr -> IO Next
 performNewRef f res val =
-  do setReg f res =<< newIORef =<< isValue =<< getExpr f val
+  do setRefReg f res =<< newIORef =<< getExpr f val
      return Continue
 
 
 performReadRef :: MLuaExecEnv -> Reg -> Expr -> IO Next
 performReadRef f res ref =
-  do r <- isReference =<< getExpr f ref
+  do r <- getRefExpr f ref
      setReg f res =<< readIORef r
      return Continue
 
 
 performWriteRef :: MLuaExecEnv -> Expr -> Expr -> IO Next
 performWriteRef f ref val =
-  do r <- isReference =<< getExpr f ref
-     v <- isValue =<< getExpr f val
+  do r <- getRefExpr f ref
+     v <- getExpr f val
      writeIORef r v
      return Continue
 
@@ -385,51 +384,47 @@ performWriteRef f ref val =
 
 performArith1 :: MLuaExecEnv -> Reg -> Op1 -> Expr -> IO Next
 performArith1 f res op e =
-  do vv <- getExpr f e
+  do v <- getExpr f e
      case op of
 
        ToNumber ->
-         do v <- isValue vv
-            case valueNumber v of
-              Just n  -> setReg f res n
-              Nothing -> setReg f res ()
+         case valueNumber v of
+           Just n  -> setReg f res n
+           Nothing -> setReg f res ()
 
        ToInt ->
-         do v <- isValue vv
-            case valueInt v of
-             Just n  -> setReg f res n
-             Nothing -> setReg f res ()
+         case valueInt v of
+           Just n  -> setReg f res n
+           Nothing -> setReg f res ()
 
        IntToDouble ->
-         do n <- isInt vv
+         do n <- isInt v
             setReg f res (fromIntegral n :: Double)
 
        ToString ->
-         do n <- isValue vv
-            case valueString n of
-              Just s  -> setReg f res =<< fromByteString s
-              Nothing -> setReg f res ()
+         case valueString v of
+           Just s  -> setReg f res =<< fromByteString s
+           Nothing -> setReg f res ()
 
        ToBoolean ->
-         do n <- isValue vv
-            case valueString n of
-              Just s  -> setReg f res =<< fromByteString s
-              Nothing -> setReg f res ()
+         case valueString v of
+           Just s  -> setReg f res =<< fromByteString s
+           Nothing -> setReg f res ()
 
-       StringLen   -> setReg f res . luaStringLen =<< isString vv
+       StringLen   -> setReg f res . luaStringLen =<< isString v
 
-       TableLen    -> setReg f res =<< tableLen =<< isTable vv
+       TableLen    -> setReg f res =<< tableLen =<< isTable v
 
        NumberUnaryMinus ->
-         do d <- isNumber vv
+         do d <- isNumber v
             setReg f res (negate d)
 
        Complement  ->
-         do i <- isInt vv
+         do i <- isInt v
             setReg f res (complement i)
 
        BoolNot ->
-         do b <- isBool vv
+         do b <- isBool v
             setReg f res (not b)
 
 

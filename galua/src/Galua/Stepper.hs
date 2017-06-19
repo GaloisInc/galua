@@ -426,7 +426,8 @@ enterClosure vm c vs =
   useMicroLua fid f cloUpvalues =
     do let micro = funcMicroCode f
 
-       regs    <- IOVector.new (funcMaxStackSize f)
+       regsVal <- IOVector.new (funcMaxStackSize f)
+       regsRef <- IOVector.new (funcMaxStackSize f)
        regsTMP <- IOVector.new (functionRegsTMP micro)
 
        argRef  <- newIORef (SMV.toList vs)
@@ -435,7 +436,8 @@ enterClosure vm c vs =
        let code = functionCode micro
            entry = code Map.! EntryBlock
            eenv = MLuaExecEnv
-                    { mluaExecRegs      = regs
+                    { mluaExecRegsValue = regsVal
+                    , mluaExecRegsRefs  = regsRef
                     , mluaExecRegsTMP   = regsTMP
                     , mluaExecArgReg    = argRef
                     , mluaExecListReg   = listRef
