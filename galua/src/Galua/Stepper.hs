@@ -393,7 +393,7 @@ enterClosure vm c vs =
                                                   execCFunction l cServ cfun)
 
   where
-  normal = False -- True
+  normal = True
 
   useNormalLua fid f cloUpvalues =
     do let regNum = funcMaxStackSize f
