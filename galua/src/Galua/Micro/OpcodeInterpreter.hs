@@ -84,10 +84,10 @@ setReg :: IsValue v => MLuaExecEnv -> Reg -> v -> IO ()
 setReg MLuaExecEnv { .. } reg v0 =
   case reg of
     Reg (Code.Reg r) -> IOVector.write mluaExecRegs r val
-    TMP a b        -> case toValue v0 of
-                        VVal v -> modifyIORef' mluaExecRegsTMP
-                                                          (Map.insert (a,b) v)
-                        VRef _ -> error "[bug] reference in a TMP register"
+    TMP _renumbured b ->
+      case val of
+       VVal v -> IOVector.write mluaExecRegsTMP b v
+       VRef _ -> error "[bug] reference in a TMP register"
 
   where
   val = toValue v0
@@ -97,11 +97,7 @@ getReg :: MLuaExecEnv -> Reg -> IO V
 getReg MLuaExecEnv { .. } reg =
   case reg of
     Reg (Code.Reg r) -> IOVector.read mluaExecRegs r
-    TMP a b -> do m <- readIORef mluaExecRegsTMP
-                  case Map.lookup (a,b) m of
-                    Just v  -> return (VVal v)
-                    Nothing -> crash ("Read from bad reg: " ++ show (pp reg))
-
+    TMP _renumbured b -> VVal <$> IOVector.read mluaExecRegsTMP b
 
 getExpr :: MLuaExecEnv -> Expr -> IO V
 getExpr f expr =

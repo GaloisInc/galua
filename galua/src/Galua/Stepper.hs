@@ -26,7 +26,8 @@ import           Galua.CallIntoC
 import           Galua.OpcodeInterpreter (execute)
 import           Galua.LuaString
 import           Galua.Code
-import           Galua.Micro.AST(functionCode,BlockName(EntryBlock))
+import           Galua.Micro.AST(functionCode,functionRegsTMP,
+                                            BlockName(EntryBlock))
 import qualified Galua.Micro.Stepper as MicroStepper
 
 import           Galua.Util.Stack (Stack)
@@ -392,7 +393,7 @@ enterClosure vm c vs =
                                                   execCFunction l cServ cfun)
 
   where
-  normal = True
+  normal = False -- True
 
   useNormalLua fid f cloUpvalues =
     do let regNum = funcMaxStackSize f
@@ -423,13 +424,15 @@ enterClosure vm c vs =
 
 
   useMicroLua fid f cloUpvalues =
-    do regs    <- IOVector.new (funcMaxStackSize f)
-       regsTMP <- newIORef Map.empty
+    do let micro = funcMicroCode f
+
+       regs    <- IOVector.new (funcMaxStackSize f)
+       regsTMP <- IOVector.new (functionRegsTMP micro)
 
        argRef  <- newIORef (SMV.toList vs)
        listRef <- newIORef []
 
-       let code = functionCode (funcMicroCode f)
+       let code = functionCode micro
            entry = code Map.! EntryBlock
            eenv = MLuaExecEnv
                     { mluaExecRegs      = regs

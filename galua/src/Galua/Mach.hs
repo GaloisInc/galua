@@ -366,10 +366,8 @@ data MLuaExecEnv = MLuaExecEnv
   { mluaExecRegs :: {-# UNPACK #-} !(IOVector V)
     -- ^ Local values
 
-  , mluaExecRegsTMP :: {-# UNPACK #-} !(IORef (Map (Int,Int) Value))
+  , mluaExecRegsTMP :: {-# UNPACK #-} !(IOVector Value)
     -- ^ Additional--temporary--registers
-    -- XXX: no need for a Map here, we can compile to a mutable vector
-    -- just assign sequential numbers to TMP vars.
 
   , mluaExecArgReg  :: {-# UNPACK #-} !(IORef [Value]) -- varars
   , mluaExecListReg :: {-# UNPACK #-} !(IORef [Value])  -- varres

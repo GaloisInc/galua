@@ -21,12 +21,15 @@ import           Galua.Code (Literal(..))
 import           Galua.Pretty
 
 data MicroFunction = MicroFunction
-  { functionCode :: Map BlockName (Vector BlockStmt)
+  { functionCode    :: Map BlockName (Vector BlockStmt)
+  , functionRegsTMP :: !Int
   } deriving Show
 
 
 blankMicroFunction :: MicroFunction
-blankMicroFunction = MicroFunction { functionCode = Map.empty }
+blankMicroFunction = MicroFunction { functionCode = Map.empty
+                                   , functionRegsTMP = 0
+                                   }
 
 data Reg        = Reg !Code.Reg
                 | TMP !Int !Int     -- ^ phase, temporary

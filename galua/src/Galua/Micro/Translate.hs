@@ -21,9 +21,11 @@ import           Galua.Micro.Translate.Monad
 import           Galua.Micro.Translate.AnalyzeRefs(analyze)
 import           Galua.Micro.Translate.ExplicitRefs(explicitBlocks)
 import           Galua.Micro.Translate.JoinBlocks(joinBlocks)
+import           Galua.Micro.Translate.RenumberTMP(renumberTMP)
 
 translate :: Code.Function -> MicroFunction
-translate fun = joinBlocks pass1 { functionCode = explicitBlocks refs code1 }
+translate fun = renumberTMP lastPhase
+              $ joinBlocks pass1 { functionCode = explicitBlocks refs code1 }
   where
   pass1 = translatePass1 fun
   code1 = functionCode pass1
@@ -43,6 +45,9 @@ translateTop n f = translateAll (rootFun n) f Map.empty
 
 --------------------------------------------------------------------------------
 
+lastPhase :: Int
+lastPhase = 3
+
 newTMP :: M Reg
 newTMP = newPhaseTMP 1
 
@@ -52,7 +57,8 @@ translatePass1 fun =
     { functionCode = generate $
                 do prelude (Code.funcNumParams fun)
                    mapM_ (micro fun) $ take (Vector.length code) [ 0 .. ]
-           }
+    , functionRegsTMP = 0
+    }
   where
   code = Code.funcCode fun
 
