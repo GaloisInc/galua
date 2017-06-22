@@ -48,6 +48,9 @@ library
                        Galua.Micro.Translate.JoinBlocks
                        Galua.Micro.Translate.RenumberTMP
 
+                       Galua.Micro.JIT
+                       Galua.Micro.Compile
+
                        Galua.Names.Find
                        Galua.Names.Eval
 

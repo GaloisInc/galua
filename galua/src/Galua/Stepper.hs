@@ -29,6 +29,7 @@ import           Galua.Code
 import           Galua.Micro.AST(functionCode,functionRegsTMP,
                                             BlockName(EntryBlock))
 import qualified Galua.Micro.Stepper as MicroStepper
+import           Galua.Micro.JIT(jit)
 
 import           Galua.Util.Stack (Stack)
 import qualified Galua.Util.Stack as Stack
