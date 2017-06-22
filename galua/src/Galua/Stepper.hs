@@ -394,7 +394,7 @@ enterClosure vm c vs =
                                                   execCFunction l cServ cfun)
 
   where
-  normal = True
+  normal = False -- True
 
   useNormalLua fid f cloUpvalues =
     do let regNum = funcMaxStackSize f
@@ -450,6 +450,8 @@ enterClosure vm c vs =
                     }
 
            start = MicroStepper.run vm eenv entry 0
+
+       _compiledCode <- jit (funcMicroCode f)
 
        return (ExecInMLua eenv, start)
 

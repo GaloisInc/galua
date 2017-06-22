@@ -1,8 +1,6 @@
 {-# LANGUAGE OverloadedStrings, NamedFieldPuns, TemplateHaskell, CPP #-}
 module Galua.Debugger.Server () where
 
-import           Language.Lua.Bytecode.FunId
-
 import           Galua.Debugger.Options(Options(..), defaultOptions)
 import           Galua.Debugger.PrettySource(NameId(..))
 import           Galua.Debugger
@@ -19,6 +17,7 @@ import           Galua.Debugger.EmbedDirectory (embedDirectory)
 import qualified Galua.Value as G
 import           Galua.Number(parseNumber)
 import           Galua.LuaString
+import           Galua.FunId(FunId,funIdFromString)
 import           Galua.Names.Eval(NotFound(..))
 import           Galua.Util.IOURef
 

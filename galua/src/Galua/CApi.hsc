@@ -32,9 +32,6 @@ import qualified Data.ByteString.Char8 as B8
 import System.IO
 import System.IO.Unsafe (unsafeInterleaveIO)
 
-import Language.Lua.Bytecode.FunId
-
-
 import qualified Galua.Util.SizedVector as SV
 
 import Galua.Code

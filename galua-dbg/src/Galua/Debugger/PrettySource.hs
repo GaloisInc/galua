@@ -12,8 +12,8 @@ import Language.Lua.Annotated.Lexer
          , dropWhiteSpace )
 import Language.Lua.Annotated.Parser(parseTokens,chunk)
 import qualified Language.Lua.Token as L
-import Language.Lua.Bytecode.FunId (FunId)
 
+import Galua.FunId(FunId)
 import Galua.Names.Find (chunkLocations,LocatedExprName(..))
 import Galua.Debugger.View.Utils (exportFID)
 

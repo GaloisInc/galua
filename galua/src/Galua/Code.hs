@@ -16,7 +16,7 @@ module Galua.Code
   , Literal(..)
   , regRange
   , regFromTo
-  , module FunId
+  , module Galua.FunId
 
   -- * Pretty print
   , ppOpCode
@@ -42,13 +42,15 @@ import           Text.PrettyPrint hiding (nest)
 import           Language.Lua.Bytecode
                     (ProtoIx(..),Count(..)
                     ,DebugInfo(..),VarInfo(..))
-import           Language.Lua.Bytecode.FunId as FunId
+import qualified Language.Lua.Bytecode.FunId as BC.FunId
 import qualified Language.Lua.Bytecode as BC
 import qualified Language.Lua.Bytecode.Pretty as BC
 import qualified Language.Lua.Bytecode.Parser as BC
 import qualified Language.Lua.Bytecode.Debug as BC
+import Data.Coerce(coerce)
 
 import Galua.Pretty
+import Galua.FunId
 import Galua.Util.String(unpackUtf8)
 import {-# SOURCE #-} qualified Galua.Micro.Translate as Micro
 
@@ -72,7 +74,7 @@ lookupLocalName :: Function -> Int -> Reg -> Maybe ByteString
 lookupLocalName f pc (Reg r) = BC.lookupLocalName (funcOrig f) pc (BC.Reg r)
 
 deepLineNumberMap :: Function -> Map Int [(FunId,[Int])]
-deepLineNumberMap x = BC.deepLineNumberMap (funcOrig x)
+deepLineNumberMap x = coerce (BC.deepLineNumberMap (funcOrig x))
 
 inferFunctionName :: Function -> Int -> Maybe ByteString
 inferFunctionName f = BC.inferFunctionName (funcOrig f)
@@ -80,6 +82,10 @@ inferFunctionName f = BC.inferFunctionName (funcOrig f)
 inferSubFunctionNames :: Function -> [(Int,ByteString)]
 inferSubFunctionNames f = BC.inferSubFunctionNames (funcOrig f)
 
+--------------------------------------------------------------------------------
+-- Function identifiers
+
+--------------------------------------------------------------------------------
 
 
 data Chunk = Chunk !Int !Function

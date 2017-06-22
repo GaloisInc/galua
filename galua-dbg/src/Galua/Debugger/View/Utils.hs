@@ -11,7 +11,6 @@ import qualified Data.Aeson as JS
 import qualified Data.Vector as Vector
 import           Data.String(fromString)
 
-import Language.Lua.Bytecode.FunId
 import Galua.Code
 import Galua.Value(unpackUtf8)
 

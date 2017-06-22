@@ -22,6 +22,7 @@ library
   ghc-prof-options: -fprof-auto-top
   ghc-options:      -Wall -O2
   exposed-modules:     Galua
+                       Galua.FunId
                        Galua.Arguments
                        Galua.CallIntoC
                        Galua.DlInfo
