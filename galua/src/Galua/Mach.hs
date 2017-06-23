@@ -34,6 +34,7 @@ import           System.IO.Error (isDoesNotExistError)
 import           System.Environment (lookupEnv)
 
 import           Galua.Code
+import           Galua.ImportCode(parseLuaBytecode)
 import           Galua.Micro.AST(BlockName,BlockStmt)
 import           Galua.Reference
 import           Galua.Value

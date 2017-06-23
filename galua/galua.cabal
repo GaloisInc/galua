@@ -37,6 +37,7 @@ library
                        Galua.LuaString
                        Galua.Stepper
                        Galua.Code
+                       Galua.ImportCode
                        Galua.CObjInfo
 
                        Galua.Micro.AST
