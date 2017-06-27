@@ -406,10 +406,7 @@ performArith1 f res op e =
            Just s  -> setReg f res =<< fromByteString s
            Nothing -> setReg f res ()
 
-       ToBoolean ->
-         case valueString v of
-           Just s  -> setReg f res =<< fromByteString s
-           Nothing -> setReg f res ()
+       ToBoolean -> setReg f res (valueBool v)
 
        StringLen   -> setReg f res . luaStringLen =<< isString v
 
