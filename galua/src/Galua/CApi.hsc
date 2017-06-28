@@ -37,6 +37,7 @@ import qualified Galua.Util.SizedVector as SV
 import Galua.Code
 import Galua.Arguments
 import Galua.Mach
+import Galua.MachUtils
 import Galua.Number
 import Galua.Overloading
 import Galua.CObjInfo

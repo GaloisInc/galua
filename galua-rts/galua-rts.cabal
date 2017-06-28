@@ -1,0 +1,96 @@
+name:                galua-rts
+version:             0.2
+synopsis:            Lua bytecode interpreter
+description:         Lua bytecode interpreter
+license:             MIT
+license-file:        LICENSE
+author:              Eric Mertens
+maintainer:          emertens@galois.com
+copyright:           2015 Galois, Inc.
+category:            Language
+build-type:          Custom
+cabal-version:       >=1.10
+
+custom-setup
+  setup-depends: base, containers, Cabal, filepath, template-haskell
+
+flag dump-core
+  description: Dump HTML for the core generated vy GHC during compilation
+  default:     False
+
+library
+  ghc-prof-options: -fprof-auto-top
+  ghc-options:      -Wall -O2
+  exposed-modules:     Galua.FunId
+                       Galua.Mach
+                       Galua.Number
+                       Galua.Reference
+                       Galua.FunValue
+                       Galua.ValueType
+                       Galua.Value
+                       Galua.LuaString
+                       Galua.Code
+                       Galua.CObjInfo
+
+
+                       Galua.Micro.AST
+
+                       Galua.Pretty
+
+                       Galua.DlInfo
+
+                       Galua.Util.String
+                       Galua.Util.Cache
+                       Galua.Util.Table
+                       Galua.Util.Loc
+                       Galua.Util.Stack
+                       Galua.Util.SizedVector
+                       Galua.Util.Weak
+                       Galua.Util.IOURef
+                       Galua.Util.SmallVec
+                       Galua.Util.IOVector
+
+  other-modules:       CMath
+
+  -- We rely on internal details of hashtables, so we have a tight bound
+  build-depends:       base                 >=4.8  && <4.10,
+                       ghc-prim             >=0.5  && <0.6,
+                       primitive            >=0.6  && <0.7,
+
+                       containers           >=0.5  && <0.6,
+                       vector               >=0.10 && <0.13,
+                       hashable             >= 1.2 && < 1.3,
+                       hashtables           ==1.2.1.0,
+                       bytestring           >=0.10 && <0.11,
+                       text                 >=1.2  && <1.3,
+
+                       stm                  >=2.4  && <2.5,
+
+                       numeric-extras       >=0.1  && <0.2,
+                       pretty               >=1.1  && <1.2,
+                       lua-bc               >=0.1  && <0.2
+
+
+  if os(linux)
+    build-depends:     unix,
+                       elf,
+                       dwarf-tools
+
+  hs-source-dirs:      src
+
+
+  -- cpp for Haskell CPP, cc for c sources
+  if os(linux)
+    cc-options:        -DLUA_USE_LINUX
+    cpp-options:       -DLUA_USE_LINUX
+  if os(darwin)
+    cc-options:        -DLUA_USE_MACOSX
+    cpp-options:       -DLUA_USE_MACOSX
+
+  if flag(dump-core)
+    build-depends: dump-core
+    ghc-options: -fplugin=DumpCore -fplugin-opt DumpCore:core-html
+
+  cc-options:          -std=c99 -g
+  default-language:    Haskell2010
+

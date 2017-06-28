@@ -16,6 +16,7 @@ import Galua.Debugger.Trie
 import Galua.Debugger.View.Utils
 import Galua.Debugger.View.MicroCode(exportMicroFunction)
 import Galua.Mach
+import Galua.MachUtils(VMState(..))
 import Galua.Number
 import Galua.LuaString
 import Galua.Value

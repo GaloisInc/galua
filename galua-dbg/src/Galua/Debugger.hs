@@ -58,6 +58,7 @@ import           Galua.Debugger.CommandQueue
 
 import           Galua.Code
 import           Galua.Mach
+import           Galua.MachUtils(VMState(..))
 import           Galua.Stepper
 import           Galua.Reference
 import           Galua.Value

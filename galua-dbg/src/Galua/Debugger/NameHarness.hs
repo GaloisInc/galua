@@ -23,6 +23,7 @@ import qualified Data.Vector.Mutable as IOVector
 import           Galua.FunValue (funValueCode, FunCode(..))
 import           Galua.LuaString (fromByteString)
 import           Galua.Mach
+import           Galua.MachUtils(parseLua)
 import qualified Galua.Util.SizedVector as SV
 import           Galua.Util.SizedVector (SizedVector)
 import qualified Galua.Util.Stack as Stack

@@ -20,6 +20,7 @@ import           Foreign.ForeignPtr
 
 
 import           Galua.Mach
+import           Galua.MachUtils(VMState(..))
 import           Galua.Value
 import           Galua.FunValue(FunctionValue(..))
 import           Galua.CallIntoC
@@ -394,7 +395,7 @@ enterClosure vm c vs =
                                                   execCFunction l cServ cfun)
 
   where
-  normal = False -- True
+  normal = True
 
   useNormalLua fid f cloUpvalues =
     do let regNum = funcMaxStackSize f
@@ -451,9 +452,10 @@ enterClosure vm c vs =
 
            start = MicroStepper.run vm eenv entry 0
 
-       _compiledCode <- jit (funcMicroCode f)
+       -- goCompiled <- jit f
 
        return (ExecInMLua eenv, start)
+       -- return (ExecInMLua eenv, goCompiled c vm)
 
 
 

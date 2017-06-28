@@ -22,25 +22,14 @@ library
   ghc-prof-options: -fprof-auto-top
   ghc-options:      -Wall -O2
   exposed-modules:     Galua
-                       Galua.FunId
                        Galua.Arguments
                        Galua.CallIntoC
-                       Galua.DlInfo
                        Galua.OpcodeInterpreter
-                       Galua.Mach
-                       Galua.Number
+                       Galua.MachUtils
                        Galua.Overloading
-                       Galua.Reference
-                       Galua.FunValue
-                       Galua.ValueType
-                       Galua.Value
-                       Galua.LuaString
                        Galua.Stepper
-                       Galua.Code
                        Galua.ImportCode
-                       Galua.CObjInfo
 
-                       Galua.Micro.AST
                        Galua.Micro.OpcodeInterpreter
                        Galua.Micro.Stepper
                        Galua.Micro.Translate
@@ -56,24 +45,8 @@ library
                        Galua.Names.Find
                        Galua.Names.Eval
 
-                       Galua.Pretty
-
-                       Galua.Util.String
-                       Galua.Util.Cache
-                       Galua.Util.Table
-                       Galua.Util.Loc
-                       Galua.Util.Stack
-                       Galua.Util.SizedVector
-                       Galua.Util.Weak
-                       Galua.Util.IOURef
-                       Galua.Util.SmallVec
-
-  other-modules:       CMath
-                       Process
+  other-modules:       Process
                        Galua.CApi
-                       Galua.Util.IOVector
-
-  other-extensions:    RecordWildCards
 
   -- We rely on internal details of hashtables, so we have a tight bound
   build-depends:       lua-bc               >=0.1  && <0.2,
@@ -95,6 +68,8 @@ library
                        primitive            >=0.6  && <0.7,
                        alex-tools           >= 0.1.1.0,
                        monadLib,
+
+                       galua-rts,
 
                        ghc, directory, filepath, time,
                        ghc-paths

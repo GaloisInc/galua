@@ -13,6 +13,7 @@ import           Galua.Value
 import           Galua.FunValue
 import           Galua.Overloading
 import           Galua.Mach
+import           Galua.MachUtils(luaError')
 import           Galua.Number
 import           Galua.LuaString(fromByteString)
 import           Galua.Util.SmallVec(SmallVec)

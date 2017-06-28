@@ -63,11 +63,12 @@ library
                        monadLib,
                        filepath,
                        galua,
+                       galua-rts,
                        galua-analysis,
                        galua-spec,
                        alex-tools,
-                       pretty
-                       , dump-core
+                       pretty,
+                       dump-core
 
 
   hs-source-dirs:      src

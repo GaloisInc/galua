@@ -45,6 +45,7 @@ import qualified Data.Map as Map
 import           Data.Bits((.&.),(.|.),xor,complement)
 
 import           Galua.Mach
+import           Galua.MachUtils(luaError')
 import           Galua.Number
 import           Galua.Value
 import           Galua.LuaString
