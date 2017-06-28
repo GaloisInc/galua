@@ -14,8 +14,7 @@ import Data.Vector(Vector)
 import Data.Map(Map)
 import Data.Coerce(coerce)
 
-import           Language.Lua.Bytecode (ProtoIx(..),Count(..)
-                                       ,DebugInfo(..),VarInfo(..))
+import           Language.Lua.Bytecode (Count(..),DebugInfo(..),VarInfo(..))
 import qualified Language.Lua.Bytecode as BC
 import qualified Language.Lua.Bytecode.Debug as BC
 import qualified Language.Lua.Bytecode.Parser as BC

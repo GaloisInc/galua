@@ -11,16 +11,10 @@ import qualified Data.Vector as Vector
 import qualified Data.ByteString.Lazy as L
 
 import           Language.Lua.Bytecode(ProtoIx(..))
-import qualified Language.Lua.Bytecode.FunId as BC.FunId
 import qualified Language.Lua.Bytecode as BC
-import qualified Language.Lua.Bytecode.Pretty as BC
 import qualified Language.Lua.Bytecode.Parser as BC
-import qualified Language.Lua.Bytecode.Debug as BC
-import Data.Coerce(coerce)
 
-import Galua.Pretty
 import Galua.Code
-import Galua.Util.String(unpackUtf8)
 import qualified Galua.Micro.Translate as Micro
 
 parseLuaBytecode :: Maybe String -> L.ByteString -> IO (Either String Chunk)
