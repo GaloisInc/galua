@@ -94,7 +94,10 @@ library
                        ghc-prim             >=0.5  && <0.6,
                        primitive            >=0.6  && <0.7,
                        alex-tools           >= 0.1.1.0,
-                       monadLib
+                       monadLib,
+
+                       ghc, directory, filepath, time,
+                       ghc-paths
 
   if os(linux)
     build-depends:     process,

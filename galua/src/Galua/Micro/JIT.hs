@@ -10,6 +10,7 @@ import qualified Data.Map as Map
 import           Galua.Mach(VM,NextStep)
 
 import           Galua.Micro.AST
+import           Galua.Value(Reference,Closure)
 import           Galua.Code hiding (Reg(..))
 import qualified Galua.Code as Code (Reg(..),UpIx(..),Function(..))
 import qualified Galua.Micro.Compile as GHC (compile)
@@ -17,16 +18,15 @@ import qualified Galua.Micro.Compile as GHC (compile)
 
 type CompiledFunction = Reference Closure -> VM -> IO NextStep
 
-jit :: Function -> IO ()
-jit  = writeFile file . show . compile
-  where
-  file = "out.hs"
+jit :: Function -> IO CompiledFunction
+jit  = GHC.compile . compile
 
 
 {-
 
 Read only values:
 
+  * vm       :: VM
   * machMeta :: IORef TypeMetatables
   * aref     :: AllocRef
 
@@ -44,7 +44,7 @@ Read only values:
 compile :: Function -> HsModule
 compile func = vcat $
   [ "{-# Language BangPatterns, OverloadedStrings #-}"
-  , "module Test(main) where"
+  , "module TEMP_JIT(main) where"
   , "import Data.Maybe"
   , "import Data.IORef"
   , "import qualified Data.Map as Map"
