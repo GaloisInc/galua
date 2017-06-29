@@ -24,7 +24,7 @@ import           Galua.Micro.Translate.JoinBlocks(joinBlocks)
 import           Galua.Micro.Translate.RenumberTMP(renumberTMP)
 
 translate :: Code.Function -> MicroFunction
-translate fun = renumberTMP lastPhase
+translate fun = id -- renumberTMP lastPhase
               $ joinBlocks pass1 { functionCode = explicitBlocks refs code1 }
   where
   pass1 = translatePass1 fun
