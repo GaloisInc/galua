@@ -98,36 +98,27 @@ data Value
   deriving (Ord,Eq,Generic)
 
 
-instance Tab.TableValue Value where
-  nilTableValue = Nil
-  isNilTableValue v = case v of
-                        Nil -> True
-                        _   -> False
-  tableValueToInt v  = case v of
-                         Number n -> numberToInt n
-                         _        -> Nothing
-  tableValueFromInt i = Number (Int i)
 
-instance Hashable Value where
-  hashWithSalt s a =
-    case a of
-      Bool b          -> con 1 b
-      Number n        -> con 2 n
-      String bs       -> con 3 bs
-      Nil             -> con 4 ()
-      Table r         -> con 5 (referenceId r)
-      Closure r       -> con 6 (referenceId r)
-      UserData r      -> con 7 (referenceId r)
-      LightUserData p -> con 8 (toInteger (ptrToIntPtr p))
-      Thread r        -> con 9 (referenceId r)
-    where
-    con :: Hashable a => Int -> a -> Int
-    con n x = hashWithSalt (hashWithSalt s n) x
+
 
 
 ------------------------------------------------------------------------
--- Threads
+-- Value types
 ------------------------------------------------------------------------
+
+valueType :: Value -> ValueType
+valueType v =
+  case v of
+    String {} -> StringType
+    Number {} -> NumberType
+    Table  {} -> TableType
+    Closure{} -> FunctionType
+    Bool   {} -> BoolType
+    Nil    {} -> NilType
+    UserData{} -> UserDataType
+    LightUserData{} -> LightUserDataType
+    Thread  {} -> ThreadType
+
 
 
 ------------------------------------------------------------------------
@@ -147,6 +138,10 @@ newUserData aref refLoc x n =
   do uval  <- newIORef Nil
      mtref <- newIORef Nothing
      newRef aref refLoc (MkUserData x n uval mtref)
+
+instance MakeWeak UserData where
+  makeWeak ud = mkWeakIORef' (userDataMeta ud) ud
+
 
 ------------------------------------------------------------------------
 -- Tables
@@ -187,28 +182,42 @@ tableFirst ref = Tab.tableFirst (referenceVal ref)
 tableNext :: Reference Table -> Value -> IO (Maybe (Value,Value))
 tableNext ref key = Tab.tableNext (referenceVal ref) key
 
-------------------------------------------------------------------------
--- Value types
-------------------------------------------------------------------------
 
-valueType :: Value -> ValueType
-valueType v =
-  case v of
-    String {} -> StringType
-    Number {} -> NumberType
-    Table  {} -> TableType
-    Closure{} -> FunctionType
-    Bool   {} -> BoolType
-    Nil    {} -> NilType
-    UserData{} -> UserDataType
-    LightUserData{} -> LightUserDataType
-    Thread  {} -> ThreadType
+-- | Special 'Values' used by the table implementation
+instance Tab.TableValue Value where
+  nilTableValue     = Nil
+  isNilTableValue v = case v of
+                        Nil -> True
+                        _   -> False
+  tableValueToInt v  = case v of
+                         Number n -> numberToInt n
+                         _        -> Nothing
+  tableValueFromInt i = Number (Int i)
+
+
+-- | Used to implement tables
+instance Hashable Value where
+  hashWithSalt s a =
+    case a of
+      Bool b          -> con 1 b
+      Number n        -> con 2 n
+      String bs       -> con 3 bs
+      Nil             -> con 4 ()
+      Table r         -> con 5 (referenceId r)
+      Closure r       -> con 6 (referenceId r)
+      UserData r      -> con 7 (referenceId r)
+      LightUserData p -> con 8 (toInteger (ptrToIntPtr p))
+      Thread r        -> con 9 (referenceId r)
+    where
+    con :: Hashable a => Int -> a -> Int
+    con n x = hashWithSalt (hashWithSalt s n) x
+
+
+
 
 ------------------------------------------------------------------------
 -- Closures
 ------------------------------------------------------------------------
-
-
 
 data Closure = MkClosure
   { cloFun      :: FunctionValue
@@ -232,6 +241,11 @@ newClosure aref refLoc f us =
   newRef aref refLoc MkClosure { cloFun = f, cloUpvalues = us }
 
 
+instance MakeWeak Closure where
+  makeWeak cl = mkWeakMVector' (cloUpvalues cl) cl
+
+
+
 ------------------------------------------------------------------------
 -- String functions
 ------------------------------------------------------------------------
@@ -241,6 +255,7 @@ newClosure aref refLoc f us =
 prettyValue :: Value -> String
 prettyValue v =
   case v of
+
     -- values
     Nil                     -> "nil"
     Bool True               -> "true"
@@ -248,6 +263,7 @@ prettyValue v =
     Number (Int x)          -> show x
     Number (Double x)       -> show x
     String x                -> unpackUtf8 (toByteString x)
+
     -- references
     Closure c               -> "function: " ++ prettyRef c
     Table t                 -> "table: "    ++ prettyRef t
@@ -262,7 +278,8 @@ prettyValue v =
 {-# INLINE valueNumber #-}
 valueNumber :: Value -> Maybe Number
 valueNumber (Number n) = Just n
-valueNumber (String n) = forceDouble <$> parseNumber (unpackUtf8 (toByteString n))
+valueNumber (String n) = forceDouble <$>
+                                      parseNumber (unpackUtf8 (toByteString n))
 valueNumber _          = Nothing
 
 {-# INLINE valueBool #-}
@@ -293,12 +310,6 @@ trimResult1 :: SmallVec Value -> Value
 trimResult1 vs = maybeHead vs Nil
 
 --------------------------------------------------------------------------------
-
-instance MakeWeak UserData where
-  makeWeak ud = mkWeakIORef' (userDataMeta ud) ud
-
-instance MakeWeak Closure where
-  makeWeak cl = mkWeakMVector' (cloUpvalues cl) cl
 
 data family Reference a
 
