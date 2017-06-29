@@ -61,7 +61,6 @@ module Galua.Value
   , ReferenceType(..)
   ) where
 
-import           Control.Monad.IO.Class
 import           Data.ByteString (ByteString)
 import           Data.Function(on)
 import           Data.IORef
@@ -145,8 +144,8 @@ data UserData = MkUserData
 newUserData ::
   AllocRef -> RefLoc -> ForeignPtr () -> Int -> IO (Reference UserData)
 newUserData aref refLoc x n =
-  do uval <- liftIO (newIORef Nil)
-     mtref <- liftIO (newIORef Nothing)
+  do uval  <- newIORef Nil
+     mtref <- newIORef Nothing
      newRef aref refLoc (MkUserData x n uval mtref)
 
 ------------------------------------------------------------------------
@@ -164,30 +163,29 @@ newTable ::
 newTable aref refLoc arraySize hashSize =
   newRef aref refLoc =<< Tab.newTable arraySize hashSize
 
-setTableMeta :: MonadIO m => Reference Table -> Maybe (Reference Table) -> m ()
-setTableMeta tr mt = liftIO $ Tab.setTableMeta (referenceVal tr)
-                            $ maybe Nil Table mt
+setTableMeta :: Reference Table -> Maybe (Reference Table) -> IO ()
+setTableMeta tr mt = Tab.setTableMeta (referenceVal tr) (maybe Nil Table mt)
 
-getTableMeta :: MonadIO m => Reference Table -> m (Maybe (Reference Table))
-getTableMeta ref = liftIO $ do v <- Tab.getTableMeta (referenceVal ref)
-                               case v of
-                                 Table t' -> return (Just t')
-                                 _        -> return Nothing
+getTableMeta :: Reference Table -> IO (Maybe (Reference Table))
+getTableMeta ref = do v <- Tab.getTableMeta (referenceVal ref)
+                      case v of
+                        Table t' -> return (Just t')
+                        _        -> return Nothing
 
-getTableRaw :: MonadIO io => Reference Table -> Value {- ^ key -} -> io Value
-getTableRaw ref key = liftIO $ Tab.getTableRaw (referenceVal ref) key
+getTableRaw :: Reference Table -> Value {- ^ key -} -> IO Value
+getTableRaw ref key = Tab.getTableRaw (referenceVal ref) key
 
-setTableRaw :: MonadIO m => Reference Table -> Value -> Value -> m ()
-setTableRaw ref key !val = liftIO $ Tab.setTableRaw (referenceVal ref) key val
+setTableRaw :: Reference Table -> Value -> Value -> IO ()
+setTableRaw ref key !val = Tab.setTableRaw (referenceVal ref) key val
 
-tableLen :: MonadIO io => Reference Table -> io Int
-tableLen ref = liftIO (Tab.tableLen (referenceVal ref))
+tableLen :: Reference Table -> IO Int
+tableLen ref = Tab.tableLen (referenceVal ref)
 
-tableFirst :: MonadIO m => Reference Table -> m (Maybe (Value,Value))
-tableFirst ref = liftIO (Tab.tableFirst (referenceVal ref))
+tableFirst :: Reference Table -> IO (Maybe (Value,Value))
+tableFirst ref = Tab.tableFirst (referenceVal ref)
 
-tableNext :: MonadIO m => Reference Table -> Value -> m (Maybe (Value,Value))
-tableNext ref key = liftIO (Tab.tableNext (referenceVal ref) key)
+tableNext :: Reference Table -> Value -> IO (Maybe (Value,Value))
+tableNext ref key = Tab.tableNext (referenceVal ref) key
 
 ------------------------------------------------------------------------
 -- Value types
