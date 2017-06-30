@@ -7,6 +7,7 @@ import qualified Data.Map as Map
 
 
 import           Galua.Mach(VM,NextStep)
+import           Galua.Pretty(pp)
 
 import           Galua.Micro.AST
 import           Galua.Micro.Translate(translate)
@@ -19,7 +20,10 @@ import qualified Galua.Micro.Compile as GHC (compile)
 type CompiledFunction = Reference Closure -> VM -> IO NextStep
 
 jit :: Function -> IO CompiledFunction
-jit  = GHC.compile . compile
+jit f = do writeFile "out.dot" (show dot)
+           GHC.compile code
+  where
+  (dot,code) = compile f
 
 
 {-
@@ -40,8 +44,8 @@ Read only values:
 -}
 
 
-compile :: Function -> HsModule
-compile func = vcat $
+compile :: Function -> (Doc,HsModule)
+compile func = (ppDot (functionCode mf), vcat $
   [ "{-# Language BangPatterns, OverloadedStrings #-}"
   , "module TEMP_JIT(main) where"
   , "import Data.Maybe"
@@ -77,7 +81,7 @@ compile func = vcat $
           | (k,v) <- Map.toList (functionCode mf)
       ] ++
       [ enterBlock EntryBlock ]
-  ]
+  ])
   where
   (declare,initState) = stateDecl (functionRegsTMP mf) func
   mf = translate func
