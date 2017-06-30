@@ -48,12 +48,14 @@ compile func = vcat $
   , "import Data.IORef"
   , "import qualified Data.Map as Map"
   , "import qualified Data.Vector.Mutable as IOVector"
+  , "import qualified Data.Vector as Vector"
   , ""
   , "import Galua.Mach"
   , "import Galua.Value"
   , "import Galua.FunValue"
   , "import Galua.Number"
   , "import Galua.LuaString"
+  , "import qualified Galua.Code as Code"
   , "import qualified Galua.Util.SmallVec as SMV"
   , ""
   , declare
@@ -62,7 +64,8 @@ compile func = vcat $
   [ "main :: Reference Closure -> VM -> IO NextStep"
   , "main cloRef vm ="
   , nest 2 $ doBlock $
-      [ "let aref     = vmAllocRef vm"
+      [ "putStrLn \"start compiled code\""
+      , "let aref     = vmAllocRef vm"
       , "    machMeta = machMetatablesRef (vmMachineEnv vm)"
       , "    MkClosure { cloFun = LuaFunction fid fun"
       , "              , cloUpvalues = upvalues }  = referenceVal cloRef"
@@ -364,7 +367,7 @@ getProp (Prop pre ~(v1 : ~(v2 : _))) =
         [ "Number n <-" <+> getExpr v1
         , "return (case n of"
         , "          Int {}   -> False"
-        , "          Double d -> isNaN n)"
+        , "          Double d -> isNaN d)"
         ]
 
     Equals ->
@@ -544,7 +547,7 @@ performNewClosure res ix fun =
     [ u <+> "<-" <+> getRefExpr ue | (u,ue) <- zip unames upexprs ] ++
     [ "ups <- Vector.thaw (Vector.fromListN" <+> int upNum <+>
                                                       listLit unames <+> ")"
-    , "let fu = luaFunction (Code.subFun fid" <+> int ix <+> "fun)"
+    , "let fu = luaFunction" <+> parens ("Code.subFun fid" <+> int ix) <+> "fun"
     , "c <- machNewClosure vm fu ups"
     , setReg res "Closure c"
     ]
@@ -558,7 +561,7 @@ performNewClosure res ix fun =
 performDrop :: ListReg -> Int -> HsStmt
 performDrop res n =
   innerBlockStmt
-    [ "let xs =" <+> r
+    [ "let xs =" <+> getRegList res
     , "return $! state {" <+> r <+> "= drop" <+> int n <+> "xs }"
     ]
   where
