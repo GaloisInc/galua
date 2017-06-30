@@ -1,14 +1,12 @@
 module Galua.Micro.ExecEnv where
 
 import Data.IORef(IORef)
-import Data.Vector(Vector)
 import Data.Vector.Mutable(IOVector)
 import Data.Map(Map)
 
 import Galua.Value(Value)
 import Galua.Code(Function)
 import Galua.FunId(FunId)
-import Galua.Mach
 import Galua.Micro.AST(BlockName,Block)
 
 data MLuaExecEnv = MLuaExecEnv
