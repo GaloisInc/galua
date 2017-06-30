@@ -27,6 +27,7 @@ library
 
   build-depends:       base,
                        lua-bc,
+                       galua,
                        galua-rts,
                        monadLib,
                        containers,

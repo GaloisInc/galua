@@ -24,7 +24,6 @@ import qualified Language.Lua.Bytecode.FunId as BC
 import Galua.Util.String(unpackUtf8)
 import Galua.Pretty
 import Galua.FunId
-import {-# SOURCE #-} qualified Galua.Micro.AST as Micro
 
 data Chunk = Chunk !Int !Function
 
@@ -36,7 +35,6 @@ data Function = Function
   , funcIsVararg        :: !Bool
   , funcMaxStackSize    :: !Int
   , funcCode            :: !(Vector OpCode)
-  , funcMicroCode       :: !Micro.MicroFunction
   , funcUpvalues        :: !(Vector Upvalue)
   , funcNested          :: !(Vector Function)
   , funcDebug           :: !DebugInfo

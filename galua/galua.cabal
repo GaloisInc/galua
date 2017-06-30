@@ -30,6 +30,8 @@ library
                        Galua.Stepper
                        Galua.ImportCode
 
+                       Galua.Micro.AST
+                       Galua.Micro.ExecEnv
                        Galua.Micro.OpcodeInterpreter
                        Galua.Micro.Stepper
                        Galua.Micro.Translate

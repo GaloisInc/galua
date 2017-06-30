@@ -14,7 +14,6 @@ import           Control.Concurrent.STM (atomically, takeTMVar)
 import           Data.IORef
 import           Data.Foldable (traverse_)
 import qualified Data.Vector.Mutable as IOVector
-import qualified Data.Map as Map
 import           Foreign.ForeignPtr
 
 
@@ -27,9 +26,6 @@ import           Galua.CallIntoC
 import           Galua.OpcodeInterpreter (execute)
 import           Galua.LuaString
 import           Galua.Code
-import           Galua.Micro.AST(functionCode,functionRegsTMP,
-                                            BlockName(EntryBlock))
-import qualified Galua.Micro.Stepper as MicroStepper
 import           Galua.Micro.JIT(jit)
 
 import           Galua.Util.Stack (Stack)
@@ -235,7 +231,6 @@ abortApiCall :: MVar CNextStep -> ExecEnv -> IO ()
 abortApiCall mvar eenv =
   case eenv of
     ExecInLua {} -> return ()
-    ExecInMLua {} -> return ()
     ExecInC cenv ->
      do let ref = cExecApiCall cenv
         st <- readIORef ref
@@ -369,9 +364,8 @@ enterClosure vm c vs =
   do let MkClosure { cloFun, cloUpvalues } = referenceVal c
      case cloFun of
 
-       LuaFunction fid f
-         | normal     -> useNormalLua fid f cloUpvalues
-         | otherwise  -> useMicroLua fid f cloUpvalues
+       LuaFunction fid f -> useNormalLua fid f cloUpvalues
+         -- | otherwise  -> useMicroLua fid f cloUpvalues
 
        CFunction cfun ->
          do stack <- SV.new
@@ -395,8 +389,6 @@ enterClosure vm c vs =
                                                   execCFunction l cServ cfun)
 
   where
-  normal = True
-
   useNormalLua fid f cloUpvalues =
     do let regNum = funcMaxStackSize f
            varargs
@@ -423,39 +415,4 @@ enterClosure vm c vs =
                     }
 
        eenv `seq` return (eenv, return (Goto 0))
-
-
-  useMicroLua fid f cloUpvalues =
-    do let micro = funcMicroCode f
-
-       regsVal <- IOVector.new (funcMaxStackSize f)
-       regsRef <- IOVector.new (funcMaxStackSize f)
-       regsTMP <- IOVector.new (functionRegsTMP micro)
-
-       argRef  <- newIORef (SMV.toList vs)
-       listRef <- newIORef []
-
-       let code = functionCode micro
-           entry = code Map.! EntryBlock
-           eenv = MLuaExecEnv
-                    { mluaExecRegsValue = regsVal
-                    , mluaExecRegsRefs  = regsRef
-                    , mluaExecRegsTMP   = regsTMP
-                    , mluaExecArgReg    = argRef
-                    , mluaExecListReg   = listRef
-                    , mluaExecUpvals    = cloUpvalues
-                    , mluaExecCode      = code
-                    , mluaExecClosure   = Closure c
-                    , mluaExecFID       = fid
-                    , mluaExecFunction  = f
-                    }
-
-           start = MicroStepper.run vm eenv entry 0
-
-       -- goCompiled <- jit f
-
-       return (ExecInMLua eenv, start)
-       -- return (ExecInMLua eenv, goCompiled c vm)
-
-
 

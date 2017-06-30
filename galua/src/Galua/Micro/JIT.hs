@@ -10,6 +10,7 @@ import qualified Data.Map as Map
 import           Galua.Mach(VM,NextStep)
 
 import           Galua.Micro.AST
+import           Galua.Micro.Translate(translate)
 import           Galua.Value(Reference,Closure)
 import           Galua.Code hiding (Reg(..))
 import qualified Galua.Code as Code (Reg(..),UpIx(..),Function(..))
@@ -38,7 +39,6 @@ Read only values:
   * fun      :: Function
 
 -}
-
 
 
 compile :: Function -> HsModule
@@ -72,12 +72,14 @@ compile func = vcat $
       , "let" <+> initState
       ] ++
       [ "   " <+> blockDecl k v $$ " "
-          | (k,v) <- Map.toList (functionCode (funcMicroCode func))
+          | (k,v) <- Map.toList (functionCode mf)
       ] ++
       [ enterBlock EntryBlock ]
   ]
   where
-  (declare,initState) = stateDecl func
+  (declare,initState) = stateDecl (functionRegsTMP mf) func
+  mf = translate func
+
 
 {-
 
@@ -98,13 +100,13 @@ data State = State
 
 -}
 
-stateDecl :: Function -> (HsDecl, HsDecl)
-stateDecl fun = ( "data State = State" $$ nest 2 (block fieldTys $$ "}")
-                , "state = State" $$ nest 2 (block fieldVals $$ "}")
-                )
+stateDecl :: Int -> Function -> (HsDecl, HsDecl)
+stateDecl tmpNum fun =
+  ( "data State = State" $$ nest 2 (block fieldTys $$ "}")
+  , "state = State" $$ nest 2 (block fieldVals $$ "}")
+  )
   where
   regNum  = funcMaxStackSize fun
-  tmpNum  = functionRegsTMP (funcMicroCode fun)
 
   rVals = [ regValName (Reg r) | r <- regRange (Code.Reg 0) regNum ]
   rRefs = [ regRefName (Reg r) | r <- regRange (Code.Reg 0) regNum ]

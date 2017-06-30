@@ -15,7 +15,6 @@ import qualified Language.Lua.Bytecode as BC
 import qualified Language.Lua.Bytecode.Parser as BC
 
 import Galua.Code
-import qualified Galua.Micro.Translate as Micro
 
 parseLuaBytecode :: Maybe String -> L.ByteString -> IO (Either String Chunk)
 parseLuaBytecode name bytesL =
@@ -30,21 +29,19 @@ cvtFunction parent fun =
   do subs <- mapM (cvtFunction (Just fun)) (BC.funcProtos fun)
      code <- mapM (cvtOpCode subs fun) (Vector.indexed (BC.funcCode fun))
      ups' <- mapM (cvtUpvalue parent) (BC.funcUpvalues fun)
-     let fun1 = Function
-                  { funcSource          = BC.funcSource fun
-                  , funcLineDefined     = BC.funcLineDefined fun
-                  , funcLastLineDefined = BC.funcLastLineDefined fun
-                  , funcNumParams       = BC.funcNumParams fun
-                  , funcIsVararg        = BC.funcIsVararg fun
-                  , funcMaxStackSize    = BC.funcMaxStackSize fun
-                  , funcCode            = code
-                  , funcMicroCode       = Micro.blankMicroFunction
-                  , funcUpvalues        = ups'
-                  , funcDebug           = BC.funcDebug fun
-                  , funcNested          = subs
-                  , funcOrig            = fun
-                  }
-     return fun1 { funcMicroCode = Micro.translate fun1 }
+     return Function
+              { funcSource          = BC.funcSource fun
+              , funcLineDefined     = BC.funcLineDefined fun
+              , funcLastLineDefined = BC.funcLastLineDefined fun
+              , funcNumParams       = BC.funcNumParams fun
+              , funcIsVararg        = BC.funcIsVararg fun
+              , funcMaxStackSize    = BC.funcMaxStackSize fun
+              , funcCode            = code
+              , funcUpvalues        = ups'
+              , funcDebug           = BC.funcDebug fun
+              , funcNested          = subs
+              , funcOrig            = fun
+              }
 
 getExtraOp :: BC.Function -> Int -> IO Int
 getExtraOp fun pc =

@@ -45,7 +45,6 @@ execute !vm !pc =
 
   do eenv <- case vmCurExecEnv vm of
                ExecInLua lenv -> return lenv
-               ExecInMLua {}  -> interpThrow ExecuteLuaWhileInMLua
                ExecInC {}     -> interpThrow ExecuteLuaWhileInC
 
      let advance      = jump 0

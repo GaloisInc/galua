@@ -24,7 +24,8 @@ import           Galua.LuaString
                    (LuaString,toByteString,fromByteString,luaStringLen)
 import           Galua.Micro.AST
 import qualified Galua.Code as Code
-import           Galua.Mach(MLuaExecEnv(..),VM(..)
+import           Galua.Micro.ExecEnv(MLuaExecEnv(..))
+import           Galua.Mach( VM(..)
                            , machNewClosure, machNewTable, MachineEnv(..) )
 
 data Next = EnterBlock BlockName

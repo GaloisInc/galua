@@ -1345,7 +1345,6 @@ atBottomOfStack :: ExecEnv -> Bool
 atBottomOfStack env =
   case env of
     ExecInLua {} -> False
-    ExecInMLua {} -> False
     ExecInC cenv -> cfunAddr (cExecFunction cenv) == nullFunPtr
 
 
@@ -1397,7 +1396,6 @@ lua_getinfo_hs l tid r whatPtr ar out =
 
 
        ExecInLua lenv -> reportLua (luaExecFID lenv) (luaExecFunction lenv)
-       ExecInMLua lenv -> reportLua (mluaExecFID lenv) (mluaExecFunction lenv)
 
        ExecInC cenv ->
          do let funName    = cfunName (cExecFunction cenv)

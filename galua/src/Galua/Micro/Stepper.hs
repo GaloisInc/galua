@@ -1,11 +1,17 @@
-{-# Language RecordWildCards #-}
+{-# Language NamedFieldPuns #-}
 module Galua.Micro.Stepper where
 
 import           Data.Vector(Vector)
+import qualified Data.Vector.Mutable as IOVector
 import qualified Data.Map as Map
+import           Data.IORef(newIORef)
 
-import Galua.Mach(VM,MLuaExecEnv(..),NextStep(..))
-import Galua.Micro.AST(BlockStmt)
+import Galua.Code(Function(..))
+import Galua.Micro.ExecEnv(MLuaExecEnv(..))
+import Galua.Mach(VM,NextStep(..))
+import Galua.FunValue(FunctionValue(..))
+import Galua.Value(Value(..), Reference, Closure(..),referenceVal)
+import Galua.Micro.AST(BlockStmt,BlockName(..),MicroFunction(..))
 import Galua.Micro.OpcodeInterpreter
         (runStmtAt,Next(..),crash,setListReg)
 import qualified Galua.Util.SmallVec as SMV
@@ -30,5 +36,45 @@ run vm frame block pc =
        ReturnWith vs         -> return $! FunReturn (SMV.fromList vs)
 
 
+funcMicroCode :: Function -> MicroFunction
+funcMicroCode = undefined "XXX: Use Translate here"
+
+-- | Enter a closure using the MicroLua way
+useMicroLua :: VM ->
+               Reference Closure ->
+               SMV.SmallVec Value ->
+               IO (MLuaExecEnv, IO NextStep)
+useMicroLua vm c vs =
+  do let MkClosure { cloFun, cloUpvalues } = referenceVal c
+     case cloFun of
+       CFunction {} -> error "This is C code, not Lua!"
+       LuaFunction fid f ->
+         do let micro = funcMicroCode f
+
+            regsVal <- IOVector.new (funcMaxStackSize f)
+            regsRef <- IOVector.new (funcMaxStackSize f)
+            regsTMP <- IOVector.new (functionRegsTMP micro)
+
+            argRef  <- newIORef (SMV.toList vs)
+            listRef <- newIORef []
+
+            let code = functionCode micro
+                entry = code Map.! EntryBlock
+                eenv = MLuaExecEnv
+                         { mluaExecRegsValue = regsVal
+                         , mluaExecRegsRefs  = regsRef
+                         , mluaExecRegsTMP   = regsTMP
+                         , mluaExecArgReg    = argRef
+                         , mluaExecListReg   = listRef
+                         , mluaExecUpvals    = cloUpvalues
+                         , mluaExecCode      = code
+                         , mluaExecClosure   = Closure c
+                         , mluaExecFID       = fid
+                         , mluaExecFunction  = f
+                         }
+
+                start = run vm eenv entry 0
+
+            return (eenv, start)
 
 

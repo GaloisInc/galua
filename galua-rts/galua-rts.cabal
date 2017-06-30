@@ -32,9 +32,6 @@ library
                        Galua.Code
                        Galua.CObjInfo
 
-
-                       Galua.Micro.AST
-
                        Galua.Pretty
 
                        Galua.DlInfo

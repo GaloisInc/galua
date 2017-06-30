@@ -20,7 +20,6 @@ import           Foreign.C (CInt)
 import           Foreign.StablePtr (StablePtr)
 
 import           Galua.Code
-import           Galua.Micro.AST(BlockName,BlockStmt)
 import           Galua.Reference(AllocRef,prettyRef)
 import           Galua.Value
 import           Galua.FunValue(FunctionValue(..))
@@ -267,7 +266,6 @@ data MachConfig = MachConfig
 
 
 data ExecEnv = ExecInLua  {-# UNPACK #-} !LuaExecEnv
-             | ExecInMLua {-# UNPACK #-} !MLuaExecEnv
              | ExecInC    {-# UNPACK #-} !CExecEnv
 
 -- | Get the up-values for the execution environment.
@@ -275,21 +273,18 @@ execUpvals :: ExecEnv -> IOVector (IORef Value)
 execUpvals env =
   case env of
     ExecInLua   LuaExecEnv  { luaExecUpvals }   -> luaExecUpvals
-    ExecInMLua  MLuaExecEnv { mluaExecUpvals }  -> mluaExecUpvals
     ExecInC     CExecEnv    { cExecUpvals   }   -> cExecUpvals
 
 execClosure :: ExecEnv -> Value
 execClosure env =
   case env of
     ExecInLua lenv -> luaExecClosure lenv
-    ExecInMLua menv -> mluaExecClosure menv
     ExecInC   cenv -> cExecClosure cenv
 
 execFun :: ExecEnv -> FunctionValue
 execFun env =
   case env of
     ExecInLua lenv  -> LuaFunction (luaExecFID lenv) (luaExecFunction lenv)
-    ExecInMLua menv -> LuaFunction (mluaExecFID menv) (mluaExecFunction menv)
     ExecInC cenv    -> CFunction (cExecFunction cenv)
 
 execCStack :: ExecEnv -> SV.SizedVector Value
@@ -297,14 +292,12 @@ execCStack env =
   case env of
     ExecInC cenv  -> cExecStack cenv
     ExecInLua {}  -> error "[bug] execCStack: not a C execution environment"
-    ExecInMLua {} -> error "[bug] execCStack: not a C execution environment"
 
 execApiCall :: ExecEnv -> IORef ApiCallStatus
 execApiCall env =
   case env of
     ExecInC cenv -> cExecApiCall cenv
     ExecInLua {} -> error "[bug] execApiCall: not a C execution environment"
-    ExecInMLua {} -> error "[bug] execApiCall: not a C execution environment"
 
 
 
@@ -337,32 +330,6 @@ data LuaExecEnv = LuaExecEnv
 
 
 
-data MLuaExecEnv = MLuaExecEnv
-  { mluaExecRegsValue :: {-# UNPACK #-} !(IOVector Value)
-  , mluaExecRegsRefs  :: {-# UNPACK #-} !(IOVector (IORef Value))
-    -- ^ Local values, split across two arrays.
-    -- INVARIANT: if an index is defined in one of the arrays, it
-    -- will be undefined in the other.
-
-  , mluaExecRegsTMP :: {-# UNPACK #-} !(IOVector Value)
-    -- ^ Additional--temporary--registers
-
-  , mluaExecArgReg  :: {-# UNPACK #-} !(IORef [Value]) -- varars
-  , mluaExecListReg :: {-# UNPACK #-} !(IORef [Value])  -- varres
-
-
-  , mluaExecUpvals :: {-# UNPACK #-} !(IOVector (IORef Value))
-  , mluaExecCode   :: !(Map BlockName (Vector BlockStmt)) -- ^ Our CFG
-
-
-  -- The current functions
-  , mluaExecClosure   :: !Value
-  , mluaExecFID       :: !FunId                         -- ^ Our functoin ID
-  , mluaExecFunction  :: !Function
-  }
-
-
-
 
 -- | Execution environment for a C function
 data CExecEnv = CExecEnv
@@ -387,7 +354,6 @@ execFunId :: ExecEnv -> Maybe FunId
 execFunId env =
   case env of
     ExecInLua x -> Just (luaExecFID x)
-    ExecInMLua x -> Just (mluaExecFID x)
     ExecInC _   -> Nothing
 
 
@@ -453,7 +419,6 @@ machRefLoc vm =
 
   mkLoc env pc = case env of
                    ExecInLua lenv  -> InLua (luaExecFID lenv) pc
-                   ExecInMLua lenv -> InLua (mluaExecFID lenv) pc
                    ExecInC cenv    -> InC (cExecFunction cenv)
 
 
