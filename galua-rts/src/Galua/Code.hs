@@ -24,6 +24,7 @@ import qualified Language.Lua.Bytecode.FunId as BC
 import Galua.Util.String(unpackUtf8)
 import Galua.Pretty
 import Galua.FunId
+import Galua.ValueType(ValueType(..))
 
 data Chunk = Chunk !Int !Function
 
@@ -49,6 +50,14 @@ data Literal = LNil
              | LNum {-# UNPACK #-} !Double
              | LStr {-# UNPACK #-} !ByteString
                deriving Show
+
+literalType :: Literal -> ValueType
+literalType l = case l of
+                  LNil      -> NilType
+                  LInt {}   -> NumberType
+                  LNum {}   -> NumberType
+                  LStr {}   -> StringType
+                  LBool {}  -> BoolType
 
 data RK = RK_Reg !Reg | RK_Kst !Kst
   deriving Show
