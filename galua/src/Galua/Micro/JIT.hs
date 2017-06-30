@@ -2,7 +2,6 @@
 module Galua.Micro.JIT (jit) where
 
 import Text.PrettyPrint
-import           Data.Vector ( Vector )
 import qualified Data.Vector as Vector
 import qualified Data.Map as Map
 
@@ -190,19 +189,34 @@ so that whenever the caller returns back to us, the rest of the block
 will be executed.
 -}
 
-blockDecl :: BlockName -> Vector BlockStmt -> HsDecl
+blockDecl :: BlockName -> Block -> HsDecl
 blockDecl bn stmts =
   name <+> ":: State -> IO NextStep" $$
   name <+> "!state = do" <+> vcat (goBlocks stmtList)
   where
   name     = blockNameName bn
-  stmtList = map stmtCode (Vector.toList stmts)
+  stmtList = map stmtCode (Vector.toList (blockBody stmts))
 
-  goBlocks [] = []
+  goBlocks [] = [ stmtEndStmt (stmtCode (blockEnd stmts)) ]
   goBlocks (s : ss) =
     case s of
       Call f -> [ performCall f (goBlocks ss) ]
       _      -> stmtStmt s : goBlocks ss
+
+
+-- | Compilation of an end statement.
+stmtEndStmt :: EndStmt -> HsStmt
+stmtEndStmt stmt =
+  case stmt of
+    -- Local control flow
+    Case e as d             -> performCase e as d
+    If p tr fa              -> performIf p tr fa
+    Goto b                  -> performGoto b
+
+    TailCall clo            -> performTailCall clo
+    Return                  -> performReturn
+    Raise e                 -> performRaise e
+
 
 
 
@@ -221,16 +235,8 @@ stmtStmt stmt =
     SetTableList tab ix     -> performSetTableList tab ix
     GetMeta r e             -> performGetMeta r e
 
-    -- Local control flow
-    Case e as d             -> performCase e as d
-    If p tr fa              -> performIf p tr fa
-    Goto b                  -> performGoto b
-
     -- Functions
     NewClosure res ix fun   -> performNewClosure res ix fun
-    TailCall clo            -> performTailCall clo
-    Return                  -> performReturn
-    Raise e                 -> performRaise e
 
     -- Lists
     Drop r n                -> performDrop r n
@@ -404,9 +410,6 @@ getProp (Prop pre ~(v1 : ~(v2 : _))) =
 innerBlockStmt :: [Doc] -> Doc
 innerBlockStmt code = "state <-" <+> doBlock code
 
--- | Assumes that blocks have only a single final blocks.
--- XXX: This may not be true as there is some weirdness with tail calls-
--- but we should resolve this when translating.
 finalBlockStmt :: [Doc] -> Doc
 finalBlockStmt code = vcat code
 

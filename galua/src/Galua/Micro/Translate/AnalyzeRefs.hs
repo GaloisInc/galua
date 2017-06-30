@@ -3,21 +3,19 @@
 module Galua.Micro.Translate.AnalyzeRefs where
 
 import qualified Galua.Code as Code
-import           Galua.Micro.AST
+import           Galua.Micro.AST hiding (Block(..),blockNext)
+import qualified Galua.Micro.AST as AST
 
 import           Data.Set(Set)
 import qualified Data.Set as Set
 import           Data.Map(Map)
 import qualified Data.Map as Map
-import           Data.Vector(Vector)
 import           Data.List(foldl',union)
 import           Data.Maybe(maybeToList)
-import           Data.Foldable(toList)
 
 -- | Compute what registers contains references at the beginning and end
 -- of each block.
-analyze :: Code.Reg -> Map BlockName (Vector BlockStmt) ->
-                                              Map BlockName (Set Code.Reg)
+analyze :: Code.Reg -> Map BlockName AST.Block -> Map BlockName (Set Code.Reg)
 analyze lim orig = Map.mapWithKey (\b _ -> atStart b) orig
   where
   prog       = makeProg lim orig
@@ -25,7 +23,7 @@ analyze lim orig = Map.mapWithKey (\b _ -> atStart b) orig
   atStart b  = incomingRefs prog endOfBlock b
 
 
-makeProg :: Code.Reg -> Map BlockName (Vector BlockStmt) -> Prog
+makeProg :: Code.Reg -> Map BlockName AST.Block -> Prog
 makeProg lim mp = Prog { predecessors = preds
                        , blocks       = blks
                        , maxReg       = lim
@@ -33,15 +31,8 @@ makeProg lim mp = Prog { predecessors = preds
   where
   blks = fmap toBlock mp
 
-  getNext stmt =
-    case stmtCode stmt of
-      Goto l      -> [l]
-      If _ t f    -> [t,f]
-      Case _ as d -> map snd as ++ maybeToList d
-      _           -> []
-
   toBlock ss = Block { blockStmts = ss
-                     , blockNext  = concatMap getNext (toList ss)
+                     , blockNext  = AST.blockNext ss
                      }
 
   preds = Map.fromListWith union
@@ -61,14 +52,13 @@ data Prog = Prog { predecessors :: Map BlockName [ BlockName ]
                  }
 
 data Block  = Block { blockNext   :: [ BlockName ]
-                    , blockStmts  :: Vector BlockStmt
+                    , blockStmts  :: AST.Block
                     }
 
 -- | Given a set of registers that are known to be references at the
 -- beginning of a block, compute what registers are references at the end.
 refsForBlock :: Code.Reg -> Set Code.Reg -> Block -> Set Code.Reg
-refsForBlock lim incoming =
-  foldl' updEsc incoming . concatMap (cvt lim) . toList . blockStmts
+refsForBlock lim incoming = foldl' updEsc incoming . cvt lim . blockStmts
   where
   updEsc live s =
     case s of
@@ -151,8 +141,21 @@ instance (Uses a, Uses b, Uses c) => Uses (a,b,c) where
 instance Uses Prop where
   uses (Prop _ es) = uses es
 
-instance Uses BlockStmt where
+instance Uses a => Uses (BlockStmt a) where
   uses = uses . stmtCode
+
+instance Uses EndStmt where
+  uses stmt =
+    case stmt of
+      Raise x             -> uses x
+      Goto _              -> uses ()
+      Case e _ _          -> uses e
+      If p _ _            -> uses p
+      TailCall x          -> uses x
+      Return              -> uses ()
+
+
+
 
 instance Uses Stmt where
   uses stmt =
@@ -166,15 +169,8 @@ instance Uses Stmt where
       SetTable x y z      -> uses (x,y,z)
       SetTableList x _    -> uses x
       GetMeta x y         -> uses (x,y)
-      Raise x             -> uses x
-      Goto _              -> uses ()
-      Case e _ _          -> uses e
-      If p _ _            -> uses p
 
       Call x              -> uses x
-      TailCall x          -> uses x
-      Return              -> uses ()
-
       NewClosure x _ y    -> uses (x, funcUpvalExprs y)
 
       Drop {}             -> uses ()
@@ -196,22 +192,32 @@ data Simple = Use     Code.Reg
             | Capture Code.Reg
             | Close   Code.Reg
 
-cvt :: Code.Reg -> BlockStmt -> [Simple]
-cvt lim stmt =
+
+cvt :: Code.Reg -> AST.Block -> [Simple]
+cvt lim b = concatMap (cvtStmt lim) (AST.blockBody b) ++
+                        cvtEnd lim (AST.blockEnd b)
+
+cvtEnd :: Code.Reg -> BlockStmt EndStmt -> [Simple]
+cvtEnd lim stmt =
+  case stmtCode stmt of
+    Return -> [ Close i | i <- Code.regFromTo (Code.Reg 0) lim ]
+    _      -> makeUses stmt
+
+
+cvtStmt :: Code.Reg -> BlockStmt Stmt -> [Simple]
+cvtStmt lim stmt =
   case stmtCode stmt of
     CloseStack (Reg r) -> [ Close i | i <- Code.regFromTo r lim ]
     CloseStack _       -> error "CloseStack: non Code.Reg"
-
-    Return            -> [ Close i | i <- Code.regFromTo (Code.Reg 0) lim ]
 
     NewClosure x _ f   -> makeUses es ++
                              [ Capture r | EReg (Reg r) <- es ] ++
                              makeUses x
       where es = funcUpvalExprs f
 
-    _                        -> makeUses stmt
+    _ -> makeUses stmt
 
-  where
-  makeUses x = [ Use r | r <- Set.toList (uses x) ]
+makeUses :: Uses a => a -> [ Simple ]
+makeUses x = [ Use r | r <- Set.toList (uses x) ]
 
 

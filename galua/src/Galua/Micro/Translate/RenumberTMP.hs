@@ -41,6 +41,19 @@ instance Renumber Reg where
                                          }
                                return r
 
+instance Renumber Block where
+  renumber Block { blockBody, blockEnd } = op2 Block blockBody blockEnd
+
+instance Renumber EndStmt where
+  renumber stmt =
+    case stmt of
+      Raise e             -> op1 Raise e
+      Case e as b         -> op3 Case e as b
+      If p b1 b2          -> op3 If p b1 b2
+      Goto n              -> op1 Goto n
+      TailCall r          -> op1 TailCall r
+      Return              -> op0 Return
+
 instance Renumber Stmt where
   renumber stmt =
     case stmt of
@@ -51,15 +64,9 @@ instance Renumber Stmt where
       SetTable  r e1 e2   -> op3 SetTable r e1 e2
       SetTableList r n    -> op2 SetTableList r n
       GetMeta r e         -> op2 GetMeta r e
-      Raise e             -> op1 Raise e
 
-      Case e as b         -> op3 Case e as b
-      If p b1 b2          -> op3 If p b1 b2
 
-      Goto n              -> op1 Goto n
       Call r              -> op1 Call r
-      TailCall r          -> op1 TailCall r
-      Return              -> op0 Return
 
       CloseStack r        -> op1 CloseStack r
       NewClosure r n f    -> op3 NewClosure r n f
@@ -96,7 +103,7 @@ instance Renumber MicroFunction where
   renumber f = mk <$> traverse renumber (functionCode f)
     where mk fc = f { functionCode = fc }
 
-instance Renumber BlockStmt where
+instance Renumber a => Renumber (BlockStmt a) where
   renumber bs = mk <$> renumber (stmtCode bs)
     where mk s = bs { stmtCode = s }
 

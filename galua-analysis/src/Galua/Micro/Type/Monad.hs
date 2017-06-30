@@ -61,7 +61,6 @@ module Galua.Micro.Type.Monad
 import           Data.Map ( Map )
 import qualified Data.Map as Map
 import qualified Data.Set as Set
-import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
 
 import qualified MonadLib as M
@@ -267,7 +266,7 @@ getPrim ptr =
 data BlockS = BlockS
   { rwCurBlock    :: !BlockName
   , rwCurOpCode   :: !Int
-  , rwStatements  :: !(Vector BlockStmt)
+  , rwStatements  :: !Block
   , rwCurState    :: !State
   , rwCurFunId    :: !FunId     -- ^ Current function that is executed.
   , rwCurCallsite :: !CallsiteId -- ^ Where we were called from.
@@ -293,7 +292,7 @@ blockRaisesError _ v =
 data Cont = Cont { plFun    :: FunId
                  , plBlock  :: BlockName
                  , plPC     :: Int
-                 , plStmts  :: Vector BlockStmt
+                 , plStmts  :: Block
                  , plLocals :: LocalState
                  , plCallsite :: CallsiteId
                  }
@@ -329,11 +328,12 @@ setCont Cont { .. } =
 
 --------------------------------------------------------------------------------
 
-curStmt :: BlockM BlockStmt
+curStmt :: BlockM (Either (BlockStmt Stmt) (BlockStmt EndStmt))
 curStmt = BlockM $ do BlockS { rwStatements, rwCurOpCode } <- M.get
-                      case rwStatements Vector.!? rwCurOpCode of
-                        Just s  -> return s
-                        Nothing -> error "Fell-off the end of a block."
+                      case blockBody rwStatements Vector.!? rwCurOpCode of
+                        Just s  -> return (Left s)
+                        Nothing -> return (Right (blockEnd rwStatements))
+
 
 continue :: BlockM ()
 continue = BlockM $ M.sets_ $ \s -> s { rwCurOpCode = 1 + rwCurOpCode s }

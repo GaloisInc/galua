@@ -10,26 +10,58 @@ module Galua.Micro.AST
 
 import           Galua.ValueType(ValueType(..))
 import           Data.ByteString(ByteString)
-import           Data.Foldable(toList)
 import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
 import           Data.Map (Map)
 import qualified Data.Map as Map
+import           Data.Foldable(toList)
+import           Data.List(nub)
 
 import qualified Galua.Code as Code
 import           Galua.Code (Literal(..))
 import           Galua.Pretty
 
+{- | The intermediate form of a function, used for compilation.
+The function is split into basic blocks, making all control
+flow explicit. -}
 data MicroFunction = MicroFunction
-  { functionCode    :: Map BlockName (Vector BlockStmt)
+  { functionCode    :: Map BlockName Block
   , functionRegsTMP :: !Int
   } deriving Show
 
+-- | A basic block.
+data Block = Block
+  { blockBody :: Vector (BlockStmt Stmt)
+  , blockEnd  :: BlockStmt EndStmt
+  } deriving Show
 
-blankMicroFunction :: MicroFunction
-blankMicroFunction = MicroFunction { functionCode = Map.empty
-                                   , functionRegsTMP = 0
-                                   }
+-- | Annotate each stmt in the program with the PC of the origianl program,
+-- in case we want to map back for debugging purposes.
+data BlockStmt a = BlockStmt
+  { stmtPC   :: !Int   -- ^ PC in original program
+  , stmtCode :: a
+  } deriving Show
+
+
+-- | Returns the possible followers of a basic block.
+blockNext :: Block -> [BlockName]
+blockNext b =
+  case stmtCode (blockEnd b) of
+    Goto x      -> [x]
+    If _ t e    -> if t == e then [t] else [t,e]
+    Case _ as d -> nub (toList d ++ map snd as)
+    _           -> []
+
+
+
+--------------------------------------------------------------------------------
+-- Names
+--------------------------------------------------------------------------------
+
+data BlockName  = EntryBlock
+                | PCBlock !Int
+                | NewBlock !Int !Int
+                  deriving (Eq,Show)
 
 data Reg        = Reg !Code.Reg
                 | TMP !Int !Int     -- ^ phase, temporary
@@ -38,11 +70,6 @@ data Reg        = Reg !Code.Reg
 data ListReg    = ArgReg  -- ^ Function arguments, var-args in particualr
                 | ListReg -- ^ Function results, mostly(?)
                   deriving (Eq,Ord,Show)
-
-data BlockName  = EntryBlock
-                | PCBlock !Int
-                | NewBlock !Int !Int
-                  deriving (Eq,Show)
 
 instance Ord BlockName where
   compare EntryBlock EntryBlock = EQ
@@ -64,9 +91,6 @@ instance Ord BlockName where
   compare (NewBlock x y) (NewBlock a b) = compare (x,y) (a,b)
 
 
-
-
-
 blockNamePC :: BlockName -> Int
 blockNamePC pc =
   case pc of
@@ -77,22 +101,27 @@ blockNamePC pc =
 type UpIx       = Code.UpIx
 
 
-data Expr       = EReg Reg
-                | ELit Literal
-                | EUp  UpIx
-                  deriving Show
+--------------------------------------------------------------------------------
 
-data BlockStmt = BlockStmt { stmtPC   :: !Int   -- ^ PC in original program
-                           , stmtCode :: !Stmt
-                           } deriving Show
+
+data EndStmt =
+
+  -- Local control flow
+    Case !Expr [ (ValueType, BlockName) ] (Maybe BlockName)
+  | If   !Prop !BlockName !BlockName
+  | Goto !BlockName
+
+  -- End function
+  | TailCall !Reg
+  | Return
+  | Raise !Expr
+    deriving Show
+
 
 data Stmt =
 
     -- Basic registers
     Assign !Reg !Expr
-
-    -- Up values
-  | SetUpVal !UpIx !Reg     -- Only before "reference" phase
 
     -- Tables
   | NewTable     !Reg
@@ -104,42 +133,32 @@ data Stmt =
     -- Meta tables
   | GetMeta !Reg !Expr
 
-    -- Exceptions
-  | Raise !Expr             -- End of block
-
-    -- Control flow
-  | Case !Expr [ (ValueType, BlockName) ] (Maybe BlockName) -- End of block
-  | If   !Prop !BlockName !BlockName                   -- End of block
-  | Goto !BlockName                                    -- End of block
-
     -- Functions
-  | Call !Reg
-  | TailCall !Reg      -- End of block
-  | Return             -- End of block
-
-  | CloseStack !Reg         -- Only before "reference" phase
   | NewClosure !Reg !Int !Code.Function
-
+  | Call !Reg
 
   -- "List" registers: these are
-  | Drop !ListReg !Int           -- ^ Drop the given number from the front of
-                                 -- the list register.
-  | Append !ListReg [Expr]       -- ^ Prepend the given expressions to the list.
-  | SetList !ListReg [Expr]      -- ^ Set the value of a list register.
+  | Drop !ListReg !Int            -- ^ Drop the given number (POP)
+  | Append !ListReg [Expr]        -- ^ Prepend to the list (PUSH).
+  | SetList !ListReg [Expr]       -- ^ Set the value of a list register.
+  | IndexList !Reg !ListReg !Int  -- ^ Access an element in the list.
 
-  | IndexList !Reg !ListReg !Int
-
-    -- Arith
+    -- Arithmetic
   | Arith2   !Reg !Op2 !Expr !Expr
   | Arith1   !Reg !Op1 !Expr
 
+    -- Up values
+  | SetUpVal !UpIx !Reg           -- Only before "reference" phase
+  | CloseStack !Reg               -- Only before "reference" phase
+
     -- References
-  | NewRef   !Reg  !Expr  -- Only after "reference" phase
-  | ReadRef  !Reg  !Expr  -- Only after "reference" phase
-  | WriteRef !Expr !Expr  -- Only after "reference" phase
+  | NewRef   !Reg  !Expr          -- Only after "reference" phase
+  | ReadRef  !Reg  !Expr          -- Only after "reference" phase
+  | WriteRef !Expr !Expr          -- Only after "reference" phase
 
   | Comment !String
     deriving Show
+
 
 
 
@@ -171,8 +190,18 @@ data Op2 = NumberAdd
 
 
 --------------------------------------------------------------------------------
--- Properties
+-- Expressions and Properties
 
+
+
+-- | A simple expression.
+data Expr       = EReg Reg
+                | ELit Literal
+                | EUp  UpIx
+                  deriving Show
+
+
+-- | A boolean expression used in if-then-else
 data Prop       = Prop !Pred ![Expr]
                   deriving Show
 
@@ -232,7 +261,11 @@ funcUpvalExprs = map toExpr . Vector.toList . Code.funcUpvalues
 instance Pretty MicroFunction where
   pp = vcat . map sh . Map.toList . functionCode
     where
-    sh (x,vs) = pp x <> colon $$ nest 2 (vcat (map pp (Vector.toList vs))) $$ text " "
+    sh (x,vs) = pp x <> colon $$ nest 2 (pp vs)
+                              $$ text " "
+
+instance Pretty Block where
+  pp b = vcat (map pp (Vector.toList (blockBody b))) $$ pp (blockEnd b)
 
 instance Pretty Reg where
   pp reg =
@@ -251,8 +284,27 @@ instance Pretty ListReg where
   pp ArgReg = "arg"
   pp ListReg = "list"
 
-instance Pretty BlockStmt where
+instance Pretty a => Pretty (BlockStmt a) where
   pp stmt = int (stmtPC stmt) <> colon <+> pp (stmtCode stmt)
+
+instance Pretty EndStmt where
+  pp stmt =
+    case stmt of
+      Goto l    -> "goto" <+> pp l
+      If p t f  -> "if" <+> pp p <+> "then" <+> pp t <+> "else" <+> pp f
+      Case e alts deflt -> "case" <+> pp e <+> "of" $$ nest 2 (vcat as)
+        where
+        as          = map ppAlt alts ++ [ ppDef ]
+        ppAlt (x,g) = pp x <+> "->" <+> pp g
+        ppDef       = case deflt of
+                        Nothing -> empty
+                        Just b  -> "_" <+> "->" <+> pp b
+
+      Raise e     -> "raise"  <+> pp e
+      TailCall f  -> "return" <+> pp f <> "(list)"
+      Return      -> "return"
+
+
 
 instance Pretty Stmt where
   pp stmt =
@@ -273,26 +325,11 @@ instance Pretty Stmt where
 
       GetMeta r1 r2 -> pp r1 <+> "=" <+> pp r2 <> ".meta"
 
-      Raise e -> "raise" <+> pp e
-
-      Goto l   -> "goto" <+> pp l
-      Case e alts deflt -> "case" <+> pp e <+> "of" $$ nest 2 (vcat as)
-        where
-        as          = map ppAlt alts ++ [ ppDef ]
-        ppAlt (x,g) = pp x <+> "->" <+> pp g
-        ppDef       = case deflt of
-                        Nothing -> empty
-                        Just b  -> "_" <+> "->" <+> pp b
-
-      If p t f -> "if" <+> pp p <+> "then" <+> pp t <+> "else" <+> pp f
 
       Arith1 r op x   -> pp r <+> "=" <+> pp op <+> pp x
       Arith2 r op x y -> pp r <+> "=" <+> pp x <+> pp op <+> pp y
 
       Call f        -> "list =" <+> pp f <> "(list)"
-      TailCall f    -> "return" <+> pp f <> "(list)"
-      Return        -> "return"
-
 
       IndexList r list ix ->
         pp r <+> "=" <+> pp list <+> "!!" <+> int ix
@@ -383,16 +420,13 @@ instance Pretty BlockName where
       PCBlock n    -> "PC" <> int n
       NewBlock p n -> "PC" <> int p <> "_" <> int n
 
-ppBlocks :: Map BlockName (Vector BlockStmt) -> Doc
+ppBlocks :: Map BlockName Block -> Doc
 ppBlocks = vcat . map ppBlock . Map.toList
 
-ppBlock :: (BlockName, Vector BlockStmt) -> Doc
-ppBlock (nm,xs) = (pp nm <> colon) $$ nest 2 (ppStmts xs)
+ppBlock :: (BlockName, Block) -> Doc
+ppBlock (nm,xs) = (pp nm <> colon) $$ nest 2 (pp xs)
 
-ppStmts :: Vector BlockStmt -> Doc
-ppStmts xs = vcat $ map pp $ Vector.toList xs
-
-ppDot :: Map BlockName (Vector BlockStmt) -> Doc
+ppDot :: Map BlockName Block -> Doc
 ppDot m = vcat $ [ "digraph G {"
                  , "size=\"6,4\";"
                  , "ratio=\"fill\";"
@@ -412,8 +446,7 @@ ppDot m = vcat $ [ "digraph G {"
   left (x : xs)          = x : left xs
   left []                = []
 
-  edges (nm,stmts) = vcat [ edge nm x | xs <- map followers (toList stmts)
-                                      , x <- xs ]
+  edges (nm,stmts) = vcat [ edge nm x | x <- followers (blockEnd stmts) ]
   edge a (mbLab,b) =
     pp a <+> "->" <+> pp b <+> maybe empty ppLab mbLab <> semi
     where ppLab l = brackets ("label=" <> text (show l))

@@ -365,7 +365,6 @@ enterClosure vm c vs =
      case cloFun of
 
        LuaFunction fid f -> useNormalLua fid f cloUpvalues
-         -- | otherwise  -> useMicroLua fid f cloUpvalues
 
        CFunction cfun ->
          do stack <- SV.new

@@ -5,7 +5,6 @@ module Galua.Micro.Translate.Monad where
 import           Data.ByteString(ByteString)
 import           Data.Sequence (Seq)
 import qualified Data.Sequence as Seq
-import           Data.Vector (Vector)
 import qualified Data.Vector as Vector
 import           Data.Map (Map)
 import qualified Data.Map as Map
@@ -40,12 +39,15 @@ data RO = RO
 data RW = RW
   { rwNextBlock :: !Int
   , rwNextTMP   :: !Int
-  , rwBlocks    :: !(Map BlockName (Seq BlockStmt))
+  , rwBlocks    :: !(Map BlockName WorkBlock)
   , rwListReg   :: !(Maybe Code.Reg)
   }
 
-generate :: M () -> Map BlockName (Vector BlockStmt)
-generate (M m) = fmap (Vector.fromList . toList)
+data WorkBlock = Finished Block | Partial (Seq (BlockStmt Stmt))
+
+
+generate :: M () -> Map BlockName Block
+generate (M m) = fmap getDone
                $ rwBlocks
                $ snd
                $ m RO { roCurBlock = PCBlock 0 }
@@ -54,6 +56,9 @@ generate (M m) = fmap (Vector.fromList . toList)
                       , rwBlocks    = Map.empty
                       , rwListReg   = Nothing
                       }
+  where
+  getDone (Finished b) = b
+  getDone (Partial _)  = error "Partial block"
 
 newLabel :: M BlockName
 newLabel = M $ \RO {..} RW {..} ->
@@ -70,11 +75,31 @@ inBlock b (M m) = M $ \RO { .. } rw -> m RO { roCurBlock = b, .. } rw
 
 emit :: Stmt -> M ()
 emit s = M $ \RO { .. } RW { .. } ->
-              let addEnd   = flip (Seq.><)
-                  pc       = blockNamePC roCurBlock
-                  bs       = BlockStmt { stmtPC = pc, stmtCode = s }
-                  addBlock = Map.insertWith addEnd roCurBlock (Seq.singleton bs)
+              let upd ~(Partial new)
+                      ~(Partial old) = Partial (old Seq.>< new)
+                  pc  = blockNamePC roCurBlock
+                  bs  = Partial $ Seq.singleton
+                                $ BlockStmt { stmtPC = pc, stmtCode = s }
+                  addBlock = Map.insertWith upd roCurBlock bs
               in ((), RW { rwBlocks = addBlock rwBlocks, .. })
+
+emitEnd :: EndStmt -> M ()
+emitEnd s = M $ \RO { .. } RW { .. } ->
+  let upd mb =
+        let stmts = case mb of
+                      Nothing -> Vector.empty
+                      Just ~(Partial se) -> Vector.fromList (toList se)
+        in Just $
+             Finished
+               Block { blockBody = stmts
+                     , blockEnd  = BlockStmt { stmtPC = blockNamePC roCurBlock
+                                             , stmtCode = s
+                                             }
+                     }
+  in ((), RW { rwBlocks = Map.alter upd roCurBlock rwBlocks, .. })
+
+
+
 
 inNewBlock_ :: M () -> M BlockName
 inNewBlock_ m =
@@ -103,7 +128,7 @@ instance ToBlockName BlockName where
 
 goto :: ToBlockName a => a -> M ()
 goto a = do l <- toBlockName a
-            emit (Goto l)
+            emitEnd (Goto l)
 
 data Alts = forall k. ToBlockName k => IfType ValueType k Alts
           | forall k. ToBlockName k => Default k
@@ -111,7 +136,7 @@ data Alts = forall k. ToBlockName k => IfType ValueType k Alts
 
 typeCase :: IsExpr e => e -> Alts -> M ()
 typeCase e as0 = do (arms,d) <- alts [] as0
-                    emit (Case (toExpr e) arms d)
+                    emitEnd (Case (toExpr e) arms d)
   where
   alts cvted as = case as of
                     IfType t k next -> do l <- toBlockName k
@@ -124,7 +149,7 @@ ite :: (ToBlockName yes, ToBlockName no) => Prop -> yes -> no -> M ()
 ite p yes no =
   do ifYes <- toBlockName yes
      ifNo  <- toBlockName no
-     emit (If p ifYes ifNo)
+     emitEnd (If p ifYes ifNo)
 
 ifNil :: (IsExpr e, ToBlockName yes, ToBlockName no) => e -> yes -> no -> M ()
 ifNil e yes no = typeCase e $ IfType NilType yes $ Default no
@@ -148,7 +173,7 @@ arith2 :: (IsExpr e1, IsExpr e2) => Reg -> Op2 -> e1 -> e2 -> M ()
 arith2 r op e1 e2 = emit (Arith2 r op (toExpr e1) (toExpr e2))
 
 raiseError :: ByteString -> M ()
-raiseError = emit . Raise . toExpr
+raiseError = emitEnd . Raise . toExpr
 
 
 

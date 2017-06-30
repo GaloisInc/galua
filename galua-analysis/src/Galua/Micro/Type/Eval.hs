@@ -86,64 +86,19 @@ raiseError v =
 
 
 
-evalStmt :: BlockStmt -> BlockM Next
-evalStmt stmt =
-  logTrace ("STMT: " ++ show (pp stmt)) >>
+evalEndStmt :: BlockStmt EndStmt -> BlockM Next
+evalEndStmt stmt =
+  logTrace ("END STMT: " ++ show (pp stmt)) >>
 
   case stmtCode stmt of
-
-    Assign r e -> do assign r =<< evalExpr e
-                     return Continue
-
-    SetUpVal {} -> error "SetUpVal"
-
-    NewTable r ->
-      do here <- newTableId
-         assign r (RegVal (newTable here))
-         return Continue
-
-    LookupTable r t i ->
-      do TableValue l <- regCasesM t
-         ti           <- exprCasesM i
-         assign r =<< fmap RegVal (getTable l ti)
-         return Continue
-
-    SetTable t i v ->
-      do val          <- regValToVal =<< evalExpr v
-         TableValue l <- regCasesM t
-         ti           <- regValToVal =<< evalExpr i
-         setTable l ti val
-         return Continue
-
-
-    SetTableList t _ ->
-      do vs <- getList ListReg
-         let vr = appListAll vs
-         TableValue tv <- regCasesM t
-         setTable tv (basic Number) vr
-         return Continue
-
-    GetMeta r e ->
-      -- Note: XXX: we don't really need to expand function values completely,
-      -- as they all give the same result.
-      do v    <- exprCasesM e
-         GlobalState { basicMetas, stringMeta, funMeta, booleanMeta } <- getGlobal
-         newV <- case v of
-                   TableValue l -> getTableMeta l
-                   BasicValue t     -> return (appFun basicMetas t)
-                   StringValue _    -> return stringMeta
-                   BooleanValue{}   -> return booleanMeta
-                   FunctionValue _  -> return funMeta
-         when (newV == bottom) impossible
-         assign r (RegVal newV)
-         return Continue
-
-
-    -- End of block
 
     Raise e -> raiseError =<< regValToVal =<< evalExpr e
 
     Goto b -> return (EnterBlock b)
+
+
+    Return -> do vs <- getList ListReg
+                 return (ReturnWith vs)
 
     Case e alts dflts ->
       do v <- regValToVal =<< evalExpr e
@@ -199,7 +154,6 @@ evalStmt stmt =
              TableType         -> v' { valueTable    = bottom }
 
 
-
     If (Prop p es) t f ->
       do vs <- mapM (regValToVal <=< evalExpr) es
          case (p,vs) of
@@ -225,6 +179,71 @@ evalStmt stmt =
 
            _ -> options [ EnterBlock t, EnterBlock f ]
 
+    TailCall fun ->
+      do vs  <- getList ListReg
+         FunctionValue fid <- regCasesM fun
+         next <- callFun fid vs
+         case next of
+           Left v   -> raiseError v
+           Right xs -> return (ReturnWith xs)
+
+
+
+
+
+
+evalStmt :: BlockStmt Stmt -> BlockM Next
+evalStmt stmt =
+  logTrace ("STMT: " ++ show (pp stmt)) >>
+
+  case stmtCode stmt of
+
+    Assign r e -> do assign r =<< evalExpr e
+                     return Continue
+
+    SetUpVal {} -> error "SetUpVal"
+
+    NewTable r ->
+      do here <- newTableId
+         assign r (RegVal (newTable here))
+         return Continue
+
+    LookupTable r t i ->
+      do TableValue l <- regCasesM t
+         ti           <- exprCasesM i
+         assign r =<< fmap RegVal (getTable l ti)
+         return Continue
+
+    SetTable t i v ->
+      do val          <- regValToVal =<< evalExpr v
+         TableValue l <- regCasesM t
+         ti           <- regValToVal =<< evalExpr i
+         setTable l ti val
+         return Continue
+
+
+    SetTableList t _ ->
+      do vs <- getList ListReg
+         let vr = appListAll vs
+         TableValue tv <- regCasesM t
+         setTable tv (basic Number) vr
+         return Continue
+
+    GetMeta r e ->
+      -- Note: XXX: we don't really need to expand function values completely,
+      -- as they all give the same result.
+      do v    <- exprCasesM e
+         GlobalState { basicMetas, stringMeta, funMeta, booleanMeta } <- getGlobal
+         newV <- case v of
+                   TableValue l -> getTableMeta l
+                   BasicValue t     -> return (appFun basicMetas t)
+                   StringValue _    -> return stringMeta
+                   BooleanValue{}   -> return booleanMeta
+                   FunctionValue _  -> return funMeta
+         when (newV == bottom) impossible
+         assign r (RegVal newV)
+         return Continue
+
 
     NewClosure r proto fun ->
       do let ups = funcUpvalExprs fun
@@ -235,10 +254,6 @@ evalStmt stmt =
          fid  <- newFunId proto upRs
          assign r (RegVal (newFun fid))
          return Continue
-
-
-    Return -> do vs <- getList ListReg
-                 return (ReturnWith vs)
 
     CloseStack _ -> error "CloseStack"
 
@@ -251,14 +266,6 @@ evalStmt stmt =
            Left v   -> raiseError v
            Right xs -> do setList ListReg xs
                           return Continue
-
-    TailCall fun ->
-      do vs  <- getList ListReg
-         FunctionValue fid <- regCasesM fun
-         next <- callFun fid vs
-         case next of
-           Left v   -> raiseError v
-           Right xs -> return (ReturnWith xs)
 
     -- Lists
     Append xs es ->
@@ -379,7 +386,10 @@ evalBlock :: AnalysisM m => GlobalBlockName -> State -> m (Next, State)
 evalBlock bn s = inBlock bn s go
   where
   go = do logTrace ("BLOCK: " ++ show (pp bn))
-          next <- evalStmt =<< curStmt
+          st <- curStmt
+          next <- case st of
+                    Left norm -> evalStmt norm
+                    Right end -> evalEndStmt end
           case next of
             Continue -> continue >> go
             _        -> return next

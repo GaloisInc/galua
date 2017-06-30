@@ -9,7 +9,7 @@ import Galua.Value(Value)
 import Galua.Code(Function)
 import Galua.FunId(FunId)
 import Galua.Mach
-import Galua.Micro.AST(BlockName,BlockStmt)
+import Galua.Micro.AST(BlockName,Block)
 
 data MLuaExecEnv = MLuaExecEnv
   { mluaExecRegsValue :: {-# UNPACK #-} !(IOVector Value)
@@ -26,7 +26,7 @@ data MLuaExecEnv = MLuaExecEnv
 
 
   , mluaExecUpvals :: {-# UNPACK #-} !(IOVector (IORef Value))
-  , mluaExecCode   :: !(Map BlockName (Vector BlockStmt)) -- ^ Our CFG
+  , mluaExecCode   :: !(Map BlockName Block) -- ^ Our CFG
 
 
   -- The current functions

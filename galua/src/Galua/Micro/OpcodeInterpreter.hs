@@ -8,7 +8,6 @@ module Galua.Micro.OpcodeInterpreter
 
 import           Data.IORef(IORef,newIORef,modifyIORef',modifyIORef,readIORef,
                             writeIORef)
-import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
 import qualified Data.Vector.Mutable as IOVector
 import qualified Data.Map as Map
@@ -470,7 +469,21 @@ performArith2 f res op e1 e2 =
      return Continue
 
 
-runStmt :: VM -> MLuaExecEnv -> BlockStmt -> IO Next
+runEndStmt :: MLuaExecEnv -> BlockStmt EndStmt -> IO Next
+runEndStmt f stmt =
+  case stmtCode stmt of
+    Case e as d             -> performCase f e as d
+    If p tr fa              -> performIf f p tr fa
+    Goto b                  -> performGoto b
+
+    TailCall clo            -> performTailCall f clo
+    Return                  -> performReturn f
+    Raise e                 -> performRaise f e
+
+
+
+
+runStmt :: VM -> MLuaExecEnv -> BlockStmt Stmt -> IO Next
 runStmt vm f stmt =
   case stmtCode stmt of
     Comment _               -> return Continue
@@ -483,17 +496,9 @@ runStmt vm f stmt =
     SetTableList tab ix     -> performSetTableList f tab ix
     GetMeta r e             -> performGetMeta vm f r e
 
-    -- Local control flow
-    Case e as d             -> performCase f e as d
-    If p tr fa              -> performIf f p tr fa
-    Goto b                  -> performGoto b
-
     -- Functions
     NewClosure res ix fun   -> performNewClosure vm f res ix fun
     Call clo                -> performCall f clo
-    TailCall clo            -> performTailCall f clo
-    Return                  -> performReturn f
-    Raise e                 -> performRaise f e
 
     -- Lists
     Drop r n                -> performDrop f r n
@@ -517,11 +522,12 @@ runStmt vm f stmt =
     SetUpVal _ _            -> crash "SetUpVal in phase 2"
 
 
-runStmtAt :: VM -> MLuaExecEnv -> Vector BlockStmt -> Int -> IO Next
+runStmtAt :: VM -> MLuaExecEnv -> Block -> Int -> IO Next
 runStmtAt vm f curBlock pc =
-  case curBlock Vector.!? pc of
+  case blockBody curBlock Vector.!? pc of
     Just stmt -> runStmt vm f stmt
-    Nothing   -> crash ("Invalid PC: " ++ show pc)
+    Nothing   -> runEndStmt f (blockEnd curBlock)
+
 
 
 

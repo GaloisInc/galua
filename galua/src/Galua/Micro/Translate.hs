@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 -- | Translate from Lua op-codes into the CFG representation of a program.
 module Galua.Micro.Translate
-  ( MicroFunction(..), blankMicroFunction
+  ( MicroFunction(..)
   , translate,translateAll,translateTop
   ) where
 
@@ -24,7 +24,7 @@ import           Galua.Micro.Translate.JoinBlocks(joinBlocks)
 import           Galua.Micro.Translate.RenumberTMP(renumberTMP)
 
 translate :: Code.Function -> MicroFunction
-translate fun = id -- renumberTMP lastPhase
+translate fun = renumberTMP lastPhase
               $ joinBlocks pass1 { functionCode = explicitBlocks refs code1 }
   where
   pass1 = translatePass1 fun
@@ -190,21 +190,15 @@ micro fun pc =
              do setCallResults a ListReg c
                 advance
 
-      Code.OP_TAILCALL a b c ->
+      Code.OP_TAILCALL a b _c ->
         do let a' = Code.plusReg a 1
            getCallArguments a' b
            resolveFunction (Reg a) $
-             do emit (TailCall (Reg a))
-
-                -- To make the following RETURN happy.
-                -- LuaC put it there because it support disabling
-                -- of tail calls.
-                setCallResults a ListReg c
-                advance
+             emitEnd (TailCall (Reg a))
 
       Code.OP_RETURN a c ->
         do getCallArguments a c
-           emit Return
+           emitEnd Return
 
 
 

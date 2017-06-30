@@ -4,7 +4,6 @@ module Galua.Micro.Translate.ExplicitRefs (explicitBlocks) where
 
 import           Data.Set (Set)
 import qualified Data.Set as Set
-import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
 import           Data.Map (Map)
 import qualified Data.Map as Map
@@ -20,14 +19,16 @@ import qualified Galua.Micro.Translate.Monad as M
 --------------------------------------------------------------------------------
 
 explicitBlocks :: Map BlockName (Set Code.Reg) ->
-                  Map BlockName (Vector BlockStmt) ->
-                  Map BlockName (Vector BlockStmt)
+                  Map BlockName Block ->
+                  Map BlockName Block
 explicitBlocks refs blocks = generate $ mapM_ oneBlock $ Map.toList blocks
   where
   oneBlock (name, stmts) =
     let rs = Map.findWithDefault Set.empty name refs
-    in inBlock name (runRefs refs rs (mapM_ refStmt (Vector.toList stmts)))
+    in inBlock name (runRefs refs rs (doBlock stmts))
 
+  doBlock b = do mapM_ refStmt (Vector.toList (blockBody b))
+                 refEndStmt (blockEnd b)
 
 
 
@@ -76,6 +77,9 @@ ifRef r m1 m2 =
 emit :: Stmt -> R ()
 emit s = doM (M.emit s)
 
+emitEnd :: EndStmt -> R ()
+emitEnd s = doM (M.emitEnd s)
+
 newTMP :: R Reg
 newTMP = doM (M.newPhaseTMP 2)
 
@@ -101,7 +105,7 @@ endBlock tgt =
        else doM $ M.inNewBlock_ $
                do let toRef r = M.emit (NewRef (Reg r) (toExpr r))
                   mapM_ toRef newRefs
-                  M.emit (Goto tgt)
+                  M.emitEnd (Goto tgt)
   where
   shouldBeRefs =
     R $ \allRs nowRs ->
@@ -141,7 +145,42 @@ readExpr expr =
 readProp :: Prop -> R Prop
 readProp (Prop p es) = Prop p <$> mapM readExpr es
 
-refStmt :: BlockStmt -> R ()
+refEndStmt :: BlockStmt EndStmt -> R ()
+refEndStmt stmt =
+  case stmtCode stmt of
+    Raise e ->
+      do e' <- readExpr e
+         emitEnd $ Raise e'
+
+
+    Goto l -> do l' <- endBlock l
+                 emitEnd (Goto l')
+
+    Case e as d ->
+      do e' <- readExpr e
+         let alt (v,b) = do b' <- endBlock b
+                            return (v,b')
+         as' <- mapM alt as
+         d'  <- mapM endBlock d
+         emitEnd $ Case e' as' d'
+
+    If p t f ->
+      do p' <- readProp p
+         t' <- endBlock t
+         f' <- endBlock f
+         emitEnd $ If p' t' f'
+
+    TailCall f ->
+      do f'    <- readReg f
+         emitEnd $ TailCall f'
+
+    Return  ->
+      do emitEnd Return
+
+
+
+
+refStmt :: BlockStmt Stmt -> R ()
 refStmt stmt =
   case stmtCode stmt of
 
@@ -173,40 +212,10 @@ refStmt stmt =
       do e' <- readExpr e
          setReg r $ \r' -> GetMeta r' e'
 
-    Raise e ->
-      do e' <- readExpr e
-         emit $ Raise e'
-
-
-    Goto l -> do l' <- endBlock l
-                 emit (Goto l')
-
-    Case e as d ->
-      do e' <- readExpr e
-         let alt (v,b) = do b' <- endBlock b
-                            return (v,b')
-         as' <- mapM alt as
-         d'  <- mapM endBlock d
-         emit $ Case e' as' d'
-
-    If p t f ->
-      do p' <- readProp p
-         t' <- endBlock t
-         f' <- endBlock f
-         emit $ If p' t' f'
-
-
 
     Call f ->
       do f' <- readReg f
          emit $ Call f'
-
-    TailCall f ->
-      do f'    <- readReg f
-         emit $ TailCall f'
-
-    Return  ->
-      do emit Return
 
     Drop list n ->
       do emit $ Drop list n

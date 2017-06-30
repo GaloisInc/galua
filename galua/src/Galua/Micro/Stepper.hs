@@ -1,7 +1,6 @@
 {-# Language NamedFieldPuns #-}
 module Galua.Micro.Stepper where
 
-import           Data.Vector(Vector)
 import qualified Data.Vector.Mutable as IOVector
 import qualified Data.Map as Map
 import           Data.IORef(newIORef)
@@ -11,12 +10,12 @@ import Galua.Micro.ExecEnv(MLuaExecEnv(..))
 import Galua.Mach(VM,NextStep(..))
 import Galua.FunValue(FunctionValue(..))
 import Galua.Value(Value(..), Reference, Closure(..),referenceVal)
-import Galua.Micro.AST(BlockStmt,BlockName(..),MicroFunction(..))
+import Galua.Micro.AST(Block,BlockName(..),MicroFunction(..))
 import Galua.Micro.OpcodeInterpreter
         (runStmtAt,Next(..),crash,setListReg)
 import qualified Galua.Util.SmallVec as SMV
 
-run :: VM -> MLuaExecEnv -> Vector BlockStmt -> Int -> IO NextStep
+run :: VM -> MLuaExecEnv -> Block -> Int -> IO NextStep
 run vm frame block pc =
   do next <- runStmtAt vm frame block pc
      case next of

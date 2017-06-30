@@ -6,11 +6,9 @@ import           Data.Aeson (toJSON, (.=))
 import           Data.Text (Text)
 import qualified Data.Text as Text
 import qualified Data.Map as Map
-import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
-import           Data.Maybe(maybeToList)
 
-import Galua.Pretty(pp)
+import Galua.Pretty(Pretty,pp)
 import Galua.Micro.AST
 
 
@@ -28,26 +26,18 @@ exportBlockName bn =
     EntryBlock   -> "ENTRY"
   where sh = Text.pack . show
 
-exportBlock :: Vector BlockStmt -> JS.Value
-exportBlock xs = JS.object [ "stmts" .= fmap exportBlockStatemt xs
-                           , "next"  .= map exportBlockName (blockNext xs)
-                           ]
-
-blockNext :: Vector BlockStmt -> [BlockName]
-blockNext v
-  | Vector.null v = []
-  | otherwise =
-     case stmtCode (Vector.last v) of
-       Case _ xs mb -> map snd xs ++ maybeToList mb
-       If _ x y     -> [ x, y ]
-       Goto x       -> [ x ]
-       _            -> []
+exportBlock :: Block -> JS.Value
+exportBlock xs = JS.object
+  [ "stmts" .= (map exportBlockStatemt (Vector.toList (blockBody xs))
+                                     ++ [exportBlockStatemt (blockEnd xs)])
+  , "next"  .= map exportBlockName (blockNext xs)
+  ]
 
 
-exportBlockStatemt :: BlockStmt -> JS.Value
+exportBlockStatemt :: Pretty a => BlockStmt a -> JS.Value
 exportBlockStatemt bs = exportStmt (stmtCode bs)
 
-exportStmt :: Stmt -> JS.Value
+exportStmt :: Pretty a => a -> JS.Value
 exportStmt stmt = toJSON (Text.pack (show (pp stmt)))
 
 
