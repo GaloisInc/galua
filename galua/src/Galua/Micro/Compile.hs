@@ -22,47 +22,54 @@ tempMod = "TEMP_JIT"
 pack :: String -> PackageFlag
 pack f = ExposePackage f (PackageArg f) (ModRenaming True [])
 
+packages :: [ PackageFlag ]
+packages = map pack [ "base", "containers", "vector", "galua-rts" ]
+
+pack_dbs :: [ PkgConfRef ]
+pack_dbs = map PkgConfFile
+  [ ".stack-work/install/x86_64-linux/lts-8.13/8.0.2/pkgdb"
+  , "/home/diatchki/.stack/snapshots/x86_64-linux/lts-8.13/8.0.2/pkgdb"
+  ]
 
 
 compile :: Typeable a => Doc -> IO a {- ^ Compile value for `main` -}
 compile modText' =
-    bracket open cleanup $ \file ->
-    defaultErrorHandler defaultFatalMessager defaultFlushOut $
-    -- runGhc (Just "./galua-ghc") $
-    runGhc (Just libdir) $
-      do dflags <- getSessionDynFlags
+  do writeFile "TEMP_JIT.hs" (show modText')
+     bracket open cleanup $ \file ->
+       defaultErrorHandler defaultFatalMessager defaultFlushOut $
+       -- runGhc (Just "./galua-ghc") $
+       runGhc (Just libdir) $
+         do dflags <- getSessionDynFlags
 
-         _      <- setSessionDynFlags dflags
-                      { verbosity = 3
-                      , extraPkgConfs = \_ ->
-                            [ PkgConfFile ".stack-work/install/x86_64-linux/lts-8.13/8.0.2/pkgdb"
-      , PkgConfFile "/home/diatchki/.stack/snapshots/x86_64-linux/lts-8.13/8.0.2/pkgdb"
-      , GlobalPkgConf ]
-                      , packageFlags = [pack "galua"]
-                      }
+            _      <- setSessionDynFlags dflags
+                         { verbosity = 0
+                         , extraPkgConfs = \_ -> GlobalPkgConf : pack_dbs
+                         , packageFlags = packages
+                         , optLevel = 2
+                         }
 
 
-         nowish <- liftIO getCurrentTime
-         let modName = mkModuleName tempMod
-             -- modText = unlines $ ("module " ++ tempMod ++ "(main) where") : ls
-             modText = show modText'
-             target = Target { targetId = TargetFile file Nothing
-                             , targetAllowObjCode = True
-                             , targetContents =
-                                  Just (stringToStringBuffer modText, nowish)
-                             }
+            nowish <- liftIO getCurrentTime
+            let modName = mkModuleName tempMod
+                -- modText = unlines $ ("module " ++ tempMod ++ "(main) where") : ls
+                modText = show modText'
+                target = Target { targetId = TargetFile file Nothing
+                                , targetAllowObjCode = True
+                                , targetContents =
+                                     Just (stringToStringBuffer modText, nowish)
+                                }
 
-         setTargets [target]
-         r <- load LoadAllTargets
-         liftIO $ putStrLn "*************COMPILING********************"
-         case r of
-           Failed    -> throw CompilationFail
-           Succeeded ->
-             do liftIO $ putStrLn "*************SET CONTEXT********************"
-                setContext [IIDecl (simpleImportDecl modName)]
-                result <- compileExpr "TEMP_JIT.main"
-                liftIO $ putStrLn "*************COMPILE EXPR********************"
-                return $! unsafeCoerce result
+            setTargets [target]
+            r <- load LoadAllTargets
+            liftIO $ putStrLn "*************COMPILING********************"
+            case r of
+              Failed    -> throw CompilationFail
+              Succeeded ->
+                do liftIO $ putStrLn "*************SET CONTEXT*****************"
+                   setContext [IIDecl (simpleImportDecl modName)]
+                   result <- compileExpr "TEMP_JIT.main"
+                   liftIO $ putStrLn "*************COMPILE EXPR***********"
+                   return $! unsafeCoerce result
 
 
 -- | Exception, which is thrown if compilation fails.
