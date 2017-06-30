@@ -428,8 +428,8 @@ valueMetamethod event tab ifOK ifFail =
 {- Version that disables metatables.
   do failCase <- inNewBlock_ ifFail
      emitEnd (Goto failCase)
--}
-
+-- -}
+-- {-
   do meta  <- newTMP
      emit (GetMeta meta (toExpr tab))
 
@@ -441,7 +441,8 @@ valueMetamethod event tab ifOK ifFail =
           (do emit (LookupTable meta meta (toExpr event))
               ifNil meta failCase (ifOK meta)
           )
-       $ NoDefault -}
+       $ NoDefault
+-- -}
 
 valueMetamethod2 :: ByteString -> Expr -> Expr -> (Reg -> M ()) -> M () -> M ()
 valueMetamethod2 event left right ifOk ifFail =
