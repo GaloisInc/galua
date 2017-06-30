@@ -20,12 +20,15 @@ import           Galua.Micro.AST
 import           Galua.Micro.Translate.Monad
 import           Galua.Micro.Translate.AnalyzeRefs(analyze)
 import           Galua.Micro.Translate.ExplicitRefs(explicitBlocks)
+import           Galua.Micro.Translate.Simplify(simplify)
 import           Galua.Micro.Translate.JoinBlocks(joinBlocks)
 import           Galua.Micro.Translate.RenumberTMP(renumberTMP)
 
 translate :: Code.Function -> MicroFunction
 translate fun = renumberTMP lastPhase
-              $ joinBlocks pass1 { functionCode = explicitBlocks refs code1 }
+              $ joinBlocks
+              $ simplify
+              $ pass1 { functionCode = explicitBlocks refs code1 }
   where
   pass1 = translatePass1 fun
   code1 = functionCode pass1
@@ -421,6 +424,12 @@ setTable tab0 key val k =
 
 valueMetamethod :: IsExpr e => ByteString -> e -> (Reg -> M ()) -> M () -> M ()
 valueMetamethod event tab ifOK ifFail =
+
+{- Version that disables metatables.
+  do failCase <- inNewBlock_ ifFail
+     emitEnd (Goto failCase)
+-}
+
   do meta  <- newTMP
      emit (GetMeta meta (toExpr tab))
 
@@ -432,7 +441,7 @@ valueMetamethod event tab ifOK ifFail =
           (do emit (LookupTable meta meta (toExpr event))
               ifNil meta failCase (ifOK meta)
           )
-       $ NoDefault
+       $ NoDefault -}
 
 valueMetamethod2 :: ByteString -> Expr -> Expr -> (Reg -> M ()) -> M () -> M ()
 valueMetamethod2 event left right ifOk ifFail =

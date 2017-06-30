@@ -38,6 +38,7 @@ library
                        Galua.Micro.Translate.Monad
                        Galua.Micro.Translate.AnalyzeRefs
                        Galua.Micro.Translate.ExplicitRefs
+                       Galua.Micro.Translate.Simplify
                        Galua.Micro.Translate.JoinBlocks
                        Galua.Micro.Translate.RenumberTMP
 
