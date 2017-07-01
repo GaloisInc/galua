@@ -4,6 +4,7 @@ module Galua.Micro.JIT (jit) where
 import Text.PrettyPrint
 import qualified Data.Vector as Vector
 import qualified Data.Map as Map
+import           Data.ByteString(ByteString)
 
 
 import           Galua.Mach(VM,NextStep)
@@ -31,13 +32,10 @@ jit f = do writeFile "out.dot" (show dot)
 Read only values:
 
   * vm       :: VM
-  * machMeta :: IORef TypeMetatables
-  * aref     :: AllocRef
 
   * errRef   :: IORef Value
 
   * upvalues :: IOVector (IORef Value)
-  * closure  :: Value
   * fid      :: Value
   * fun      :: Function
 
@@ -51,6 +49,7 @@ compile func = (ppDot (functionCode mf), vcat $
   , "import Data.Maybe"
   , "import Data.IORef"
   , "import qualified Data.Map as Map"
+  , "import           Data.Vector.Mutable(IOVector)"
   , "import qualified Data.Vector.Mutable as IOVector"
   , "import qualified Data.Vector as Vector"
   , ""
@@ -59,6 +58,7 @@ compile func = (ppDot (functionCode mf), vcat $
   , "import Galua.FunValue"
   , "import Galua.Number"
   , "import Galua.LuaString"
+  , "import Galua.Code(Function)"
   , "import qualified Galua.Code as Code"
   , "import qualified Galua.Util.SmallVec as SMV"
   , ""
@@ -69,18 +69,16 @@ compile func = (ppDot (functionCode mf), vcat $
   , "main cloRef vm ="
   , nest 2 $ doBlock $
       [ "putStrLn \"start compiled code\""
-      , "let aref     = vmAllocRef vm"
-      , "    machMeta = machMetatablesRef (vmMachineEnv vm)"
-      , "    MkClosure { cloFun = LuaFunction fid fun"
+      , "let MkClosure { cloFun = LuaFunction fid fun"
       , "              , cloUpvalues = upvalues }  = referenceVal cloRef"
 
       , "errRef <- newIORef (error \"[bug]: used `errRef`\")"
       , "let" <+> initState
       ] ++
-      [ "   " <+> blockDecl k v $$ " "
+     [ enterBlock EntryBlock ]
+  ] ++
+  [ blockDecl k v $$ " "
           | (k,v) <- Map.toList (functionCode mf)
-      ] ++
-      [ enterBlock EntryBlock ]
   ])
   where
   (declare,initState) = stateDecl (functionRegsTMP mf) func
@@ -198,8 +196,8 @@ will be executed.
 
 blockDecl :: BlockName -> Block -> HsDecl
 blockDecl bn stmts =
-  name <+> ":: State -> IO NextStep" $$
-  name <+> "!state = do" <+> vcat (goBlocks stmtList)
+  name <+> ":: VM -> IORef Value -> IOVector (IORef Value) -> FunId -> Function -> State -> IO NextStep" $$
+  name <+> "vm errRef upvalues fid fun !state = do" <+> vcat (goBlocks stmtList)
   where
   name     = blockNameName bn
   stmtList = map stmtCode (Vector.toList (blockBody stmts))
@@ -266,6 +264,7 @@ stmtStmt stmt =
     Call _                  -> error "Call statement is special."
     CloseStack _            -> error "CloseStack in phase 2"
     SetUpVal _ _            -> error "SetUpVal in phase 2"
+
 
 
 -- | Get the value of a register.
@@ -342,7 +341,7 @@ getRefExpr expr =
 -- | Emit code to start executing the given block.
 -- Type: IO NextStep
 enterBlock :: BlockName -> HsStmt
-enterBlock b = blockNameName b <+> "state"
+enterBlock b = blockNameName b <+> "vm errRef upvalues fid fun state"
 
 -- | Compile a decision.
 -- Type: IO Bool
@@ -435,7 +434,17 @@ performNewTable r =
     , setReg r "v"
     ]
 
+strLab :: ByteString -> HsExpr
+strLab x = "String" <+> parens ("unsafeFromByteString" <+> text (show x))
+
 performLookupTable :: Reg -> Reg -> Expr -> HsStmt
+performLookupTable res tab (ELit (LStr x)) =
+  innerBlockStmt
+    [ "let Table t =" <+> getReg tab
+    , "v          <- getTableRaw t" <+> parens (strLab x)
+    , setReg res "v"
+    ]
+
 performLookupTable res tab ix =
   innerBlockStmt
     [ "let Table t =" <+> getReg tab
@@ -445,6 +454,14 @@ performLookupTable res tab ix =
     ]
 
 performSetTable :: Reg -> Expr -> Expr -> HsStmt
+performSetTable tab (ELit (LStr x)) val =
+  innerBlockStmt
+    [ "let Table t =" <+> getReg tab
+    , "val        <-" <+> getExpr val
+    , "setTableRaw t" <+> parens (strLab x) <+> "val"
+    , "return state"
+    ]
+
 performSetTable tab ix val =
   innerBlockStmt
     [ "let Table t =" <+> getReg tab
@@ -473,7 +490,7 @@ performGetMeta r e =
     , "  Table    tr -> setMb =<< getTableMeta tr"
     , "  UserData ur -> setMb =<< readIORef (userDataMeta (referenceVal ur))"
     , "  _           -> do let ty = valueType v"
-    , "                    tabs <- readIORef machMeta"
+    , "                    tabs <- readIORef (machMetatablesRef (vmMachineEnv vm))"
     , "                    setMb (Map.lookup ty tabs)"
     ]
 
@@ -518,9 +535,9 @@ performGoto b =
 performCall :: Reg -> [HsStmt] -> HsStmt
 performCall clo after =
   finalBlockStmt -- kind of, the rest of the block is captured.
-    [ "let Closure fun =" <+> getReg clo
+    [ "let Closure newFun =" <+> getReg clo
     , "    args        =" <+> getListReg
-    , "return $! FunCall fun (SMV.fromList args) Nothing $ \\result ->"
+    , "return $! FunCall newFun (SMV.fromList args) Nothing $ \\result ->"
     , nest 2 $ doBlock (setRes : after)
     ]
   where
@@ -531,9 +548,9 @@ performCall clo after =
 performTailCall :: Reg -> HsStmt
 performTailCall clo =
   finalBlockStmt
-    [ "let Closure fun =" <+> getReg clo
+    [ "let Closure newFun =" <+> getReg clo
     , "let vs =" <+> getListReg
-    , "return $! FunTailcall fun (SMV.fromList vs)"
+    , "return $! FunTailcall newFun (SMV.fromList vs)"
     ]
 
 
