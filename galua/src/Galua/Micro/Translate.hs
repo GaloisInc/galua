@@ -689,7 +689,10 @@ getCallArguments from count =
 
              | otherwise -> error "getCallArguments: from > end"
 
-           Nothing -> error "getCallArguments: CountTop with no list register"
+           Nothing -> return ()
+              -- RETURN after TAILCALL
+              -- RETURN after RETURN
+              -- error "getCallArguments: CountTop with no list register"
 
 
 
