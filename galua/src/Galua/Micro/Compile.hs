@@ -10,6 +10,7 @@ import Data.Time           (getCurrentTime)
 import Text.PrettyPrint(Doc)
 
 import GHC
+import Outputable(showSDoc,ppr)
 import GHC.Paths(libdir)
 import MonadUtils(liftIO)
 import StringBuffer(stringToStringBuffer)
@@ -20,7 +21,7 @@ pack :: String -> PackageFlag
 pack f = ExposePackage f (PackageArg f) (ModRenaming True [])
 
 packages :: [ PackageFlag ]
-packages = map pack [ "base", "containers", "vector", "galua-rts" ]
+packages = map pack [ "base", "containers", "bytestring", "vector", "galua-rts" ]
 
 pack_dbs :: [ PkgConfRef ]
 pack_dbs = map PkgConfFile
@@ -40,21 +41,22 @@ compile modNameStr modText' =
 
             _      <- setSessionDynFlags dflags
                          { verbosity = 0
+                         , ghcLink = LinkInMemory
                          , extraPkgConfs = \_ -> GlobalPkgConf : pack_dbs
                          , packageFlags = packages
                          , optLevel = 2
                          }
+            let pp x = showSDoc dflags (ppr x)
 
 
             nowish <- liftIO getCurrentTime
             let modName = mkModuleName modNameStr
-                -- modText = unlines $ ("module " ++ tempMod ++ "(main) where") : ls
                 modText = show modText'
-                target = Target { targetId = TargetFile file Nothing
-                                , targetAllowObjCode = True
-                                , targetContents =
+                target  = Target { targetId = TargetFile file Nothing
+                                 , targetAllowObjCode = True
+                                 , targetContents =
                                      Just (stringToStringBuffer modText, nowish)
-                                }
+                                 }
 
             setTargets [target]
             r <- load LoadAllTargets
@@ -64,6 +66,9 @@ compile modNameStr modText' =
               Succeeded ->
                 do liftIO $ putStrLn "*************SET CONTEXT*****************"
                    setContext [IIDecl (simpleImportDecl modName)]
+                   summary <- getModSummary modName
+                   intepr <- isModuleInterpreted summary
+                   liftIO $ putStrLn $ "INTERP: " ++ show intepr
                    result <- compileExpr (modNameStr ++ ".main")
                    liftIO $ putStrLn "*************COMPILE EXPR***********"
                    return $! unsafeCoerce result
