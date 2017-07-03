@@ -7,12 +7,12 @@ import qualified Data.Map as Map
 import           Data.ByteString(ByteString)
 
 
-import           Galua.Mach(CompiledFunction,VM,NextStep)
+import           Galua.Mach(CompiledFunction)
 import           Galua.Pretty(pp)
 
 import           Galua.Micro.AST
 import           Galua.Micro.Translate(translate)
-import           Galua.Value(Value,Reference,Closure)
+import           Galua.Value(Reference,Closure)
 import           Galua.Code hiding (Reg(..))
 import qualified Galua.Code as Code (Reg(..),UpIx(..),Function(..))
 import qualified Galua.Micro.Compile as GHC (compile)
@@ -432,7 +432,7 @@ performNewTable :: Reg -> HsStmt
 performNewTable r =
   innerBlockStmt
     [ "v <- machNewTable vm 0 0"
-    , setReg r "v"
+    , setReg r "Table v"
     ]
 
 strLab :: ByteString -> HsExpr
@@ -627,7 +627,7 @@ performNewRef res val =
   innerBlockStmt
     [ "v   <-" <+> getExpr val
     , "ref <- newIORef v"
-    , setRegRef res "v"
+    , setRegRef res "ref"
     ]
 
 
@@ -681,31 +681,32 @@ performArith1 res op e =
 
 
       ToBoolean ->
-        [ setReg res "valueBool v" ]
+        [ setReg res "Bool (valueBool v)" ]
 
       StringLen ->
         [ "let String s = v"
-        , setReg res "luaStringLen s"
+        , setReg res "Number (Int (luaStringLen s))"
         ]
 
       TableLen ->
         [ "let Table t = v"
-        , setReg res "tableLen t"
+        , "n <- tableLen t"
+        , setReg res "Number (Int n)"
         ]
 
       NumberUnaryMinus ->
         [ "let Number n = v"
-        , setReg res "neagate n"
+        , setReg res "Number (neagate n)"
         ]
 
       Complement  ->
         [ "let Number (Int n) = v"
-        , setReg res "complement n"
+        , setReg res "Number (Int (complement n))"
         ]
 
       BoolNot ->
         [ "let Bool b = v"
-        , setReg res "not b"
+        , setReg res "Bool (not b)"
         ]
 
 
