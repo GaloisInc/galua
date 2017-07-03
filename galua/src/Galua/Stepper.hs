@@ -369,12 +369,9 @@ enterClosure vm c vs =
           do let jitRef = machJIT (vmMachineEnv vm)
              jitMap <- readIORef jitRef
              compiled <- case Map.lookup fid jitMap of
-                           Just code ->
-                              do putStrLn (show fid ++ " already compiled.")
-                                 return code
+                           Just code -> return code
                            Nothing ->
-                             do putStrLn ("Compiling: " ++ show fid)
-                                code <- jit fid f
+                             do code <- jit fid f
                                 writeIORef jitRef $! Map.insert fid code jitMap
                                 return code
              useNormalLua compiled fid f cloUpvalues
@@ -426,6 +423,6 @@ enterClosure vm c vs =
                     , luaExecFunction  = f
                     }
 
-       -- eenv `seq` return (eenv, return (Goto 0))
-       eenv `seq` return (eenv, cmp c vm (SMV.toList vs))
+       --  eenv `seq` return (eenv, return (Goto 0))
+       eenv `seq` return (eenv, cmp c vm vs)
 

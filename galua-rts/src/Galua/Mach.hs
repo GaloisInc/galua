@@ -258,7 +258,7 @@ data MachineEnv = MachineEnv
     -- ^ XXX: use types of arguments in key too?
   }
 
-type CompiledFunction = Reference Closure -> VM -> [Value] -> IO NextStep
+type CompiledFunction = Reference Closure -> VM -> SmallVec Value -> IO NextStep
 
 
 data MachConfig = MachConfig

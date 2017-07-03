@@ -12,7 +12,6 @@ import           Galua.Pretty(pp)
 
 import           Galua.Micro.AST
 import           Galua.Micro.Translate(translate)
-import           Galua.Value(Reference,Closure)
 import           Galua.Code hiding (Reg(..))
 import qualified Galua.Code as Code (Reg(..),UpIx(..),Function(..))
 import qualified Galua.Micro.Compile as GHC (compile)
@@ -20,11 +19,10 @@ import qualified Galua.Micro.Compile as GHC (compile)
 
 
 jit :: FunId -> Function -> IO CompiledFunction
-jit fid f = do writeFile (modName ++ ".dot") (show dot)
-               GHC.compile modName code
+jit fid f = GHC.compile modName code
   where
   modName    = "Lua_" ++ funIdString fid
-  (dot,code) = compile modName f
+  code = compile modName f
 
 
 {-
@@ -38,13 +36,13 @@ Read only values:
   * upvalues :: IOVector (IORef Value)
   * fid      :: Value
   * fun      :: Function
-  * args0    :: [Value]
+  * args0    :: SmallVec Value
 
 -}
 
 
-compile :: String -> Function -> (Doc,HsModule)
-compile modName func = (ppDot (functionCode mf), vcat $
+compile :: String -> Function -> HsModule
+compile modName func = vcat $
   [ "{-# Language BangPatterns, OverloadedStrings #-}"
   , "module" <+> text modName <+> "(main) where"
   , "import Data.Maybe"
@@ -53,6 +51,7 @@ compile modName func = (ppDot (functionCode mf), vcat $
   , "import           Data.Vector.Mutable(IOVector)"
   , "import qualified Data.Vector.Mutable as IOVector"
   , "import qualified Data.Vector as Vector"
+  , "import qualified Data.ByteString as BS"
   , ""
   , "import Galua.Mach"
   , "import Galua.Value"
@@ -61,16 +60,16 @@ compile modName func = (ppDot (functionCode mf), vcat $
   , "import Galua.LuaString"
   , "import Galua.Code(Function(funcNested))"
   , "import qualified Galua.Code as Code"
+  , "import           Galua.Util.SmallVec (SmallVec)"
   , "import qualified Galua.Util.SmallVec as SMV"
   , ""
   , declare
   , ""
   ] ++
-  [ "main :: Reference Closure -> VM -> [Value] -> IO NextStep"
+  [ "main :: Reference Closure -> VM -> SmallVec Value -> IO NextStep"
   , "main cloRef vm args0 ="
   , nest 2 $ doBlock $
-      [ "putStrLn \"start compiled code\""
-      , "let MkClosure { cloFun = LuaFunction fid fun"
+      [ "let MkClosure { cloFun = LuaFunction fid fun"
       , "              , cloUpvalues = upvalues }  = referenceVal cloRef"
 
       , "errRef <- newIORef (error \"[bug]: used `errRef`\")"
@@ -80,7 +79,7 @@ compile modName func = (ppDot (functionCode mf), vcat $
   ] ++
   [ blockDecl k v $$ " "
           | (k,v) <- Map.toList (functionCode mf)
-  ])
+  ]
   where
   (declare,initState) = stateDecl (functionRegsTMP mf) func
   mf = translate func
@@ -92,14 +91,14 @@ The state:
 
 @
 data State = State
-  { reg_0 :: !Value
+  { args  :: !(SmallVec Value)
+  , list  :: !(SmallVec Value)
+  , reg_0 :: !Value
   , ...
   , ref_0 :: {-# UNPACK #-} !(IORef Value)
   , ...
   , tmp_0 :: !Value
   , ...
-  , args  :: ![Value]
-  , list  :: ![Value]
   }
 @
 
@@ -122,12 +121,12 @@ stateDecl tmpNum fun =
   fieldTys  = [ r <+> ":: !Value"                        | r <- rVals ] ++
               [ r <+> ":: {-# UNPACK #-} !(IORef Value)" | r <- rRefs ] ++
               [ r <+> ":: !Value"                        | r <- rTMPs ] ++
-              [ r <+> ":: ![Value]"                      | r <- rLsts ]
+              [ r <+> ":: !(SmallVec Value)"             | r <- rLsts ]
 
-  fieldVals = [ r <+> "= Nil"     | r <- rVals ] ++
-              [ r <+> "= errRef"  | r <- rRefs ] ++
-              [ r <+> "= Nil"     | r <- rTMPs ] ++
-              [ r <+> "= []"      | r <- rLsts ]
+  fieldVals = [ r <+> "= Nil"       | r <- rVals ] ++
+              [ r <+> "= errRef"    | r <- rRefs ] ++
+              [ r <+> "= Nil"       | r <- rTMPs ] ++
+              [ r <+> "= SMV.empty" | r <- rLsts ]
 
   block fs = case fs of
                [] -> "{"
@@ -299,12 +298,12 @@ setRegRef r e =
 
 
 -- | Get the value from one of the list register.
---   Type: '[Value]'
+--   Type: 'SmallVec Value'
 getRegList :: ListReg -> HsExpr
 getRegList r = regListName r <+> "state"
 
 -- | Get the value from the result register.
---   Type: '[Value]'
+--   Type: 'SmallVec Value'
 getListReg :: HsExpr
 getListReg = getRegList ListReg
 
@@ -477,8 +476,7 @@ performSetTableList tab ix =
   innerBlockStmt
     [ "let Table t =" <+> getReg tab
     , "    xs      =" <+> getListReg
-    , "zipWithM_ (setTableRaw t)" <+>
-          "(map (Number . Int) [" <+> int ix <+> ".. ]) xs"
+    , "iForM_ xs $ \\i a -> setTableRaw t (Number (Int (i" <+> int ix <+>"))) a"
     , "return state"
     ]
 
@@ -538,12 +536,12 @@ performCall clo after =
   finalBlockStmt -- kind of, the rest of the block is captured.
     [ "let Closure newFun =" <+> getReg clo
     , "    args        =" <+> getListReg
-    , "return $! FunCall newFun (SMV.fromList args) Nothing $ \\result ->"
+    , "return $! FunCall newFun args Nothing $ \\result ->"
     , nest 2 $ doBlock (setRes : after)
     ]
   where
   setRes = "state <- return state {" <+>
-                        regListName ListReg <+> "= SMV.toList result }"
+                        regListName ListReg <+> "= result }"
 
 
 performTailCall :: Reg -> HsStmt
@@ -551,7 +549,7 @@ performTailCall clo =
   finalBlockStmt
     [ "let Closure newFun =" <+> getReg clo
     , "let vs =" <+> getListReg
-    , "return $! FunTailcall newFun (SMV.fromList vs)"
+    , "return $! FunTailcall newFun vs"
     ]
 
 
@@ -559,14 +557,13 @@ performReturn :: HsStmt
 performReturn =
   finalBlockStmt
     [ "let vs =" <+> getListReg
-    , "return $! FunReturn (SMV.fromList vs)"
+    , "return $! FunReturn vs"
     ]
 
 
 performNewClosure :: Reg -> Int -> Code.Function -> HsStmt
 performNewClosure res ix fun =
   innerBlockStmt $
-    [ "putStrLn $ \"Making new closure: \" ++ show (fid," <+> int ix <> ")" ] ++
     [ u <+> "<-" <+> getRefExpr ue | (u,ue) <- zip unames upexprs ] ++
     [ "ups <- Vector.thaw (Vector.fromListN" <+> int upNum <+>
                                                       listLit unames <+> ")"
@@ -586,7 +583,7 @@ performDrop :: ListReg -> Int -> HsStmt
 performDrop res n =
   innerBlockStmt
     [ "let xs =" <+> getRegList res
-    , "return $! state {" <+> r <+> "= drop" <+> int n <+> "xs }"
+    , "return $! state {" <+> r <+> "= SMV.drop" <+> int n <+> "xs }"
     ]
   where
   r = regListName res
@@ -596,7 +593,7 @@ performSetList :: ListReg -> [Expr] -> HsStmt
 performSetList res es =
   innerBlockStmt $
     [ v <+> "<-" <+> getExpr e | (v,e) <- zip vs es ] ++
-    [ "return $! state {" <+> r <+> "=" <+> listLit vs <+> "}" ]
+    [ "return $! state {" <+> r <+> "=" <+> vecLit vs <+> "}" ]
   where
   r   = regListName res
   vs  = [ "v" <> int i | i <- take (length es) [ 0 .. ] ]
@@ -607,7 +604,7 @@ performAppend res es =
   innerBlockStmt $
     [ v <+> "<-" <+> getExpr e | (v,e) <- zip vs es ] ++
     [ "let xs =" <+> getRegList res
-    , "return $! state {" <+> r <+> "=" <+> listLit vs <+> "++ xs }"
+    , "return $! state {" <+> r <+> "=" <+> vecLit vs <+> "SMV.++ xs }"
     ]
   where
   r   = regListName res
@@ -618,8 +615,7 @@ performIndexList :: Reg -> ListReg -> Int -> HsStmt
 performIndexList res lst ix =
   innerBlockStmt
     [ "let vs =" <+> getRegList lst
-    , "let v = listToMaybe" <+> parens ("drop" <+> int ix <+> "vs")
-    , setReg res "fromMaybe Nil v"
+    , setReg res ("SMV.indexWithDefault vs Nil" <+> int ix)
     ]
 
 performNewRef :: Reg -> Expr -> HsStmt
@@ -675,7 +671,7 @@ performArith1 res op e =
         [ "let mb = valueString v"
         , "case mb of"
         , "  Just s -> do v1 <- fromByteString s"
-        , "               " <> setReg res "v1"
+        , "               " <> setReg res "String v1"
         , "  Nothing ->" <+> setReg res "Nil"
         ]
 
@@ -803,9 +799,9 @@ performArith2 res op e1 e2 =
         , "    String s2 = v2"
         , "    x         = toByteString s1"
         , "    y         = toByteString s2"
-        , "z <- if | BS.null x -> return s1"
-        , "        | BS.null y -> return s2"
-        , "        | otherwise -> fromByteString (BS.append x y)"
+        , "z <- if BS.null x then return s1 else"
+        , "     if BS.null y then return s2 else"
+        , "                       fromByteString (BS.append x y)"
         , setReg res "String z"
         ]
 
@@ -826,4 +822,12 @@ doBlock ds = text "do" <+> vcat ds
 
 listLit :: [Doc] -> Doc
 listLit = brackets . hsep . punctuate comma
+
+vecLit :: [Doc] -> Doc
+vecLit vs =
+  case vs of
+    []    -> "SMV.empty"
+    [x]   -> "SMV.vec1" <+> x
+    [x,y] -> "SMV.vec2" <+> x <+> y
+    _     -> "SMV.VecMany" <+> listLit vs
 
