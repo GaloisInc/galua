@@ -49,6 +49,25 @@ xs ++ ys =
         VecMany ws  -> VecMany (vs Vector.++ ws)
 {-# INLINE (++) #-}
 
+drop :: Int -> SmallVec a -> SmallVec a
+drop n xs =
+  case xs of
+    Vec0     -> Vec0
+    Vec1 {}  -> if n > 0 then Vec0 else xs
+    Vec2 x _ | n > 1     -> Vec0
+             | n > 0     -> vec1 x
+             | otherwise -> xs
+    VecMany v | n1 <  1   -> Vec0
+              | n1 == 1   -> Vec1 (Vector.unsafeLast v)
+              | n1 == 2   -> Vec2 (Vector.unsafeIndex v (l - 2))
+                                  (Vector.unsafeLast v)
+              | otherwise -> VecMany (Vector.drop n v)
+
+      where
+      l  = Vector.length v
+      n1 = l - n
+{-# INLINE drop #-}
+
 iForM_ :: SmallVec a -> (Int -> a -> IO ()) -> IO ()
 iForM_ vs f =
   case vs of
@@ -137,6 +156,18 @@ unsafeIndex vs n =
     VecMany xs  -> Vector.unsafeIndex xs n
 {-# INLINE unsafeIndex #-}
 
+indexWithDefault :: SmallVec a -> a -> Int -> a
+indexWithDefault vs a n =
+  case vs of
+    Vec0      -> a
+    Vec1 x    -> if n == 0 then x else a
+    Vec2 x y  -> if n == 0 then x else
+                 if n == 1 then y else a
+    VecMany v -> case v Vector.!? n of
+                   Nothing -> a
+                   Just x  -> x
+{-# INLINE indexWithDefault #-}
+
 length :: SmallVec a -> Int
 length vs =
   case vs of
@@ -189,6 +220,7 @@ vec2 = Vec2
 vec3 :: a -> a -> a -> SmallVec a
 vec3 a b c = VecMany (Vector.fromListN 3 [a,b,c])
 {-# INLINE vec3 #-}
+
 
 fromList :: [a] -> SmallVec a
 fromList xs =
