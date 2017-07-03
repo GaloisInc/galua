@@ -73,7 +73,8 @@ compile modName func = vcat $
       , "              , cloUpvalues = upvalues }  = referenceVal cloRef"
 
       , "errRef <- newIORef (error \"[bug]: used `errRef`\")"
-      , "let" <+> initState <+> "{" <+> regListName ArgReg <+> "= args0 }"
+      , "let" <+> initState
+      , "state <-" <+> setRegList ArgReg "args0"
       ] ++
      [ enterBlock EntryBlock ]
   ] ++
@@ -197,7 +198,7 @@ will be executed.
 blockDecl :: BlockName -> Block -> HsDecl
 blockDecl bn stmts =
   name <+> ":: VM -> IORef Value -> IOVector (IORef Value) -> FunId -> Function -> State -> IO NextStep" $$
-  name <+> "vm errRef upvalues fid fun !state = do" <+> vcat (goBlocks stmtList)
+  name <+> "!vm !errRef !upvalues !fid !fun !state = do" <+> vcat (goBlocks stmtList)
   where
   name     = blockNameName bn
   stmtList = map stmtCode (Vector.toList (blockBody stmts))
@@ -306,6 +307,10 @@ getRegList r = regListName r <+> "state"
 --   Type: 'SmallVec Value'
 getListReg :: HsExpr
 getListReg = getRegList ListReg
+
+
+setRegList :: ListReg -> HsExpr -> HsExpr
+setRegList x e = "return $! state {" <+> regListName x <+> "=" <+> e <+> "}"
 
 -- | Get the value of an expression.
 -- Type: 'IO Value'
@@ -540,8 +545,7 @@ performCall clo after =
     , nest 2 $ doBlock (setRes : after)
     ]
   where
-  setRes = "state <- return state {" <+>
-                        regListName ListReg <+> "= result }"
+  setRes = "state <-" <+> setRegList ListReg "result"
 
 
 performTailCall :: Reg -> HsStmt
@@ -583,19 +587,16 @@ performDrop :: ListReg -> Int -> HsStmt
 performDrop res n =
   innerBlockStmt
     [ "let xs =" <+> getRegList res
-    , "return $! state {" <+> r <+> "= SMV.drop" <+> int n <+> "xs }"
+    , setRegList res ("SMV.drop" <+> int n <+> "xs")
     ]
-  where
-  r = regListName res
 
 
 performSetList :: ListReg -> [Expr] -> HsStmt
 performSetList res es =
   innerBlockStmt $
     [ v <+> "<-" <+> getExpr e | (v,e) <- zip vs es ] ++
-    [ "return $! state {" <+> r <+> "=" <+> vecLit vs <+> "}" ]
+    [ setRegList res (vecLit vs) ]
   where
-  r   = regListName res
   vs  = [ "v" <> int i | i <- take (length es) [ 0 .. ] ]
 
 
@@ -604,10 +605,9 @@ performAppend res es =
   innerBlockStmt $
     [ v <+> "<-" <+> getExpr e | (v,e) <- zip vs es ] ++
     [ "let xs =" <+> getRegList res
-    , "return $! state {" <+> r <+> "=" <+> vecLit vs <+> "SMV.++ xs }"
+    , setRegList res (vecLit vs <+> "SMV.++ xs")
     ]
   where
-  r   = regListName res
   vs  = [ "v" <> int i | i <- take (length es) [ 0 .. ] ]
 
 
