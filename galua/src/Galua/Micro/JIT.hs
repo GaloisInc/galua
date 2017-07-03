@@ -119,10 +119,10 @@ stateDecl tmpNum fun =
   rLsts = [ regListName r | r <- [ ArgReg, ListReg ] ]
 
 
-  fieldTys  = [ r <+> ":: !Value"                        | r <- rVals ] ++
+  fieldTys  = [ r <+> ":: !(SmallVec Value)"             | r <- rLsts ] ++
+              [ r <+> ":: !Value"                        | r <- rVals ] ++
               [ r <+> ":: {-# UNPACK #-} !(IORef Value)" | r <- rRefs ] ++
-              [ r <+> ":: !Value"                        | r <- rTMPs ] ++
-              [ r <+> ":: !(SmallVec Value)"             | r <- rLsts ]
+              [ r <+> ":: !Value"                        | r <- rTMPs ]
 
   fieldVals = [ r <+> "= Nil"       | r <- rVals ] ++
               [ r <+> "= errRef"    | r <- rRefs ] ++
@@ -829,5 +829,5 @@ vecLit vs =
     []    -> "SMV.empty"
     [x]   -> "SMV.vec1" <+> x
     [x,y] -> "SMV.vec2" <+> x <+> y
-    _     -> "SMV.VecMany" <+> listLit vs
+    _     -> "SMV.fromList" <+> listLit vs
 
