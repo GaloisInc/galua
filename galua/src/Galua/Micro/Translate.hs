@@ -862,10 +862,10 @@ valueConcat res es done = concat2 $ reverse es
                                          -- we've already tested that this
                                          -- will not return Nil!
                                          case z of
-                                           [] -> do arith2 res Concat y x
+                                           [] -> do arith2 res Concat penult ult
                                                     goto done
                                            _  -> do r <- newTMP
-                                                    arith2 r Concat y x
+                                                    arith2 r Concat penult ult
                                                     concat2 (toExpr r : z)
 
            typeCase y
