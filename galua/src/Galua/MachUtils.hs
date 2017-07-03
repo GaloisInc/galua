@@ -105,6 +105,7 @@ newMachineEnv aref machConfig =
 
      machNameCache     <- newIORef (cacheEmpty 50000)
      machCFunInfo      <- cfunInfoFun
+     machJIT           <- newIORef Map.empty
      return MachineEnv { .. }
 
 

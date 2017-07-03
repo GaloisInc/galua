@@ -16,9 +16,6 @@ import StringBuffer(stringToStringBuffer)
 import DynFlags
 import Unsafe.Coerce(unsafeCoerce)
 
-tempMod :: String
-tempMod = "TEMP_JIT"
-
 pack :: String -> PackageFlag
 pack f = ExposePackage f (PackageArg f) (ModRenaming True [])
 
@@ -32,10 +29,10 @@ pack_dbs = map PkgConfFile
   ]
 
 
-compile :: Typeable a => Doc -> IO a {- ^ Compile value for `main` -}
-compile modText' =
-  do writeFile "TEMP_JIT.hs" (show modText')
-     bracket open cleanup $ \file ->
+compile :: Typeable a => String -> Doc -> IO a {- ^ Compile value for `main` -}
+compile modNameStr modText' =
+  do writeFile (modNameStr ++ ".hs") (show modText')
+     bracket (open modNameStr) cleanup $ \file ->
        defaultErrorHandler defaultFatalMessager defaultFlushOut $
        -- runGhc (Just "./galua-ghc") $
        runGhc (Just libdir) $
@@ -50,7 +47,7 @@ compile modText' =
 
 
             nowish <- liftIO getCurrentTime
-            let modName = mkModuleName tempMod
+            let modName = mkModuleName modNameStr
                 -- modText = unlines $ ("module " ++ tempMod ++ "(main) where") : ls
                 modText = show modText'
                 target = Target { targetId = TargetFile file Nothing
@@ -67,7 +64,7 @@ compile modText' =
               Succeeded ->
                 do liftIO $ putStrLn "*************SET CONTEXT*****************"
                    setContext [IIDecl (simpleImportDecl modName)]
-                   result <- compileExpr "TEMP_JIT.main"
+                   result <- compileExpr (modNameStr ++ ".main")
                    liftIO $ putStrLn "*************COMPILE EXPR***********"
                    return $! unsafeCoerce result
 
@@ -81,8 +78,8 @@ instance Exception CompileException
 Note that this is just an empty file---the actual contents of the
 module to be compiled is passed in memory.
 Unfortunately, the current API still requires the existence of a file. -}
-open :: IO FilePath
-open =
+open :: String -> IO FilePath
+open tempMod =
   do tmp <- getTemporaryDirectory
      (file, h) <- openTempFile tmp (addExtension tempMod "hs")
      hClose h

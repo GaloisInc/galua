@@ -7,24 +7,24 @@ import qualified Data.Map as Map
 import           Data.ByteString(ByteString)
 
 
-import           Galua.Mach(VM,NextStep)
+import           Galua.Mach(CompiledFunction,VM,NextStep)
 import           Galua.Pretty(pp)
 
 import           Galua.Micro.AST
 import           Galua.Micro.Translate(translate)
-import           Galua.Value(Reference,Closure)
+import           Galua.Value(Value,Reference,Closure)
 import           Galua.Code hiding (Reg(..))
 import qualified Galua.Code as Code (Reg(..),UpIx(..),Function(..))
 import qualified Galua.Micro.Compile as GHC (compile)
 
 
-type CompiledFunction = Reference Closure -> VM -> IO NextStep
 
-jit :: Function -> IO CompiledFunction
-jit f = do writeFile "out.dot" (show dot)
-           GHC.compile code
+jit :: FunId -> Function -> IO CompiledFunction
+jit fid f = do writeFile (modName ++ ".dot") (show dot)
+               GHC.compile modName code
   where
-  (dot,code) = compile f
+  modName    = "Lua_" ++ funIdString fid
+  (dot,code) = compile modName f
 
 
 {-
@@ -38,14 +38,15 @@ Read only values:
   * upvalues :: IOVector (IORef Value)
   * fid      :: Value
   * fun      :: Function
+  * args0    :: [Value]
 
 -}
 
 
-compile :: Function -> (Doc,HsModule)
-compile func = (ppDot (functionCode mf), vcat $
+compile :: String -> Function -> (Doc,HsModule)
+compile modName func = (ppDot (functionCode mf), vcat $
   [ "{-# Language BangPatterns, OverloadedStrings #-}"
-  , "module TEMP_JIT(main) where"
+  , "module" <+> text modName <+> "(main) where"
   , "import Data.Maybe"
   , "import Data.IORef"
   , "import qualified Data.Map as Map"
@@ -58,22 +59,22 @@ compile func = (ppDot (functionCode mf), vcat $
   , "import Galua.FunValue"
   , "import Galua.Number"
   , "import Galua.LuaString"
-  , "import Galua.Code(Function)"
+  , "import Galua.Code(Function(funcNested))"
   , "import qualified Galua.Code as Code"
   , "import qualified Galua.Util.SmallVec as SMV"
   , ""
   , declare
   , ""
   ] ++
-  [ "main :: Reference Closure -> VM -> IO NextStep"
-  , "main cloRef vm ="
+  [ "main :: Reference Closure -> VM -> [Value] -> IO NextStep"
+  , "main cloRef vm args0 ="
   , nest 2 $ doBlock $
       [ "putStrLn \"start compiled code\""
       , "let MkClosure { cloFun = LuaFunction fid fun"
       , "              , cloUpvalues = upvalues }  = referenceVal cloRef"
 
       , "errRef <- newIORef (error \"[bug]: used `errRef`\")"
-      , "let" <+> initState
+      , "let" <+> initState <+> "{" <+> regListName ArgReg <+> "= args0 }"
       ] ++
      [ enterBlock EntryBlock ]
   ] ++
@@ -565,10 +566,12 @@ performReturn =
 performNewClosure :: Reg -> Int -> Code.Function -> HsStmt
 performNewClosure res ix fun =
   innerBlockStmt $
+    [ "putStrLn $ \"Making new closure: \" ++ show (fid," <+> int ix <> ")" ] ++
     [ u <+> "<-" <+> getRefExpr ue | (u,ue) <- zip unames upexprs ] ++
     [ "ups <- Vector.thaw (Vector.fromListN" <+> int upNum <+>
                                                       listLit unames <+> ")"
-    , "let fu = luaFunction" <+> parens ("Code.subFun fid" <+> int ix) <+> "fun"
+    , "let fu = luaFunction" <+> parens ("Code.subFun fid" <+> int ix)
+           <+> parens ("Vector.unsafeIndex (funcNested fun)" <+> int ix)
     , "c <- machNewClosure vm fu ups"
     , setReg res "Closure c"
     ]

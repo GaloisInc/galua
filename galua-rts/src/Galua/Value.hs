@@ -106,6 +106,7 @@ data Value
 -- Value types
 ------------------------------------------------------------------------
 
+{-# INLINE valueType #-}
 valueType :: Value -> ValueType
 valueType v =
   case v of

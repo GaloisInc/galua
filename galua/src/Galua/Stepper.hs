@@ -14,6 +14,7 @@ import           Control.Concurrent.STM (atomically, takeTMVar)
 import           Data.IORef
 import           Data.Foldable (traverse_)
 import qualified Data.Vector.Mutable as IOVector
+import qualified Data.Map as Map
 import           Foreign.ForeignPtr
 
 
@@ -364,7 +365,19 @@ enterClosure vm c vs =
   do let MkClosure { cloFun, cloUpvalues } = referenceVal c
      case cloFun of
 
-       LuaFunction fid f -> useNormalLua fid f cloUpvalues
+       LuaFunction fid f ->
+          do let jitRef = machJIT (vmMachineEnv vm)
+             jitMap <- readIORef jitRef
+             compiled <- case Map.lookup fid jitMap of
+                           Just code ->
+                              do putStrLn (show fid ++ " already compiled.")
+                                 return code
+                           Nothing ->
+                             do putStrLn ("Compiling: " ++ show fid)
+                                code <- jit fid f
+                                writeIORef jitRef $! Map.insert fid code jitMap
+                                return code
+             useNormalLua compiled fid f cloUpvalues
 
        CFunction cfun ->
          do stack <- SV.new
@@ -388,7 +401,7 @@ enterClosure vm c vs =
                                                   execCFunction l cServ cfun)
 
   where
-  useNormalLua fid f cloUpvalues =
+  useNormalLua cmp fid f cloUpvalues =
     do let regNum = funcMaxStackSize f
            varargs
              | funcIsVararg f = drop (funcNumParams f) (SMV.toList vs)
@@ -413,5 +426,6 @@ enterClosure vm c vs =
                     , luaExecFunction  = f
                     }
 
-       eenv `seq` return (eenv, return (Goto 0))
+       -- eenv `seq` return (eenv, return (Goto 0))
+       eenv `seq` return (eenv, cmp c vm (SMV.toList vs))
 

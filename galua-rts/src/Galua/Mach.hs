@@ -252,8 +252,13 @@ data MachineEnv = MachineEnv
   , machStablePtr     :: {-# UNPACK #-} !(StablePtr ExternalLuaState)
 
   , machCFunInfo      :: FunPtr () -> IO CObjInfo
+    -- ^ Get information about C function pointer.
+
+  , machJIT           :: {-# UNPACK #-} !(IORef (Map FunId CompiledFunction))
+    -- ^ XXX: use types of arguments in key too?
   }
 
+type CompiledFunction = Reference Closure -> VM -> [Value] -> IO NextStep
 
 
 data MachConfig = MachConfig
