@@ -41,7 +41,7 @@ compile modNameStr modText' =
 
             _      <- setSessionDynFlags dflags
                          { verbosity = 0
-                         , ghcLink = LinkInMemory
+                         -- , ghcLink = LinkInMemory
                          , extraPkgConfs = \_ -> GlobalPkgConf : pack_dbs
                          , packageFlags = packages
                          , optLevel = 2
