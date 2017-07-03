@@ -557,7 +557,7 @@ implementationForArith2 doWhat r e1 e2 k =
          dualMode :: M () -> Op2 -> M ()
          dualMode intVer fOp =
            let e1' = toExpr e1
-               e2' = toExpr e2'
+               e2' = toExpr e2
 
            in ite (Prop IsInteger [e1'])
                     (ite (Prop IsInteger [e2'])
