@@ -39,7 +39,6 @@ Read only values:
   * upvalues :: IOVector (IORef Value)
   * fid      :: Value
   * fun      :: Function
-  * args0    :: SmallVec Value
 
 -}
 
@@ -80,9 +79,12 @@ compile modName func = vcat $
 
       , "errRef <- newIORef (error \"[bug]: used `errRef`\")"
       ] ++
-     [ "IO $ \\hS ->" <+> enterBlock' EntryBlock initState ]
-  ] ++
-  [ blockDecl info k v $$ " " | (k,v) <- Map.toList (functionCode mf) ]
+      [ "let" <+> vcat [ blockDecl info k v $$ " "
+                            | (k,v) <- Map.toList (functionCode mf) ]
+      , "IO $ \\hS ->" <+> enterBlock' EntryBlock initState
+      ]
+  ]{- ++
+  [ blockDecl info k v $$ " " | (k,v) <- Map.toList (functionCode mf) ] -}
   where
   (declare,initState) = stateDecl info
   mf = translate func
@@ -145,9 +147,15 @@ stateDecl info =
 packState :: Info -> HsExpr
 packState i = bigtup (rLsts ++ rVals i ++ rRefs i ++ rTMPs i)
 
+packStateIn :: Info -> HsExpr
+packStateIn i = bigtup [ x | x <- rLsts ++ rVals i ++ rRefs i ++ rTMPs i ]
 
+
+
+
+-- ^ GHC is limited to 62-tuples, even unboxed?
 bigtup :: [Doc] -> Doc
-bigtup xs = utupv (map utup (chunk 50 xs))
+bigtup xs = utupv (map utup (chunk 62 xs))
 
 chunk :: Int -> [a] -> [[a]]
 chunk _ []  = []
@@ -252,16 +260,9 @@ Performing IO:
 
 blockDecl :: Info -> BlockName -> Block -> HsDecl
 blockDecl info bn stmts = vcat
-  [ name <+> "::" <+> vcat [ "VM ->"
-                           , "IORef Value ->"
-                           , "IOVector (IORef Value) ->"
-                           , "FunId ->"
-                           , "Function ->"
-                           , "LuaState ->"
-                           , "State# RealWorld ->"
-                           , " (# State# RealWorld, NextStep #)"
-                           ]
-  , name <+> "vm errRef upvalues fid fun" <+> packState info <+> "hS ="
+  [ name <+>
+      ":: LuaState -> State# RealWorld -> (# State# RealWorld, NextStep #)"
+  , name <+> packStateIn info <+> "hS ="
   , nest 2 (goBlocks stmtList)
   ]
   where
@@ -420,7 +421,8 @@ enterBlock i b = enterBlock' b (packState i)
 -- Type: (# State# RealWorld, NextStep #)
 enterBlock' :: BlockName -> HsExpr -> HsExpr
 enterBlock' b s =
-  blockNameName b <+> "vm errRef upvalues fid fun" $$ nest 2 (s <+> "hS")
+  -- blockNameName b <+> "vm errRef upvalues fid fun" $$ nest 2 (s <+> "hS")
+  blockNameName b $$ nest 2 (s <+> "hS")
 
 
 
