@@ -8,6 +8,7 @@ import System.FilePath     (addExtension, dropExtension)
 import System.IO           (hClose, openTempFile)
 import Data.Time           (getCurrentTime)
 import Text.PrettyPrint(Doc)
+import Data.IntSet         (insert)
 
 import GHC
 import Outputable(showSDoc,ppr)
@@ -21,7 +22,9 @@ pack :: String -> PackageFlag
 pack f = ExposePackage f (PackageArg f) (ModRenaming True [])
 
 packages :: [ PackageFlag ]
-packages = map pack [ "base", "containers", "bytestring", "vector", "galua-rts" ]
+packages = map pack
+            [ "base", "ghc-prim", "containers"
+            , "bytestring", "vector", "galua-rts" ]
 
 pack_dbs :: [ PkgConfRef ]
 pack_dbs = map PkgConfFile
@@ -39,9 +42,8 @@ compile modNameStr modText' =
        runGhc (Just libdir) $
          do dflags <- getSessionDynFlags
 
-            _      <- setSessionDynFlags dflags
+            _      <- setSessionDynFlags (dbg dflags)
                          { verbosity = 0
-                         -- , ghcLink = LinkInMemory
                          , extraPkgConfs = \_ -> GlobalPkgConf : pack_dbs
                          , packageFlags = packages
                          , optLevel = 2
@@ -58,9 +60,9 @@ compile modNameStr modText' =
                                      Just (stringToStringBuffer modText, nowish)
                                  }
 
+            liftIO $ putStrLn "*************COMPILING********************"
             setTargets [target]
             r <- load LoadAllTargets
-            liftIO $ putStrLn "*************COMPILING********************"
             case r of
               Failed    -> throw CompilationFail
               Succeeded ->
@@ -73,6 +75,22 @@ compile modNameStr modText' =
                    liftIO $ putStrLn "*************COMPILE EXPR***********"
                    return $! unsafeCoerce result
 
+  where
+  dbg dflags = dflags {-
+    let add x y = insert (fromEnum x) y
+    in dflags
+         { generalFlags = add Opt_SuppressCoercions
+                        $ add Opt_SuppressVarKinds
+                        $ add Opt_SuppressModulePrefixes
+                        $ add Opt_SuppressTypeApplications
+                        $ add Opt_SuppressIdInfo
+                        $ add Opt_SuppressTypeSignatures
+                        $ generalFlags dflags
+
+         , dumpFlags = add Opt_D_dump_simpl
+                     $ add Opt_D_dump_simpl_stats
+                     $ dumpFlags dflags
+         } -}
 
 -- | Exception, which is thrown if compilation fails.
 data CompileException = CompilationFail | TypeError deriving Show
