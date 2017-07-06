@@ -83,13 +83,14 @@ compile modName func = vcat $
                             | (k,v) <- Map.toList (functionCode mf) ]
       , "IO $ \\hS ->" <+> enterBlock' EntryBlock initState
       ]
-  ]{- ++
-  [ blockDecl info k v $$ " " | (k,v) <- Map.toList (functionCode mf) ] -}
+  ] ++
+  [ "{-", pp mf, "-}" ]
   where
   (declare,initState) = stateDecl info
   mf = translate func
 
   info = Info { tmpNum = functionRegsTMP mf, regNum = funcMaxStackSize func }
+
 
 
 {-

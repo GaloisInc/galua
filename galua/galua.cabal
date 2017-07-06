@@ -41,6 +41,7 @@ library
                        Galua.Micro.Translate.Simplify
                        Galua.Micro.Translate.JoinBlocks
                        Galua.Micro.Translate.RenumberTMP
+                       Galua.Micro.Translate.ComputeInputs
 
                        Galua.Micro.JIT
                        Galua.Micro.Compile
@@ -71,6 +72,7 @@ library
                        primitive            >=0.6  && <0.7,
                        alex-tools           >= 0.1.1.0,
                        monadLib,
+                       GraphSCC,
 
                        galua-rts,
 

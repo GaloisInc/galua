@@ -12,6 +12,8 @@ import           Galua.ValueType(ValueType(..))
 import           Data.ByteString(ByteString)
 import           Data.Vector(Vector)
 import qualified Data.Vector as Vector
+import           Data.Set (Set)
+import qualified Data.Set as Set
 import           Data.Map (Map)
 import qualified Data.Map as Map
 import           Data.Foldable(toList)
@@ -31,8 +33,9 @@ data MicroFunction = MicroFunction
 
 -- | A basic block.
 data Block = Block
-  { blockBody :: Vector (BlockStmt Stmt)
-  , blockEnd  :: BlockStmt EndStmt
+  { blockBody   :: Vector (BlockStmt Stmt)
+  , blockEnd    :: BlockStmt EndStmt
+  , blockInputs :: Set Input
   } deriving Show
 
 -- | Annotate each stmt in the program with the PC of the origianl program,
@@ -69,6 +72,10 @@ data Reg        = Reg !Code.Reg
 
 data ListReg    = ArgReg  -- ^ Function arguments, var-args in particualr
                 | ListReg -- ^ Function results, mostly(?)
+                  deriving (Eq,Ord,Show)
+
+-- | A parameter to a basic block
+data Input      = LReg !ListReg | IReg !Reg
                   deriving (Eq,Ord,Show)
 
 instance Ord BlockName where
@@ -265,7 +272,16 @@ instance Pretty MicroFunction where
                               $$ text " "
 
 instance Pretty Block where
-  pp b = vcat (map pp (Vector.toList (blockBody b))) $$ pp (blockEnd b)
+  pp b = parens (hsep (punctuate comma (map pp inpList))) $$
+         vcat (map pp (Vector.toList (blockBody b))) $$
+         pp (blockEnd b)
+    where inpList = Set.toList (blockInputs b)
+
+instance Pretty Input where
+  pp inp =
+    case inp of
+      LReg r -> pp r
+      IReg r -> pp r
 
 instance Pretty Reg where
   pp reg =

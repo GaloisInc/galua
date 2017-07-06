@@ -1,8 +1,14 @@
 {-# Language GeneralizedNewtypeDeriving, NamedFieldPuns, TypeSynonymInstances #-}
---   Renubmer all temporaries so that they are sequential.
+-- Renubmer all temporaries so that they are sequential.
+-- XXX: We can probably get rid of this eventually; it was here while
+-- as it makes interpreting micro code easier;
+-- the compiler also current assumes that inputs are sequential but only
+-- to determine how many there are, pretty much.
 module Galua.Micro.Translate.RenumberTMP (renumberTMP) where
 
 import           MonadLib
+import           Data.Set (Set)
+import qualified Data.Set as Set
 import           Data.Map ( Map )
 import qualified Data.Map as Map
 import           Data.Vector as Vector
@@ -41,8 +47,14 @@ instance Renumber Reg where
                                          }
                                return r
 
+instance Renumber Input where
+  renumber input =
+    case input of
+      LReg x -> op1 LReg x
+      IReg x -> op1 IReg x
+
 instance Renumber Block where
-  renumber Block { blockBody, blockEnd } = op2 Block blockBody blockEnd
+  renumber (Block x y z) = op3 Block x y z
 
 instance Renumber EndStmt where
   renumber stmt =
@@ -95,6 +107,8 @@ instance Renumber Stmt where
 instance Renumber a => Renumber (Maybe a)  where renumber = traverse renumber
 instance Renumber a => Renumber [a]        where renumber = traverse renumber
 instance Renumber a => Renumber (Vector a) where renumber = traverse renumber
+instance (Ord a, Renumber a) => Renumber (Set a) where
+  renumber = fmap Set.fromList . traverse renumber . Set.toList
 
 instance (Renumber a, Renumber b) => Renumber (a,b) where
   renumber (a,b) = (,) <$> renumber a <*> renumber b

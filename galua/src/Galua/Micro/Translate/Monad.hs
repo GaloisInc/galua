@@ -8,6 +8,7 @@ import qualified Data.Sequence as Seq
 import qualified Data.Vector as Vector
 import           Data.Map (Map)
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 import           Data.Foldable(toList)
 import           Control.Monad(ap,liftM)
 import           Control.Monad.Fix(MonadFix(..))
@@ -95,6 +96,7 @@ emitEnd s = M $ \RO { .. } RW { .. } ->
                      , blockEnd  = BlockStmt { stmtPC = blockNamePC roCurBlock
                                              , stmtCode = s
                                              }
+                     , blockInputs = Set.empty -- Added later
                      }
   in ((), RW { rwBlocks = Map.alter upd roCurBlock rwBlocks, .. })
 

@@ -22,10 +22,12 @@ import           Galua.Micro.Translate.AnalyzeRefs(analyze)
 import           Galua.Micro.Translate.ExplicitRefs(explicitBlocks)
 import           Galua.Micro.Translate.Simplify(simplify)
 import           Galua.Micro.Translate.JoinBlocks(joinBlocks)
+import           Galua.Micro.Translate.ComputeInputs(computeBlockInputs)
 import           Galua.Micro.Translate.RenumberTMP(renumberTMP)
 
 translate :: Code.Function -> MicroFunction
 translate fun = renumberTMP lastPhase
+              $ computeBlockInputs
               $ joinBlocks
               $ simplify
               $ pass1 { functionCode = explicitBlocks refs code1 }

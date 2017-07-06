@@ -52,7 +52,8 @@ addNext b = (b, blockNext b)
 
 -- | Concatenate the statements for two blocks.
 append :: Block -> Block -> Block
-append xs ys = Block { blockBody = blockBody xs Vector.++ blockBody ys
-                     , blockEnd  = blockEnd ys
+append xs ys = Block { blockBody   = blockBody xs Vector.++ blockBody ys
+                     , blockEnd    = blockEnd ys
+                     , blockInputs = blockInputs xs
                      }
 
