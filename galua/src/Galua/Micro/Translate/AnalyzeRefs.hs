@@ -11,7 +11,6 @@ import qualified Data.Set as Set
 import           Data.Map(Map)
 import qualified Data.Map as Map
 import           Data.List(foldl',union)
-import           Data.Maybe(maybeToList)
 
 -- | Compute what registers contains references at the beginning and end
 -- of each block.
