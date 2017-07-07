@@ -723,10 +723,13 @@ setCallResults isVarArg to from count =
 
 valueIf :: (IsExpr e, ToBlockName t, ToBlockName f) => e -> t -> f -> M ()
 valueIf e ifTrue ifFalse =
-  typeCase e
-    $ IfType NilType  ifFalse
-    $ IfType BoolType (valueIfBool e ifTrue ifFalse)
-    $ Default ifTrue
+  do ifT <- toBlockName ifTrue
+     ifF <- toBlockName ifFalse
+
+     typeCase e
+       $ IfType NilType  ifF
+       $ IfType BoolType (valueIfBool e ifT ifF)
+       $ Default ifT
 
 valueIfBool :: (IsExpr e, ToBlockName t, ToBlockName f) => e -> t -> f -> M ()
 valueIfBool e = ite (Prop Equals [ toExpr e, toExpr True ])
