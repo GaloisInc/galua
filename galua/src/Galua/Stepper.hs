@@ -371,7 +371,11 @@ enterClosure vm c vs =
              compiled <- case Map.lookup fid jitMap of
                            Just code -> return code
                            Nothing ->
-                             do code <- jit fid f
+                             do putStrLn ("Source: " ++ show (funcSource f) ++
+                                         show (funcLineDefined f) ++ "--" ++
+                                         show (funcLastLineDefined f))
+
+                                code <- jit fid f
                                 writeIORef jitRef $! Map.insert fid code jitMap
                                 return code
              useNormalLua compiled fid f cloUpvalues
@@ -423,6 +427,6 @@ enterClosure vm c vs =
                     , luaExecFunction  = f
                     }
 
-       --  eenv `seq` return (eenv, return (Goto 0))
+       -- eenv `seq` return (eenv, return (Goto 0))
        eenv `seq` return (eenv, cmp c vm vs)
 
