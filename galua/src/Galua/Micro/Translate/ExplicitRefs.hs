@@ -84,18 +84,35 @@ newTMP :: R Reg
 newTMP = doM (M.newPhaseTMP 2)
 
 newRef :: IsExpr e => Reg -> e -> R ()
-newRef r e = R $ \_ refs ->
-  do M.emit (NewRef r (toExpr e))
-     let refs' = case r of
-                   Reg reg -> Set.insert reg refs
-                   TMP{}   -> error "newRef: TMP"
+newRef r' e = R $ \_ refs ->
+  do let (r,refs') = case r' of
+                       Reg cr  -> (Ref cr, Set.insert cr refs)
+                       Ref {} -> (r', refs)
+                       TMP {} -> error "newRef: result in TMP"
+     M.emit (NewRef r (toExpr e))
      return ((), refs')
 
-readRef :: IsExpr e => Reg -> e -> R ()
-readRef r e = emit (ReadRef r (toExpr e))
+class IsRef t where
+  toRefExpr :: t -> Expr
 
-writeRef :: (IsExpr e1, IsExpr e2) => e1 -> e2 -> R ()
-writeRef e1 e2 = emit (WriteRef (toExpr e1) (toExpr e2))
+instance IsRef Reg where
+  toRefExpr r = case r of
+                  Reg cr -> EReg (Ref cr)
+                  TMP {} -> error "toRefExpr: TMP"
+                  Ref {} -> EReg r
+
+instance IsRef Expr where
+  toRefExpr expr =
+    case expr of
+      EReg r  -> toRefExpr r
+      ELit {} -> error "toRefExpr: ELit"
+      EUp {}  -> expr
+
+readRef :: IsRef e => Reg -> e -> R ()
+readRef r e = emit (ReadRef r (toRefExpr e))
+
+writeRef :: (IsRef e1, IsExpr e2) => e1 -> e2 -> R ()
+writeRef e1 e2 = emit (WriteRef (toRefExpr e1) (toExpr e2))
 
 endBlock :: BlockName -> R BlockName
 endBlock tgt =
@@ -103,7 +120,7 @@ endBlock tgt =
      if Set.null newRefs
        then return tgt
        else doM $ M.inNewBlock_ $
-               do let toRef r = M.emit (NewRef (Reg r) (toExpr r))
+               do let toRef r = M.emit (NewRef (Ref r) (toExpr r))
                   mapM_ toRef newRefs
                   M.emitEnd (Goto tgt)
   where
@@ -251,7 +268,8 @@ refStmt stmt =
       upVal u =
         case u of
           EUp _   -> return ()
-          EReg r' -> ifRef r' (return ()) (newRef r' u)
+          EReg r' -> ifRef r' (return ()) (newRef r' u')
+            where u' = if r' == r then ELit LNil else u
           ELit _  -> error "upVal: ELit"
 
     NewRef _ _    -> error "NewRef: wrong phase"

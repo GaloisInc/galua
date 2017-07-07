@@ -3,6 +3,7 @@ module Galua.Micro.JIT (jit) where
 
 import Text.PrettyPrint
 import qualified Data.Vector as Vector
+import qualified Data.Set as Set
 import qualified Data.Map as Map
 import           Data.ByteString(ByteString)
 
@@ -20,16 +21,14 @@ import Prelude hiding ((.))
 
 
 jit :: FunId -> Function -> IO CompiledFunction
-jit fid f = GHC.compile modName code
+jit fid f = do writeFile (modName ++ ".dot") (show dot)
+               GHC.compile modName code
   where
   modName    = "Lua_" ++ funIdString fid
-  code = compile modName f
+  (dot,code) = compile modName f
 
 
 {-
-
-
-
 Read only values:
 
   * vm       :: VM
@@ -39,12 +38,11 @@ Read only values:
   * upvalues :: IOVector (IORef Value)
   * fid      :: Value
   * fun      :: Function
-
 -}
 
 
-compile :: String -> Function -> HsModule
-compile modName func = vcat $
+compile :: String -> Function -> (Doc, HsModule)
+compile modName func = (dot, vcat $
   [ "{-# Language BangPatterns, OverloadedStrings #-}"
   , "{-# Language MagicHash, UnboxedTuples #-}"
   , "module" <+> text modName <+> "(main) where"
@@ -68,118 +66,54 @@ compile modName func = vcat $
   , "import           Galua.Util.SmallVec (SmallVec)"
   , "import qualified Galua.Util.SmallVec as SMV"
   , ""
-  , declare
-  , ""
   ] ++
   [ "main :: Reference Closure -> VM -> SmallVec Value -> IO NextStep"
   , "main cloRef vm reg_args ="
   , nest 2 $ doBlock $
       [ "let MkClosure { cloFun = LuaFunction fid fun"
       , "              , cloUpvalues = upvalues }  = referenceVal cloRef"
-
-      , "errRef <- newIORef (error \"[bug]: used `errRef`\")"
       ] ++
-      [ "let" <+> vcat [ blockDecl info k v $$ " "
+      [ "let" <+> vcat [ blockDecl mf k v $$ " "
                             | (k,v) <- Map.toList (functionCode mf) ]
-      , "IO $ \\hS ->" <+> enterBlock' EntryBlock initState
+      , "IO $ \\hS ->" <+> enterBlock mf EntryBlock
       ]
   ] ++
   [ "{-", pp mf, "-}" ]
+  )
   where
-  (declare,initState) = stateDecl info
   mf = translate func
-
-  info = Info { tmpNum = functionRegsTMP mf, regNum = funcMaxStackSize func }
+  dot = ppDot (functionCode mf)
 
 
 
 {-
 
-The state:
+Names and types of registers:
 
-@
-type LuaState = (# {- reg_args  -} SmallVec Value
-                ,  {- reg_list  -} SmallVec Value
-                ,  {- reg_0     -} Value
-                ,  ...
-                ,  {- ref_0     -} IORef Value   -- XXX: Unpack?
-                ,  ...
-                ,  {- tmp_0     -} Value
-                ,  ...
-                #)
-@
+  reg_args :: SmallVec Value
+  reg_list :: SmallVec Value
 
+  reg_0    :: Value
+  ...
+
+  ref_0    :: IORef Value   -- XXX: Unpack?
+  ...
+
+  tmp_X_Y  :: Value
 -}
 
-data Info = Info { tmpNum, regNum :: !Int }
-
-rLsts :: [Name]
-rLsts = [ regListName r | r <- [ ArgReg, ListReg ] ]
-
-rVals :: Info -> [Name]
-rVals x = [ regValName (Reg r)    | r <- regRange (Code.Reg 0) (regNum x) ]
-
-rRefs :: Info -> [Name]
-rRefs x = [ regRefName (Reg r)    | r <- regRange (Code.Reg 0) (regNum x) ]
-
-rTMPs :: Info -> [Name]
-rTMPs x = [ regValName (TMP 3 i)  | i <- take (tmpNum x) [ 0 .. ] ]
-
-
-
-stateDecl :: Info -> (HsDecl, HsDecl)
-stateDecl info =
-  ( "type LuaState =" <+> bigtup fieldTys
-  , bigtup fieldVals
-  )
-  where
-  fieldTys  = [ cmt r <+> "SmallVec Value" | r <- rLsts ] ++
-              [ cmt r <+> "Value"          | r <- rVals info ] ++
-              [ cmt r <+> "IORef Value"    | r <- rRefs info ] ++
-              [ cmt r <+> "Value"          | r <- rTMPs info ]
-
-  fieldVals = [ cmt r <+> (if show r == "reg_args"
-                              then "reg_args" else"SMV.empty") -- hack
-                     | r <- rLsts ] ++
-              [ cmt r <+> "Nil"       | r <- rVals info ] ++
-              [ cmt r <+> "errRef"    | r <- rRefs info ] ++
-              [ cmt r <+> "Nil"       | r <- rTMPs info ]
-
-packState :: Info -> HsExpr
-packState i = bigtup (rLsts ++ rVals i ++ rRefs i ++ rTMPs i)
-
-packStateIn :: Info -> HsExpr
-packStateIn i = bigtup [ x | x <- rLsts ++ rVals i ++ rRefs i ++ rTMPs i ]
-
-
-
-
--- ^ GHC is limited to 62-tuples, even unboxed?
-bigtup :: [Doc] -> Doc
-bigtup xs = utupv (map utup (chunk 62 xs))
-
-chunk :: Int -> [a] -> [[a]]
-chunk _ []  = []
-chunk n xs = case splitAt n xs of
-               (as,bs) -> as : chunk n bs
 
 --------------------------------------------------------------------------------
 -- Names
 --------------------------------------------------------------------------------
 
--- | The name of a register holding a value.
-regValName :: Reg -> Name
-regValName reg =
+-- | The name of a register>
+regName :: Reg -> Name
+regName reg =
   case reg of
     Reg (Code.Reg r)  -> "reg_val_" <> int r
+    Ref (Code.Reg r)  -> "reg_ref_" <> int r
     TMP _flat_phase n -> "reg_tmp_" <> int n
-
--- | The name of a register holding a reference.
-regRefName :: Reg -> Name
-regRefName reg =
-  case reg of
-    Reg (Code.Reg r)  -> "reg_ref_" <> int r
-    TMP {}            -> error "regRefName: TMP"
 
 -- | The name of a "list" register.  These are the special registers
 -- holding the inputs and ouputs to functional calls.
@@ -188,6 +122,24 @@ regListName r =
   case r of
     ArgReg  -> text "reg_args"
     ListReg -> text "reg_list"
+
+-- | The name of a input.
+inputName :: Input -> Name
+inputName inp =
+  case inp of
+    IReg r -> regName r
+    LReg l -> regListName l
+
+-- | The type of an input.
+inputType :: Input -> HsType
+inputType inp =
+  case inp of
+    LReg _ -> "SmallVec Value"
+    IReg r ->
+      case r of
+        Reg {} -> "Value"
+        Ref {} -> "IORef Value" -- XXX: UNPACK?
+        TMP {} -> "Value"
 
 -- | The name of a block.
 blockNameName :: BlockName -> Name
@@ -205,36 +157,24 @@ blockNameName bn =
 High-level paln:
 
 @
-blockName :: LuaState -> State# RealWorld -> (# State# RealWorld, NextStep #)
-blockName (# arg, list, reg_0, .., ref_0, .., tmp_0, .. #) hS =
+blockName :: BlockInputs -> State# RealWorld -> (# State# RealWorld, NextStep #)
+blockName (# inp1, inp2, ... #) hS = ...
 
-innerStmt :: args, ..., hS :: State# RealWorld |- State# RealWorld
-endStmt   :: args, ..., hS :: State# RealWorld |- (# State# RealWorld, Next #)
-@
-
-
-Setting temporary register tmp_N to E, followed by S:
-@
-  case E of tmp_N ->
-  S
+innerStmt :: inps, regs, hS :: State# RealWorld |- State# RealWorld
+endStmt   :: inps, regs, hS :: State# RealWorld |- (# State# RealWorld, Next #)
 @
 
-Setting value register reg_N to E, followed by S:
-@
-  case (# E, errRef #) of (# reg_N, ref_N #) ->
-  S
-@
 
-Setting reference register ref_N to E, followed by S:
+Setting a register:
 @
-  case (# Nil, E #) of (# reg_N, ref_N #) ->
-  S
+  case E of { reg ->
+  S }
 @
 
 
 Entering block B:
 @
-  B (# reg_arg, reg_list, reg_0, .., ref_0, .. tmp_0 #) hS
+  B (# inp1, inp2, .. #) hS
 @
 
 There is a special case for the handling of function calls:
@@ -255,22 +195,31 @@ So a functional call followed by S, looks like this:
 
 Performing IO:
 @
-  case IO of IO x -> x
+  case io of { IO x ->
+  case x hS of { (# hS, v) ->
+  S } }
 @
 -}
 
-blockDecl :: Info -> BlockName -> Block -> HsDecl
-blockDecl info bn stmts = vcat
-  [ name <+>
-      ":: LuaState -> State# RealWorld -> (# State# RealWorld, NextStep #)"
-  , name <+> packStateIn info <+> "hS ="
+
+
+blockDecl :: MicroFunction -> BlockName -> Block -> HsDecl
+blockDecl mf bn stmts = vcat
+  [ name <+> "::" <+>
+      inpType <+> "-> State# RealWorld -> (# State# RealWorld, NextStep #)"
+  , name <+> inps <+> "hS ="
   , nest 2 (goBlocks stmtList)
   ]
   where
   name     = blockNameName bn
   stmtList = map stmtCode (Vector.toList (blockBody stmts))
 
-  goBlocks [] = stmtEndStmt info (stmtCode (blockEnd stmts))
+  inputs  = blockInputs stmts
+  inpType = utup (map inputType (Set.toList inputs))
+  inps    = utup (map inputName (Set.toList inputs))
+
+
+  goBlocks [] = stmtEndStmt mf (stmtCode (blockEnd stmts))
   goBlocks (s : ss) =
     case s of
       Call f -> performCall f (goBlocks ss)
@@ -278,7 +227,7 @@ blockDecl info bn stmts = vcat
 
 
 -- | Compilation of an end statement.
-stmtEndStmt :: Info -> EndStmt -> HsExpr
+stmtEndStmt :: MicroFunction -> EndStmt -> HsExpr
 stmtEndStmt i stmt =
   case stmt of
     -- Local control flow
@@ -297,8 +246,7 @@ stmtEndStmt i stmt =
 stmtStmt :: Stmt -> HsExpr -> HsExpr
 stmtStmt stmt =
   case stmt of
-    Comment s               -> ("{-" <+> text s <+> "-}" $$)
-                                -- XXX: escape `s`?
+    Comment s               -> (cmt (text s) $$)
     Assign r e              -> performAssign r e
 
     -- Tables
@@ -340,12 +288,12 @@ stmtStmt stmt =
 -- Free vars: 'state :: State'
 -- Type: 'Value'.
 getReg :: Reg -> HsExpr
-getReg r = regValName r
+getReg r = regName r
 
 -- | Get the reference stored in a register.
 -- Type: 'IORef Value'
 getRegRef :: Reg -> HsExpr
-getRegRef r = regRefName r
+getRegRef r = regName r
 
 -- | Get the value from one of the list register.
 --   Type: 'SmallVec Value'
@@ -359,15 +307,14 @@ getListReg = getRegList ListReg
 
 
 -- | Set a register to a given value.
+-- Register is of type 'Value'
 setReg :: Reg -> HsExpr -> HsExpr -> HsExpr
-setReg r e =
-  case r of
-    TMP {} -> regValName r <~ e
-    Reg {} -> utup [regValName r, regRefName r] <~ utup [e, "errRef"]
+setReg r e = regName r <~ e
 
 -- | Set a registesr to a given reference.
+-- Register is of type 'IORef Value'
 setRegRef :: Reg -> HsExpr -> HsExpr -> HsExpr
-setRegRef r e = utup [regValName r, regRefName r] <~ utup ["Nil",e]
+setRegRef r e = regName r <~ e
 
 -- | Set the value of a list register.
 setRegList :: ListReg -> HsExpr -> HsExpr -> HsExpr
@@ -416,18 +363,12 @@ getRefExpr expr =
 
 -- | Emit code to start executing the given block.
 -- Type: (# State# RealWorld, NextStep #)
-enterBlock :: Info -> BlockName -> HsExpr
-enterBlock i b = enterBlock' b (packState i)
-
--- Type: (# State# RealWorld, NextStep #)
-enterBlock' :: BlockName -> HsExpr -> HsExpr
-enterBlock' b s =
-  -- blockNameName b <+> "vm errRef upvalues fid fun" $$ nest 2 (s <+> "hS")
-  blockNameName b $$ nest 2 (s <+> "hS")
-
-
-
-
+enterBlock :: MicroFunction -> BlockName -> HsExpr
+enterBlock mf b = blockNameName b <+> inputs <+> "hS"
+  where
+  inputs = case Map.lookup b (functionCode mf) of
+             Just b'  -> utup (map inputName (Set.toList (blockInputs b')))
+             Nothing -> error "enterBlock: missing block"
 
 
 -- | Compile a decision.
@@ -555,7 +496,7 @@ performRaise e =
   "v" <~~ getExpr e $
   done "ThrowError v"
 
-performCase :: Info ->
+performCase :: MicroFunction ->
                Expr -> [(ValueType,BlockName)] -> Maybe BlockName -> HsExpr
 performCase i e as d =
   "v" <~~ getExpr e $
@@ -569,12 +510,12 @@ performCase i e as d =
   tyPat t   = text (show t)
 
 
-performIf :: Info -> Prop -> BlockName -> BlockName -> HsExpr
+performIf :: MicroFunction -> Prop -> BlockName -> BlockName -> HsExpr
 performIf i p tr fa =
   "b" <~~ getProp p $
   "if b then" <+> enterBlock i tr <+> "else" <+> enterBlock i fa
 
-performGoto :: Info -> BlockName -> HsExpr
+performGoto :: MicroFunction -> BlockName -> HsExpr
 performGoto i b = enterBlock i b
 
 
@@ -615,9 +556,10 @@ performNewClosure res ix fun = exprs $
   , setReg res "Closure c"
   ]
   where
-  upexprs = funcUpvalExprs fun
+  upexprs = funcUpvalRefExprs fun
   upNum   = length upexprs
   unames  = [ "u" <> int i | i <- take upNum [ 0 .. ] ]
+
 
 
 
@@ -799,6 +741,7 @@ performArith2 res op e1 e2 =
 type HsModule = Doc
 type HsDecl   = Doc
 type HsExpr   = Doc
+type HsType   = Doc
 type HsPat    = Doc
 type Name     = Doc
 
@@ -816,17 +759,36 @@ vecLit vs =
     [x,y] -> "SMV.vec2" <+> x <+> y
     _     -> "SMV.fromList" <+> listLit vs
 
+-- | XXX: escape `s`?
 cmt :: Doc -> Doc
 cmt x = "{-" <+> x <+> "-}"
 
-utup :: [Doc] -> Doc
-utup xs = "(#" <+> hsep (punctuate comma xs) <+> "#)"
+utup' :: [Doc] -> Doc
+utup' xs = "(#" <+> hsep (punctuate comma xs) <+> "#)"
 
-utupv :: [Doc] -> Doc
-utupv fs = case fs of
+utupv' :: [Doc] -> Doc
+utupv' fs = case fs of
              [] -> "(# #)"
              x : xs -> ("(#" <+> x)
                     $$ vcat (map ("," <+>) xs) <+> "#)"
+
+
+-- | GHC is limited to 62-tuples, even unboxed?
+-- If we happen to have more, we chunk them into sub-tuples,
+-- thus supporting up to 62 * 62.
+utup :: [Doc] -> Doc
+utup xs =
+  case chunk 62 xs of
+    []    -> utup' []
+    [[y]] -> y
+    [ys]  -> utup' ys
+    ys | length xs >= 62 -> error "Too many arguments!"
+       | otherwise -> utupv' (map utup' ys)
+
+chunk :: Int -> [a] -> [[a]]
+chunk _ []  = []
+chunk n xs = case splitAt n xs of
+               (as,bs) -> as : chunk n bs
 
 
 

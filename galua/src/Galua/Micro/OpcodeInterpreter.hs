@@ -79,6 +79,7 @@ setReg MLuaExecEnv { .. } reg v0 =
     Reg (Code.Reg r)  -> do IOVector.unsafeWrite mluaExecRegsValue r $! val
                             IOVector.unsafeWrite mluaExecRegsRefs r
                              (error "(do not use)") -- to avoid memory leads
+    Ref {}            -> crash "setReg: value in a ref registers"
     TMP _renumbured b -> IOVector.unsafeWrite mluaExecRegsTMP b   $! val
 
   where
@@ -88,23 +89,25 @@ getReg :: MLuaExecEnv -> Reg -> IO Value
 getReg MLuaExecEnv { .. } reg =
   case reg of
     Reg (Code.Reg r)  -> IOVector.unsafeRead mluaExecRegsValue r
+    Ref {}            -> crash "getReg: Ref register"
     TMP _renumbured b -> IOVector.unsafeRead mluaExecRegsTMP b
 
 
 setRefReg :: MLuaExecEnv -> Reg -> IORef Value -> IO ()
 setRefReg MLuaExecEnv { .. } reg v0 =
   case reg of
-    Reg (Code.Reg r) -> do IOVector.unsafeWrite mluaExecRegsRefs r v0
+    Ref (Code.Reg r) -> do IOVector.unsafeWrite mluaExecRegsRefs r v0
                            IOVector.unsafeWrite mluaExecRegsValue r
                              (error "(do not use)") -- to avoid memory leads
+    Reg {} -> crash "setRefReg: ordinary registers do not contain references"
     TMP {} -> crash "setRefReg: temporary registers do not contain references"
 
 getRefReg :: MLuaExecEnv -> Reg -> IO (IORef Value)
 getRefReg MLuaExecEnv { .. } reg =
   case reg of
-    Reg (Code.Reg r) -> IOVector.unsafeRead mluaExecRegsRefs r
+    Ref (Code.Reg r) -> IOVector.unsafeRead mluaExecRegsRefs r
+    Reg {}           -> crash "[bug] getRefReg: ordinary register"
     TMP {}           -> crash "[bug] getRefReg: not a reference"
-
 
 getRefExpr :: MLuaExecEnv -> Expr -> IO (IORef Value)
 getRefExpr f expr =
@@ -316,7 +319,7 @@ performReturn f =
 
 performNewClosure :: VM -> MLuaExecEnv -> Reg -> Int -> Code.Function -> IO Next
 performNewClosure vm f res ix fun =
-  do rs <- mapM (getRefExpr f) (funcUpvalExprs fun)
+  do rs <- mapM (getRefExpr f) (funcUpvalRefExprs fun)
 
      let fid    = mluaExecFID f
          fu     = luaFunction (Code.subFun fid ix) fun

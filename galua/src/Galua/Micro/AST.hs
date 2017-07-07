@@ -66,8 +66,9 @@ data BlockName  = EntryBlock
                 | NewBlock !Int !Int
                   deriving (Eq,Show)
 
-data Reg        = Reg !Code.Reg
-                | TMP !Int !Int     -- ^ phase, temporary
+data Reg        = Reg !Code.Reg     -- ^ stores a value, cannot be captured
+                | TMP !Int !Int     -- ^ phase, temporary;  store a value
+                | Ref !Code.Reg     -- ^ stores a reference can be captured
                   deriving (Eq,Ord,Show)
 
 data ListReg    = ArgReg  -- ^ Function arguments, var-args in particualr
@@ -75,7 +76,8 @@ data ListReg    = ArgReg  -- ^ Function arguments, var-args in particualr
                   deriving (Eq,Ord,Show)
 
 -- | A parameter to a basic block
-data Input      = LReg !ListReg | IReg !Reg
+data Input      = LReg !ListReg   -- ^ List register
+                | IReg !Reg       -- ^ Value register
                   deriving (Eq,Ord,Show)
 
 instance Ord BlockName where
@@ -258,8 +260,20 @@ zero = toExpr (0 :: Int)
 emptyString :: Expr
 emptyString = toExpr ("" :: ByteString)
 
+-- | To be used before expilcit references
 funcUpvalExprs :: Code.Function -> [Expr]
 funcUpvalExprs = map toExpr . Vector.toList . Code.funcUpvalues
+
+-- | To be used after explicit references
+funcUpvalRefExprs :: Code.Function -> [Expr]
+funcUpvalRefExprs = map toRefExpr . Vector.toList . Code.funcUpvalues
+  where
+  toRefExpr x = case x of
+                  Code.UpReg r -> EReg (Ref r)
+                  Code.UpUp u  -> toExpr u
+
+
+
 
 
 
@@ -286,8 +300,9 @@ instance Pretty Input where
 instance Pretty Reg where
   pp reg =
     case reg of
-      Reg (Code.Reg r) -> "R"   <> int r
-      TMP p i          -> "T_" <> int p <> "_" <> int i
+      Reg (Code.Reg r) -> "R"    <> int r
+      TMP p i          -> "T_"   <> int p <> "_" <> int i
+      Ref (Code.Reg r) -> "Ref_" <> int r
 
 instance Pretty Expr where
   pp expr =
@@ -367,7 +382,9 @@ instance Pretty Stmt where
       CloseStack r    -> "closeStack" <+> pp r
       NewClosure r i f ->
         pp r <+> "=" <+> "newClosure" <>
-            brackets (int i) <+> hsep (map pp (funcUpvalExprs f))
+            brackets (int i) <+> hsep (map pp (funcUpvalRefExprs f))
+            -- NOTE: we can print things either way, but usually we
+            -- look at the analyzed code, so the Ref version makes more sense.
 
       Comment x -> "--" <+> text x
 

@@ -36,6 +36,7 @@ instance Renumber Reg where
   renumber reg =
     case reg of
       Reg {}  -> return reg
+      Ref {}  -> return reg
       TMP x y -> M $ do RW { nextReg, regMap } <- get
                         case Map.lookup (x,y) regMap of
                           Just r -> return r

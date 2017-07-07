@@ -104,7 +104,7 @@ instance Uses Stmt where
       SetTableList r _  -> uses (r,ListReg)
       GetMeta _ e       -> uses e
 
-      NewClosure _ _ f  -> uses (funcUpvalExprs f)
+      NewClosure _ _ f  -> uses (funcUpvalRefExprs f)
       Call r            -> uses (r,ListReg)
 
       Drop r _          -> uses r

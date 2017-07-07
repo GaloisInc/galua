@@ -114,6 +114,7 @@ instance Uses Reg where
     case reg of
       TMP _ _ -> Set.empty
       Reg r   -> Set.singleton r
+      Ref {}  -> error "analyzeRefs: Ref before analysis"
 
 instance Uses Expr where
   uses expr =
