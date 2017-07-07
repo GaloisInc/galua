@@ -337,13 +337,14 @@ getExpr expr =
         LNil    -> done "Nil"
         LBool b -> done (val "Bool" b)
         LNum d  -> done (papp "Number" (val "Double" d))
-        LInt n  -> done (papp "Number" (val "Int"    n))
+        LInt n  -> done (papp "Number" ("Int" <+> numLit n))
         LStr bs -> parens ("s" <-- val "fromByteString" bs
                             $ done "String s")
           -- XXX: In some cases the string is only used internally, in
           -- which case we may be able to avoid allocating it.
   where
   val c x = c <+> text (show x)
+  numLit x = if x < 0 then parens (text (show x)) else text (show x)
 
 
 -- | Get the value of a reference expression.
