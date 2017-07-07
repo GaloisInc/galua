@@ -192,7 +192,7 @@ micro fun pc =
         do let a' = Code.plusReg a 1
            getCallArguments a' b
            callValue (Reg a) $
-             do setCallResults a ListReg c
+             do setCallResults False a ListReg c
                 advance
 
       Code.OP_TAILCALL a b _c ->
@@ -287,7 +287,7 @@ micro fun pc =
 
 
       Code.OP_VARARG a b ->
-        do setCallResults a ArgReg b
+        do setCallResults True a ArgReg b
            advance
 
 
@@ -699,18 +699,20 @@ getCallArguments from count =
 
 
 setCallResults ::
+  Bool        {- ^ IsVar arg? #-} ->
   Code.Reg    {- ^ starting register -} ->
   ListReg     {- ^ source register -} ->
   Code.Count  {- ^ results expected  -} ->
   M ()
-setCallResults to from count =
+setCallResults isVarArg to from count =
   case count of
     Code.CountInt x ->
       mapM_ emit [ IndexList (Reg (Code.plusReg to i)) from i
                       | i <- take x [ 0 .. ]
                  ]
     Code.CountTop ->
-      setListReg to
+      do setListReg to
+         when isVarArg $ emit $ AssignListReg ListReg from
 
 
 

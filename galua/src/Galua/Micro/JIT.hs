@@ -263,6 +263,7 @@ stmtStmt stmt =
     -- Lists
     Drop r n                -> performDrop r n
     SetList res es          -> performSetList res es
+    AssignListReg xs ys     -> performAssignListReg xs ys
     Append res es           -> performAppend res es
     IndexList res lst ix    -> performIndexList res lst ix
 
@@ -574,6 +575,9 @@ performSetList res es = exprs $
   where
   vs  = [ "v" <> int i | i <- take (length es) [ 0 .. ] ]
 
+performAssignListReg :: ListReg -> ListReg -> HsExpr -> HsExpr
+performAssignListReg res xs =
+  setRegList res (getRegList xs)
 
 performAppend :: ListReg -> [Expr] -> HsExpr -> HsExpr
 performAppend res es = exprs $

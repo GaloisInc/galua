@@ -245,6 +245,9 @@ refStmt stmt =
       do xs' <- traverse readExpr xs
          emit $ SetList list xs'
 
+    AssignListReg xs ys ->
+         emit $ AssignListReg xs ys
+
     IndexList r list ix ->
       do setReg r $ \r' -> IndexList r' list ix
 

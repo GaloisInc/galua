@@ -88,6 +88,7 @@ instance Renumber Stmt where
 
       Append r es         -> op2 Append r es
       SetList r es        -> op2 SetList r es
+      AssignListReg xs ys -> op2 AssignListReg xs ys
 
       IndexList r lr n    -> op3 IndexList r lr n
 

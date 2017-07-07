@@ -147,10 +147,12 @@ data Stmt =
   | Call !Reg
 
   -- "List" registers: these are
-  | Drop !ListReg !Int            -- ^ Drop the given number (POP)
-  | Append !ListReg [Expr]        -- ^ Prepend to the list (PUSH).
-  | SetList !ListReg [Expr]       -- ^ Set the value of a list register.
-  | IndexList !Reg !ListReg !Int  -- ^ Access an element in the list.
+  | Drop !ListReg !Int              -- ^ Drop the given number (POP)
+  | Append !ListReg [Expr]          -- ^ Prepend to the list (PUSH).
+  | SetList !ListReg [Expr]         -- ^ Set the value of a list register.
+  | IndexList !Reg !ListReg !Int    -- ^ Access an element in the list.
+  | AssignListReg !ListReg !ListReg -- ^ Set one list reg to another
+                                    --   (basically: list = arg)
 
     -- Arithmetic
   | Arith2   !Reg !Op2 !Expr !Expr
@@ -374,6 +376,9 @@ instance Pretty Stmt where
 
       SetList list xs ->
         pp list <+> "=" <+> brackets (hsep (punctuate comma (map pp xs)))
+
+      AssignListReg x y ->
+        pp x <+> "=" <+> pp y
 
       NewRef r e    -> pp r  <+> "=" <+> "newRef" <+> pp e
       ReadRef r1 r2 -> pp r1 <+> "=" <+> "readRef" <+> pp r2

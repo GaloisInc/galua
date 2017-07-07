@@ -346,6 +346,12 @@ performSetList f res es =
      writeIORef (lregRef f res) vs
      return Continue
 
+performAssignListReg :: MLuaExecEnv -> ListReg -> ListReg -> IO Next
+performAssignListReg f xs ys =
+  do vs <- readIORef (lregRef f ys)
+     writeIORef (lregRef f xs) vs
+     return Continue
+
 
 performAppend :: MLuaExecEnv -> ListReg -> [Expr] -> IO Next
 performAppend f res es =
@@ -506,6 +512,7 @@ runStmt vm f stmt =
     -- Lists
     Drop r n                -> performDrop f r n
     SetList res es          -> performSetList f res es
+    AssignListReg xs ys     -> performAssignListReg f xs ys
     Append res es           -> performAppend f res es
     IndexList res lst ix    -> performIndexList f res lst ix
 

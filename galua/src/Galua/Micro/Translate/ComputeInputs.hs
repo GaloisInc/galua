@@ -88,6 +88,7 @@ instance Uses Expr where
       ELit {} -> Set.empty
       EUp {}  -> Set.empty
 
+
 instance Uses Prop where
   uses (Prop _ xs) = uses xs
 
@@ -110,6 +111,7 @@ instance Uses Stmt where
       Drop r _          -> uses r
       Append r es       -> uses (r,es)
       SetList _ es      -> uses es
+      AssignListReg _ y -> uses y
       IndexList _ r _   -> uses r
 
       Arith2 _ _ e1 e2  -> uses (e1,e2)
@@ -155,6 +157,7 @@ defines stmt =
     Drop r _            -> lReg r
     Append r _          -> lReg r
     SetList r _         -> lReg r
+    AssignListReg r _   -> lReg r
     IndexList r _ _     -> iReg r
 
     Arith2 r _ _ _      -> iReg r

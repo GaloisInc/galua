@@ -12,8 +12,7 @@ import           Data.Map(Map)
 import qualified Data.Map as Map
 import           Data.List(foldl',union)
 
--- | Compute what registers contains references at the beginning and end
--- of each block.
+-- | Compute what registers contain references at the beginning of each block.
 analyze :: Code.Reg -> Map BlockName AST.Block -> Map BlockName (Set Code.Reg)
 analyze lim orig = Map.mapWithKey (\b _ -> atStart b) orig
   where
@@ -176,6 +175,7 @@ instance Uses Stmt where
       Drop {}             -> uses ()
       Append _ x          -> uses x
       SetList _ x         -> uses x
+      AssignListReg {}    -> uses ()
 
       IndexList x _ _     -> uses x
       Arith2 x _ y z      -> uses (x,y,z)
