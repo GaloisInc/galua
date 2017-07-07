@@ -179,7 +179,7 @@ micro fun pc =
         where (yes,no) = if c then (1,2) else (2,1)
 
       Code.OP_TESTSET ra rb c ->
-        do let upd = do Reg ra =: c
+        do let upd = do Reg ra =: rb
                         advance
 
                skip = PCBlock (pc + 2)
