@@ -619,7 +619,7 @@ performArith1 res op e =
 
       ToInt ->
         doLet ["mb = valueInt v"] .
-        setReg res "fromMaybe Nil (Number . Int) mb"
+        setReg res "maybe Nil (Number . Int) mb"
 
       IntToDouble ->
         "Number (Int n)" <~ "v" .
