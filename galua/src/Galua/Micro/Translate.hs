@@ -182,7 +182,7 @@ micro fun pc =
         do let upd = do Reg ra =: c
                         advance
 
-               skip = PCBlock (pc + 1)
+               skip = PCBlock (pc + 2)
 
            if c then valueIf rb upd skip
                 else valueIf rb skip upd
