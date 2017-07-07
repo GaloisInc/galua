@@ -368,8 +368,7 @@ indexValue ans tab0 key' fin =
                              (do ans =: tmp
                                  goto done)
                )
-           $ Default
-               (raiseError "Bad index")
+           $ Default (meta (raiseError "Bad index"))
 
 
 setTable :: IsExpr tab => tab -> Expr -> Expr -> BlockName -> M ()
