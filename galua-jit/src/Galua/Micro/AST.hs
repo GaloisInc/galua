@@ -28,7 +28,6 @@ The function is split into basic blocks, making all control
 flow explicit. -}
 data MicroFunction = MicroFunction
   { functionCode    :: Map BlockName Block
-  , functionRegsTMP :: !Int
   } deriving Show
 
 -- | A basic block.

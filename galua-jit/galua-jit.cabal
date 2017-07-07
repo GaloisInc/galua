@@ -22,16 +22,12 @@ library
   ghc-prof-options: -fprof-auto-top
   ghc-options:      -Wall -O2
   exposed-modules:     Galua.Micro.AST
-                       Galua.Micro.ExecEnv
-                       Galua.Micro.OpcodeInterpreter
-                       Galua.Micro.Stepper
                        Galua.Micro.Translate
                        Galua.Micro.Translate.Monad
                        Galua.Micro.Translate.AnalyzeRefs
                        Galua.Micro.Translate.ExplicitRefs
                        Galua.Micro.Translate.Simplify
                        Galua.Micro.Translate.JoinBlocks
-                       Galua.Micro.Translate.RenumberTMP
                        Galua.Micro.Translate.ComputeInputs
 
                        Galua.Micro.JIT
@@ -47,10 +43,7 @@ library
                        GraphSCC,
                        ghc, directory, filepath, time,
                        ghc-paths,
-                       galua-rts,
-
-                       -- XXX
-                       monadLib
+                       galua-rts
 
   hs-source-dirs:      src
 
