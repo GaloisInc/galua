@@ -2,6 +2,7 @@ packages:
 - location: lib/hashtables
   extra-dep: true
 - location: galua-rts
+- location: galua-jit
 - location: galua
 - location: galua-dbg
 - location: galua-analysis

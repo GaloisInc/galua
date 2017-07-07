@@ -63,6 +63,7 @@ library
                        monadLib,
                        filepath,
                        galua,
+                       galua-jit,
                        galua-rts,
                        galua-analysis,
                        galua-spec,
