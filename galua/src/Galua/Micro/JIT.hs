@@ -21,7 +21,7 @@ import Prelude hiding ((.))
 
 
 jit :: FunId -> Function -> IO CompiledFunction
-jit fid f = do writeFile (modName ++ ".dot") (show dot)
+jit fid f = do -- writeFile (modName ++ ".dot") (show dot)
                GHC.compile modName code
   where
   modName    = "Lua_" ++ funIdString fid

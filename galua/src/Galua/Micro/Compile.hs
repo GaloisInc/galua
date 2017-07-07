@@ -36,7 +36,7 @@ pack_dbs = map PkgConfFile
 
 compile :: Typeable a => String -> Doc -> IO a {- ^ Compile value for `main` -}
 compile modNameStr modText' =
-  do writeFile (modNameStr ++ ".hs") (show modText')
+  do -- writeFile (modNameStr ++ ".hs") (show modText')
      bracket (open modNameStr) cleanup $ \file ->
        defaultErrorHandler defaultFatalMessager defaultFlushOut $
        -- runGhc (Just "./galua-ghc") $
