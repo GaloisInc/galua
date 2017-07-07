@@ -9,6 +9,7 @@ import System.IO           (hClose, openTempFile)
 import Data.Time           (getCurrentTime)
 import Text.PrettyPrint(Doc)
 import Data.IntSet         (insert)
+import Data.IORef(writeIORef)
 
 import GHC
 import Outputable(showSDoc,ppr)
@@ -41,6 +42,8 @@ compile modNameStr modText' =
        -- runGhc (Just "./galua-ghc") $
        runGhc (Just libdir) $
          do dflags <- getSessionDynFlags
+
+            liftIO $ writeIORef (rtccInfo dflags) (Just GCC)
 
             _      <- setSessionDynFlags (dbg dflags)
                          { verbosity = 0
