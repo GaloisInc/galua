@@ -246,7 +246,7 @@ evalStmt stmt =
 
 
     NewClosure r proto fun ->
-      do let ups = funcUpvalExprs fun
+      do let ups = funcUpvalRefExprs fun
          upRs' <- mapM (regValToRef <=< evalExpr) ups
          let upRs = case sequence upRs' of
                       Just rs -> rs
