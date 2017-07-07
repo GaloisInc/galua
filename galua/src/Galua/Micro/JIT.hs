@@ -460,11 +460,6 @@ performLookupTable res tab expr =
 
 
 performSetTable :: Reg -> Expr -> Expr -> HsExpr -> HsExpr
-performSetTable tab (ELit (LStr x)) val =
-  "Table t" <~ getReg tab .
-  "val"     <~~ getExpr val .
-  "_"       <-- (papp "setTableRaw t" (strLab x) <+> "val")
-
 performSetTable tab ix val =
   "Table t" <~ getReg tab .
   "ix"     <~~ getExpr ix .
