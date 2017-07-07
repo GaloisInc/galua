@@ -475,8 +475,8 @@ performSetTable tab ix val =
 performSetTableList :: Reg -> Int -> HsExpr -> HsExpr
 performSetTableList tab ix =
   "Table t" <~ getReg tab .
-  "_" <-- ("iForM_" <+> getListReg <+> "$ \\i a ->" <+>
-                    "setTableRaw t (Number (Int (i" <+> int ix <+>"))) a")
+  "_" <-- ("SMV.iForM_" <+> getListReg <+> "$ \\i a ->" <+>
+                    "setTableRaw t (Number (Int (i + " <+> int ix <+>"))) a")
 
 
 performGetMeta :: Reg -> Expr -> HsExpr -> HsExpr
