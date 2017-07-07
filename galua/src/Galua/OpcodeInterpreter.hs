@@ -45,6 +45,7 @@ execute !vm !pc =
 
   do eenv <- case vmCurExecEnv vm of
                ExecInLua lenv -> return lenv
+               ExecInHs {}    -> interpThrow ExecuteLuaWhileInHs
                ExecInC {}     -> interpThrow ExecuteLuaWhileInC
 
      let advance      = jump 0
@@ -425,6 +426,7 @@ data InterpreterFailureType
   = UnexpectedExtraArg
   | SetListNeedsTable
   | ExecuteLuaWhileInC
+  | ExecuteLuaWhileInHs
   | ExecuteLuaWhileInMLua
   | MissingVarResults
   deriving (Show)

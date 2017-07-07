@@ -232,6 +232,7 @@ abortApiCall :: MVar CNextStep -> ExecEnv -> IO ()
 abortApiCall mvar eenv =
   case eenv of
     ExecInLua {} -> return ()
+    ExecInHs {}  -> return ()
     ExecInC cenv ->
      do let ref = cExecApiCall cenv
         st <- readIORef ref
@@ -365,20 +366,9 @@ enterClosure vm c vs =
   do let MkClosure { cloFun, cloUpvalues } = referenceVal c
      case cloFun of
 
-       LuaFunction fid f ->
-          do let jitRef = machJIT (vmMachineEnv vm)
-             jitMap <- readIORef jitRef
-             compiled <- case Map.lookup fid jitMap of
-                           Just code -> return code
-                           Nothing ->
-                             do putStrLn ("Source: " ++ show (funcSource f) ++
-                                         show (funcLineDefined f) ++ "--" ++
-                                         show (funcLastLineDefined f))
-
-                                code <- jit fid f
-                                writeIORef jitRef $! Map.insert fid code jitMap
-                                return code
-             useNormalLua compiled fid f cloUpvalues
+       LuaFunction fid f
+         | True  -> interpLua fid f cloUpvalues
+         | False -> jitLua fid f cloUpvalues
 
        CFunction cfun ->
          do stack <- SV.new
@@ -402,7 +392,31 @@ enterClosure vm c vs =
                                                   execCFunction l cServ cfun)
 
   where
-  useNormalLua cmp fid f cloUpvalues =
+  jitLua fid f cloUpvalues =
+    do let jitRef = machJIT (vmMachineEnv vm)
+       jitMap <- readIORef jitRef
+       compiled <- case Map.lookup fid jitMap of
+                     Just code -> return code
+                     Nothing ->
+                       do putStrLn ("Source: " ++ show (funcSource f) ++
+                                         show (funcLineDefined f) ++ "--" ++
+                                         show (funcLastLineDefined f))
+
+                          code <- jit fid f
+                          writeIORef jitRef $! Map.insert fid code jitMap
+                          return code
+
+       let eenv = ExecInHs HsExecEnv
+                    { hsExecUpvals     = cloUpvalues
+                    , hsExecClosure   = Closure  c
+                    , hsExecFID       = fid
+                    , hsExecFunction  = f
+                    }
+
+       eenv `seq` return (eenv, compiled c vm vs)
+
+
+  interpLua fid f cloUpvalues =
     do let regNum = funcMaxStackSize f
            varargs
              | funcIsVararg f = drop (funcNumParams f) (SMV.toList vs)
@@ -427,6 +441,5 @@ enterClosure vm c vs =
                     , luaExecFunction  = f
                     }
 
-       -- eenv `seq` return (eenv, return (Goto 0))
-       eenv `seq` return (eenv, cmp c vm vs)
+       eenv `seq` return (eenv, return (Goto 0))
 

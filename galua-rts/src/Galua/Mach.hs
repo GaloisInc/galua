@@ -272,37 +272,43 @@ data MachConfig = MachConfig
 
 data ExecEnv = ExecInLua  {-# UNPACK #-} !LuaExecEnv
              | ExecInC    {-# UNPACK #-} !CExecEnv
+             | ExecInHs   {-# UNPACK #-} !HsExecEnv -- ^ compiled Lua
 
 -- | Get the up-values for the execution environment.
 execUpvals :: ExecEnv -> IOVector (IORef Value)
 execUpvals env =
   case env of
     ExecInLua   LuaExecEnv  { luaExecUpvals }   -> luaExecUpvals
+    ExecInHs    HsExecEnv   { hsExecUpvals  }   -> hsExecUpvals
     ExecInC     CExecEnv    { cExecUpvals   }   -> cExecUpvals
 
 execClosure :: ExecEnv -> Value
 execClosure env =
   case env of
     ExecInLua lenv -> luaExecClosure lenv
+    ExecInHs  henv -> hsExecClosure henv
     ExecInC   cenv -> cExecClosure cenv
 
 execFun :: ExecEnv -> FunctionValue
 execFun env =
   case env of
     ExecInLua lenv  -> LuaFunction (luaExecFID lenv) (luaExecFunction lenv)
+    ExecInHs henv   -> LuaFunction (hsExecFID henv) (hsExecFunction henv)
     ExecInC cenv    -> CFunction (cExecFunction cenv)
 
 execCStack :: ExecEnv -> SV.SizedVector Value
 execCStack env =
   case env of
     ExecInC cenv  -> cExecStack cenv
-    ExecInLua {}  -> error "[bug] execCStack: not a C execution environment"
+    ExecInLua {}  -> error "[bug] execCStack: ExecInLua"
+    ExecInHs {}   -> error "[bug] execCStack: ExecInHs"
 
 execApiCall :: ExecEnv -> IORef ApiCallStatus
 execApiCall env =
   case env of
     ExecInC cenv -> cExecApiCall cenv
-    ExecInLua {} -> error "[bug] execApiCall: not a C execution environment"
+    ExecInLua {} -> error "[bug] execApiCall: ExecInLua"
+    ExecInHs  {} -> error "[bug] execApiCall: ExecInHs"
 
 
 
@@ -349,7 +355,16 @@ data CExecEnv = CExecEnv
   , cExecFunction   :: !CFunName      -- ^ extra info
   }
 
+-- | Execution environment for a compiler Lua function.
+-- We just keep info about the function;  the state is not visiable.
+data HsExecEnv = HsExecEnv
+  { hsExecUpvals  :: {-# UNPACK #-} !(IOVector (IORef Value))
 
+    -- The current function
+  , hsExecClosure  :: !Value         -- ^ used by debug API
+  , hsExecFID      :: !FunId         -- ^ extra info
+  , hsExecFunction :: !Function      -- ^ extra info
+  }
 
 
 
@@ -359,6 +374,7 @@ execFunId :: ExecEnv -> Maybe FunId
 execFunId env =
   case env of
     ExecInLua x -> Just (luaExecFID x)
+    ExecInHs x  -> Just (hsExecFID x)
     ExecInC _   -> Nothing
 
 
@@ -423,8 +439,9 @@ machRefLoc vm =
                    Nothing -> MachSetup -- XXX: or can this happen?
 
   mkLoc env pc = case env of
-                   ExecInLua lenv  -> InLua (luaExecFID lenv) pc
-                   ExecInC cenv    -> InC (cExecFunction cenv)
+                   ExecInLua lenv -> InLua (luaExecFID lenv) pc
+                   ExecInC cenv   -> InC   (cExecFunction cenv)
+                   ExecInHs henv  -> InLua (hsExecFID henv) pc -- pc bogus?
 
 
 

@@ -1345,6 +1345,7 @@ atBottomOfStack :: ExecEnv -> Bool
 atBottomOfStack env =
   case env of
     ExecInLua {} -> False
+    ExecInHs {}  -> False
     ExecInC cenv -> cfunAddr (cExecFunction cenv) == nullFunPtr
 
 
@@ -1396,6 +1397,8 @@ lua_getinfo_hs l tid r whatPtr ar out =
 
 
        ExecInLua lenv -> reportLua (luaExecFID lenv) (luaExecFunction lenv)
+
+       ExecInHs henv -> reportLua (hsExecFID henv) (hsExecFunction henv)
 
        ExecInC cenv ->
          do let funName    = cfunName (cExecFunction cenv)
@@ -1462,19 +1465,25 @@ getLocalStackArgs n out args ar =
 
      let ix = fromIntegral n - 1
 
+         withFunc func =
+           case lookupLocalName func pc (Reg ix) of
+             Nothing -> poke out nullPtr
+             Just name ->
+               do len <- SV.size stack
+                  if 0 <= ix && ix < len
+                    then do val <- SV.get stack ix
+                            poke out =<< newCAString (B8.unpack name)
+                            push args val
+
+                    else do poke out nullPtr
+
+
 
      case execEnv of
-       ExecInLua LuaExecEnv { luaExecFunction = func }
-         | Just name <- lookupLocalName func pc (Reg ix) ->
-             do len <- SV.size stack
-                if 0 <= ix && ix < len
-                  then do val <- SV.get stack ix
-                          poke out =<< newCAString (B8.unpack name)
-                          push args val
+       ExecInLua LuaExecEnv { luaExecFunction = func } -> withFunc func
+       ExecInHs  HsExecEnv  { hsExecFunction = func } -> withFunc func
+       _ -> poke out nullPtr
 
-                  else do poke out nullPtr
-
-       _ -> do poke out nullPtr
 
 ------------------------------------------------------------------------
 
@@ -1527,17 +1536,24 @@ lua_setlocal_hs l tid r ar n out =
 
      let ix = fromIntegral n - 1
 
+     let withFunc func =
+           case lookupLocalName func pc (Reg ix) of
+             Just name ->
+               do sz <- SV.size stack
+                  if 0 <= ix && ix < sz
+                    then do v <- pop args
+                            SV.set stack ix v
+                            newCAString (B8.unpack name)
+                    else return nullPtr
+             _ -> return nullPtr
+
+
+
+
      result out =<<
       case execEnv of
-        ExecInLua LuaExecEnv { luaExecFunction = func }
-         | Just name <- lookupLocalName func pc (Reg ix) ->
-           do sz <- SV.size stack
-              if 0 <= ix && ix < sz
-                then do v <- pop args
-                        SV.set stack ix v
-                        newCAString (B8.unpack name)
-                else return nullPtr
-
+        ExecInLua LuaExecEnv { luaExecFunction = func } -> withFunc func
+        ExecInHs  HsExecEnv  { hsExecFunction = func } -> withFunc func
         _ -> return nullPtr
 
 ------------------------------------------------------------------------
