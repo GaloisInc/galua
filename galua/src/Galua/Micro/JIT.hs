@@ -393,7 +393,7 @@ getProp (Prop pre ~(v1 : ~(v2 : _))) =
 
     IsNaN ->
       [ "case" <+> getExpr v1 <+> "of"
-      , "  (# hS, Number (Double d) #) -> (# hS, isNan d #)"
+      , "  (# hS, Number (Double d) #) -> (# hS, isNaN d #)"
       , "  (# hS, _                 #) -> (# hS, False   #)"
       ]
 
