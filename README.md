@@ -2,7 +2,10 @@ Galua
 =====
 
 Galua is a Lua debugger implemented in Haskell. It is intended to work
-in place of the reference Lua implementation.
+in place of the reference Lua implementation. Galua was funded by the
+[Plan X](https://www.darpa.mil/program/plan-x)
+program at [DARPA I2O](https://www.darpa.mil/about-us/offices/i2o)
+under contract FA8750-13-C-0203.
 
 NOTE: Galua currently uses the reference compiler to turn Lua source into
 bytecode. This means that the `luac` executable is a runtime dependency
