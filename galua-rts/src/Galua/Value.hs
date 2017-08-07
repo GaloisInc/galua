@@ -74,6 +74,7 @@ import           Data.Hashable(Hashable(..))
 
 import {-# SOURCE #-} Galua.Mach (Thread)
 
+import           Galua.Util.IOURef(IOWordRef,newIOWordRef)
 import qualified Galua.Util.Table as Tab
 import           Galua.Util.String(packUtf8,unpackUtf8)
 
@@ -223,6 +224,8 @@ instance Hashable Value where
 data Closure = MkClosure
   { cloFun      :: FunctionValue
   , cloUpvalues :: IOVector (IORef Value)
+  , cloCounter  :: {-# UNPACK #-} !IOWordRef
+    -- ^ Counts how many times we've entered this closure
   }
 
 data PrimArgument
@@ -239,7 +242,9 @@ newClosure ::
   AllocRef ->
   RefLoc -> FunctionValue -> IOVector (IORef Value) -> IO (Reference Closure)
 newClosure aref refLoc f us =
-  newRef aref refLoc MkClosure { cloFun = f, cloUpvalues = us }
+  do c <- newIOWordRef 0
+     newRef aref refLoc
+                   MkClosure { cloFun = f, cloUpvalues = us, cloCounter = c }
 
 
 instance MakeWeak Closure where

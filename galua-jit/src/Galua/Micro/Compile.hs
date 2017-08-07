@@ -29,8 +29,8 @@ packages = map pack
 
 pack_dbs :: [ PkgConfRef ]
 pack_dbs = map PkgConfFile
-  [ ".stack-work/install/x86_64-linux/lts-8.13/8.0.2/pkgdb"
-  , "/home/diatchki/.stack/snapshots/x86_64-linux/lts-8.13/8.0.2/pkgdb"
+  [ ".stack-work/install/x86_64-linux-nopie/lts-9.0/8.0.2/pkgdb"
+  , "/home/diatchki/.stack/snapshots/x86_64-linux-nopie/lts-9.0/8.0.2/pkgdb"
   ]
 
 

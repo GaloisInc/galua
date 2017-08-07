@@ -34,6 +34,7 @@ import qualified Galua.Util.Stack as Stack
 import qualified Galua.Util.SizedVector as SV
 import           Galua.Util.SmallVec(SmallVec)
 import qualified Galua.Util.SmallVec as SMV
+import           Galua.Util.IOURef(readIOWordRef,writeIOWordRef)
 
 
 data Cont r = Cont
@@ -363,12 +364,15 @@ consMb (Just x) xs = x : xs
 enterClosure ::
   VM -> Reference Closure -> SmallVec Value -> IO (ExecEnv, IO NextStep)
 enterClosure vm c vs =
-  do let MkClosure { cloFun, cloUpvalues } = referenceVal c
+  do let MkClosure { cloFun, cloUpvalues, cloCounter } = referenceVal c
      case cloFun of
 
-       LuaFunction fid f
-         | True  -> interpLua fid f cloUpvalues
-         | False -> jitLua fid f cloUpvalues
+       LuaFunction fid f ->
+         do entries <- readIOWordRef cloCounter
+            if entries > 5000
+               then jitLua fid f cloUpvalues
+               else do writeIOWordRef cloCounter (entries + 1)
+                       interpLua fid f cloUpvalues
 
        CFunction cfun ->
          do stack <- SV.new
