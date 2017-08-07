@@ -1,3 +1,5 @@
+system-ghc: false
+
 packages:
 - location: lib/hashtables
   extra-dep: true
@@ -10,15 +12,19 @@ packages:
 - location: lib/dwarf-tools
 - location: lib/language-lua
 - location: https://github.com/yav/dump-core/archive/master.zip
+- location: https://github.com/GaloisInc/lua-bc/archive/master.zip
   extra-dep: true
 
-resolver: lts-8.13
+resolver: lts-9.0
 extra-deps:
 - config-value-0.5
 - config-value-getopt-0.1.0.0
 - elf-0.27
 - alex-tools-0.1.1.0
 - lua-bc-0.1.1
+- GraphSCC-1.0.4
+- monadLib-3.7.3
+
 
 flags:
   galua:
