@@ -85,6 +85,7 @@ orderedPackagesList pkgs = lookupVertex <$> topSort g
   (g, lookupVertex, _findVertex) = dependencyGraph pkgs
 
 goodLicense :: License -> Bool
+goodLicense BSD2 = True
 goodLicense BSD3 = True
 goodLicense MIT  = True
 goodLicense ISC  = True
