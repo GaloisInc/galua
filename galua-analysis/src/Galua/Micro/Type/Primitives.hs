@@ -37,19 +37,19 @@ valueToTypeString val =
 primType :: AnalysisM m => GlobalState -> List Value -> m (Either Value (List Value), GlobalState)
 primType glob args =
   do val <- valueCasesM (appList args 0)
-     let tyString = StringValue (Just (valueToTypeString val))
+     let tyString = StringValue (NotTop (valueToTypeString val))
      return (Right (singleton (fromSingleV tyString)), glob)
 
 primAssert :: AnalysisM m => GlobalState -> List Value -> m (Either Value (List Value), GlobalState)
 primAssert glob args =
   do val <- valueCasesM (appList args 0)
-     let bad  = Left (fromSingleV (StringValue (Just "assertion failed")))
+     let bad  = Left (fromSingleV (StringValue (NotTop "assertion failed")))
          good = Right (singleton (fromSingleV val))
      case val of
-       BasicValue Nil            -> return (bad, glob)
-       BooleanValue (Just False) -> return (bad, glob)
-       BooleanValue Nothing      -> options [(bad, glob), (good,glob)]
-       _                         -> return (good, glob)
+       BasicValue Nil              -> return (bad, glob)
+       BooleanValue (NotTop False) -> return (bad, glob)
+       BooleanValue Top            -> options [(bad, glob), (good,glob)]
+       _                           -> return (good, glob)
 
 primSetmetatable :: AnalysisM m => GlobalState -> List Value -> m (Either Value (List Value), GlobalState)
 primSetmetatable glob args =
@@ -57,11 +57,11 @@ primSetmetatable glob args =
          arg1 = appList args 1
      val <- valueCasesM arg0
      case val of
-       TableValue (Just tid) ->
+       TableValue (NotTop tid) ->
          do let setmeta table = Just $! table { tableMeta = arg1 }
                 glob' = glob { tables = Map.update setmeta tid (tables glob) }
             return (Right (listFromList [arg0]), glob')
-       TableValue Nothing  -> fail "Attempted to set metatable on top table"
+       TableValue Top -> fail "Attempted to set metatable on top table"
        _ -> return (Left (exactString "setmetatable: bad argument"), glob)
 
 singleton :: Value -> List Value
@@ -71,5 +71,5 @@ buildPrimMap :: TableId -> GlobalState -> Map CFun PrimImpl
 buildPrimMap globalTableId gs = Map.fromList $ catMaybes [ aux path impl | (path,impl) <- primitives ]
   where
     aux path impl =
-      do cfun <- findCFunName (TableValue (Just globalTableId)) gs path
+      do cfun <- findCFunName (TableValue (NotTop globalTableId)) gs path
          return (cfun, impl)

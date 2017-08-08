@@ -20,10 +20,10 @@ import Galua.Code(FunId, noFun, subFun)
 
 -- | An abstract value.
 data SingleV      = BasicValue        Type
-                  | BooleanValue      (Maybe Bool)
-                  | StringValue       (Maybe ByteString) -- ^ Nothing = top
-                  | TableValue        (Maybe TableId)
-                  | FunctionValue     (Maybe ClosureId)
+                  | BooleanValue      (WithTop Bool)
+                  | StringValue       (WithTop ByteString)
+                  | TableValue        (WithTop TableId)
+                  | FunctionValue     (WithTop ClosureId)
                     deriving Eq
 
 data Type         = Nil | Number | UserData | LightUserData | Thread
@@ -110,16 +110,16 @@ data LocalState = LocalState
 
 -- | The current abstract state of the interpreter.
 data State = State
-  { globalState :: GlobalState
+  { globalState  :: GlobalState
   , localState   :: LocalState
   } deriving (Eq,Show,Generic)
 
 -- | An abstract value. Describes what we know about a value.  Each
--- of the fields an additional pieces of information.  If a specific
+-- of the fields adds an additional pieces of information.  If a specific
 -- field does not contain information relevant to the value, then it
 -- will be set to @bottom@.
 data Value = Value
-  { valueBasic    :: !(Set Type)                 -- ^ Possible basic types
+  { valueBasic    :: !(Set Type)                -- ^ Possible basic types
   , valueString   :: !(Lift ByteString)         -- ^ String aspects of the value
   , valueBoolean  :: !(Lift Bool)
   , valueFunction :: !(WithTop (Set ClosureId)) -- ^ Which function is this
@@ -127,7 +127,7 @@ data Value = Value
   } deriving (Eq,Generic,Show)
 
 
--- | Information we keep about tables (i.e., "table types).
+-- | Information we keep about tables (i.e., "table types").
 data TableV = TableV
   { tableFields  :: !(ByteString :-> Value)
     -- ^ Types of string keyed fields.
@@ -178,7 +178,7 @@ data FunBehavior = FunBehavior
 -- | Information about the return type of a function, and its side-effects.
 data FunPost = FunPost
   { funReturns    :: List Value     -- ^ Values that are returns
-  , funRaises     :: Value          -- ^ Exceptions that might be throws
+  , funRaises     :: Value          -- ^ Exceptions that might be thrown
   , funModTables  :: Set TableId    -- ^ Tables that might be modified
   , funModRefs    :: Set RefId      -- ^ Heap locations that might be modified
   } deriving (Eq,Show,Generic)
@@ -204,6 +204,17 @@ remember that we don't know the value. -}
 data WithTop a = NotTop a | Top
                  deriving (Eq,Show)
 
+instance Functor WithTop where
+  fmap f x = case x of
+               NotTop a -> NotTop (f a)
+               Top      -> Top
+
+-- | Convert a value with glued-on top, to a Lift one.
+withTopToLift :: WithTop a -> Lift a
+withTopToLift x =
+  case x of
+    NotTop a -> OneValue a
+    Top      -> MultipleValues
 
 --------------------------------------------------------------------------------
 
@@ -216,15 +227,15 @@ valueCases Value { .. } =
   (BasicValue <$> Set.toList valueBasic) ++
   (case valueString of
      NoValue        -> []
-     OneValue a     -> [StringValue (Just a)]
-     MultipleValues -> [StringValue Nothing]
+     OneValue a     -> [StringValue (NotTop a)]
+     MultipleValues -> [StringValue Top]
    ) ++
    (ifTop TableValue    valueTable) ++
    (ifTop FunctionValue valueFunction)
   where
   ifTop f x = case x of
-                Top      -> [ f Nothing ]
-                NotTop a -> map (f . Just) (Set.toList a)
+                Top      -> [ f Top ]
+                NotTop a -> map (f . NotTop) (Set.toList a)
 
 
 -- | Convert a single value to an abstract value.
@@ -232,19 +243,12 @@ valueCases Value { .. } =
 fromSingleV :: SingleV -> Value
 fromSingleV val =
   case val of
-    BooleanValue mb  -> bottom { valueBoolean  = case mb of
-                                                   Nothing -> MultipleValues
-                                                   Just b  -> OneValue b }
+    BooleanValue mb  -> bottom { valueBoolean  = withTopToLift mb }
     BasicValue t     -> bottom { valueBasic    = Set.singleton t }
-    StringValue mb   -> bottom { valueString   = case mb of
-                                                  Nothing -> MultipleValues
-                                                  Just s  -> OneValue s }
-    TableValue t     -> bottom { valueTable    = toTop t }
-    FunctionValue f  -> bottom { valueFunction = toTop f }
-  where
-  toTop mb = case mb of
-               Nothing -> Top
-               Just a  -> NotTop (Set.singleton a)
+    StringValue mb   -> bottom { valueString   = withTopToLift mb }
+    TableValue t     -> bottom { valueTable    = fmap Set.singleton t }
+    FunctionValue f  -> bottom { valueFunction = fmap Set.singleton f }
+
 
 
 --------------------------------------------------------------------------------
@@ -254,18 +258,18 @@ basic :: Type -> Value
 basic = fromSingleV . BasicValue
 
 exactString :: ByteString -> Value
-exactString s = fromSingleV (StringValue (Just s))
+exactString s = fromSingleV (StringValue (NotTop s))
 
 exactBool :: Bool -> Value
-exactBool b = fromSingleV (BooleanValue (Just b))
+exactBool b = fromSingleV (BooleanValue (NotTop b))
 
 -- | Make a value that is some string.
 anyString :: Value
-anyString = fromSingleV (StringValue Nothing)
+anyString = fromSingleV (StringValue Top)
 
 -- | Make a value that is some boolean.
 anyBoolean :: Value
-anyBoolean = fromSingleV (BooleanValue Nothing)
+anyBoolean = fromSingleV (BooleanValue Top)
 
 -- | Make a value that is exactly this reference.
 newRef :: RefId -> RegVal
@@ -273,11 +277,11 @@ newRef = RegRef . NotTop . Set.singleton
 
 -- | Make a value that is exactly this table.
 newTable :: TableId -> Value
-newTable = fromSingleV . TableValue . Just
+newTable = fromSingleV . TableValue . NotTop
 
 -- | Make a value that is exactly this function.
 newFun :: ClosureId -> Value
-newFun = fromSingleV . FunctionValue . Just
+newFun = fromSingleV . FunctionValue . NotTop
 
 -- | A value that is used but completely unknown.
 topVal :: Value
@@ -624,13 +628,13 @@ instance Lattice () where
 
 findCFunName :: SingleV -> GlobalState -> [ByteString] -> Maybe CFun
 findCFunName globalTable gs path =
-  do FunctionValue (Just cid) <- foldM (resolvePath1 gs) globalTable path
+  do FunctionValue (NotTop cid) <- foldM (resolvePath1 gs) globalTable path
      funv <- Map.lookup cid (functions gs)
      CFunImpl ptr <- liftSingleton (functionFID funv)
      return ptr
 
 resolvePath1 :: GlobalState -> SingleV -> ByteString -> Maybe SingleV
-resolvePath1 gs (TableValue (Just tid)) label =
+resolvePath1 gs (TableValue (NotTop tid)) label =
   do tab <- Map.lookup tid (tables gs)
      let field = appFun (tableFields tab) label
      maybeSingleton (valueCases field)

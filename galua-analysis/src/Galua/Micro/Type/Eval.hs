@@ -54,10 +54,10 @@ evalExpr expr =
     ELit l ->
       case l of
         LNil          -> ret (BasicValue Nil)
-        LBool b       -> ret (BooleanValue (Just b))
+        LBool b       -> ret (BooleanValue (NotTop b))
         LNum _        -> ret (BasicValue Number)
         LInt _        -> ret (BasicValue Number)
-        LStr b        -> ret (StringValue (Just b))
+        LStr b        -> ret (StringValue (NotTop b))
   where
   ret = return . RegVal . fromSingleV
 
@@ -200,6 +200,9 @@ evalStmt stmt =
 
     Assign r e -> do assign r =<< evalExpr e
                      return Continue
+
+    AssignListReg tgt src -> do setList tgt =<< getList src
+                                return Continue
 
     SetUpVal {} -> error "SetUpVal"
 
@@ -395,8 +398,11 @@ evalBlock bn s = inBlock bn s go
             _        -> return next
 
 
-callFun :: Maybe ClosureId -> List Value -> BlockM (Either Value (List Value))
-callFun mb as = doCall =<< maybe anyFunId return mb
+
+callFun :: WithTop ClosureId -> List Value -> BlockM (Either Value (List Value))
+callFun mb as = case mb of
+                  Top      -> doCall =<< anyFunId
+                  NotTop f -> doCall f
   where doCall fid = do (callsite,save) <- getCont
                         glob            <- getGlobal
                         (next,newG)     <- evalFun callsite fid as glob

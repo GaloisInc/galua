@@ -465,30 +465,30 @@ writeTableId t v = updGlobal $ \GlobalState { tables, .. } ->
 
 
 -- See: Modifying "Top" values
-setTable :: Maybe TableId -> Value -> Value -> BlockM ()
+setTable :: WithTop TableId -> Value -> Value -> BlockM ()
 setTable mb vi v =
   case mb of
-    Just l  -> doSetTable l
-    Nothing -> join $ options [ doSetTable =<< anyTableId, return () ]
+    NotTop l  -> doSetTable l
+    Top       -> join $ options [ doSetTable =<< anyTableId, return () ]
   where
   doSetTable l =
     do t <- readTableId l
        writeTableId l (setTableEntry (vi,v) t)
 
-getTable :: Maybe TableId -> SingleV -> BlockM Value
-getTable Nothing _ = return topVal
-getTable (Just l) ti =
+getTable :: WithTop TableId -> SingleV -> BlockM Value
+getTable Top _ = return topVal
+getTable (NotTop l) ti =
   do TableV { .. } <- readTableId l
      return $ case ti of
-                StringValue (Just xx) -> appFun tableFields xx
-                StringValue Nothing   -> appAll tableFields
+                StringValue (NotTop xx) -> appFun tableFields xx
+                StringValue Top         -> appAll tableFields
                 _ | ti `elem` valueCases tableKeys -> tableValues
                   | otherwise -> basic Nil
 
 
-getTableMeta :: Maybe TableId -> BlockM Value
-getTableMeta Nothing = return (basic Nil \/ fromSingleV (TableValue Nothing))
-getTableMeta (Just l) =
+getTableMeta :: WithTop TableId -> BlockM Value
+getTableMeta Top = return (basic Nil \/ fromSingleV (TableValue Top))
+getTableMeta (NotTop l) =
   do TableV { .. } <- readTableId l
      return tableMeta
 
