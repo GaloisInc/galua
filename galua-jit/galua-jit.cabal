@@ -22,6 +22,7 @@ library
   ghc-prof-options: -fprof-auto-top
   ghc-options:      -Wall -O2
   exposed-modules:     Galua.Micro.AST
+
                        Galua.Micro.Translate
                        Galua.Micro.Translate.Monad
                        Galua.Micro.Translate.AnalyzeRefs
@@ -29,6 +30,13 @@ library
                        Galua.Micro.Translate.Simplify
                        Galua.Micro.Translate.JoinBlocks
                        Galua.Micro.Translate.ComputeInputs
+
+                       Galua.Micro.Type.Eval
+                       Galua.Micro.Type.Import
+                       Galua.Micro.Type.Monad
+                       Galua.Micro.Type.Pretty
+                       Galua.Micro.Type.Primitives
+                       Galua.Micro.Type.Value
 
                        Galua.Micro.JIT
                        Galua.Micro.Compile
@@ -41,6 +49,7 @@ library
                        text                 >=1.2  && <1.3,
                        pretty               >=1.1  && <1.2,
                        GraphSCC,
+                       monadLib,
                        ghc, directory, filepath, time,
                        ghc-paths,
                        galua-rts

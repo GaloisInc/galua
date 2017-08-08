@@ -7,7 +7,6 @@ packages:
 - location: galua-jit
 - location: galua
 - location: galua-dbg
-- location: galua-analysis
 - location: galua-spec
 - location: lib/dwarf-tools
 - location: lib/language-lua

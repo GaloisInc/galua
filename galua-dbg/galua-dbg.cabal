@@ -65,7 +65,6 @@ library
                        galua,
                        galua-jit,
                        galua-rts,
-                       galua-analysis,
                        galua-spec,
                        alex-tools,
                        pretty,
