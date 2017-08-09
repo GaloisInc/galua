@@ -259,8 +259,8 @@ analyze dbg n =
                 case vms of
                   Running vm _ ->
                     do let menv = vmMachineEnv vm
-                           metas = machMetatablesRef menv
                            globalTable = machGlobals menv
+                       metas <- readIORef (machMetatablesRef menv)
                        (cid,gid,glob) <- Analysis.importClosure metas globalTable r
                        srcs <- readIORef (dbgSources dbg)
                        let funs = expandSources (topLevelChunks srcs)

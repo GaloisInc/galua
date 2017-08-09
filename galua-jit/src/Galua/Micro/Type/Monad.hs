@@ -77,9 +77,13 @@ class Monad m => AnalysisM m where
   sets    :: (AnalysisS -> (a,AnalysisS)) -> m a
   options :: [a] -> m a
 
+-- | Consider all paths through the code.
+-- More preciese, but also more expensive.
 newtype AllPaths a   = AllPaths (ReaderT RO (StateT AnalysisS []) a)
                         deriving (Functor,Applicative,Monad)
 
+-- | Consier only one path through the code, joining alternatives.
+-- Less precise, but a bit cheaper.
 newtype SinglePath a = SinglePath (ReaderT RO (ChoiceT (StateT AnalysisS Id)) a)
                         deriving (Functor,Applicative,Monad)
 
@@ -102,19 +106,20 @@ sets_ :: AnalysisM m => (AnalysisS -> AnalysisS) -> m ()
 sets_ f = sets $ \s -> ((),f s)
 
 
+-- | Infromation about code in the environemnt.
 data RO = RO
   { roCode     :: Map FunId MicroFunction
   , roPrims    :: Map CFun PrimImpl
   }
 
+-- | A primitive: given the state and some arguments, return an update
+-- state, and either an exception or a list of restuls.
 newtype PrimImpl = PrimImpl
   (forall m. AnalysisM m => GlobalState -> List Value ->
                                     m (Either Value (List Value), GlobalState))
 
+-- | The state of the analysis.
 data AnalysisS = AnalysisS
-  -- rwFunctions :: !(Map FunId (Map UpIx RefId))
-    -- Up-values for allocated functions.
-
   { rwStates    :: !(Map GlobalBlockName State)
     -- ^ Known states at the entries of blocks.
 
@@ -165,25 +170,12 @@ singlePath funs prims (SinglePath m) = (as, rwStates rw, rwRaises rw, reverse(lo
 
 
 
-
-
-
-{-
-anyAllocatedFunId :: AnalysisM m => m FunId
-anyAllocatedFunId =
-  do AnalysisS { rwFunctions } <- get
-     options (Map.keys rwFunctions)
-
-anyFunId :: AnalysisM m => m FunId
-anyFunId =
-  do RO { roCode } <- ask
-     options (Map.keys roCode)
--}
-
-
-
 --------------------------------------------------------------------------------
 
+{- | Enter a block with with a particular state.
+If we've already done the analysis for this state (i.e., adding it
+to the old state does not produce any new information), then we don't
+do anything. -}
 tryEnterBlockAt :: AnalysisM m => GlobalBlockName -> State -> m BlockS
 tryEnterBlockAt loc sCur =
   do AnalysisS { rwStates = states } <- get
@@ -205,7 +197,7 @@ tryEnterBlockAt loc sCur =
                                               "\nI'm in function: " ++
                                                         Code.funIdString curFun
                        Nothing ->
-                         error $ "The current functions is missing: " ++
+                         error $ "The current function is missing: " ++
                                                             show curFun
             return BlockS { rwCurBlock   = b
                           , rwCurOpCode  = 0
@@ -460,7 +452,8 @@ writeTableId t v = updGlobal $ \GlobalState { tables, .. } ->
   anything about a value. So, when we modify such a value, we could
   be modifying any of the currently known values of that type,
   *OR* some other external value that we did not know about.
-  This is why we add the options that *nothing* gets modified.
+  This is why we add the `return ()` csae, indicating that
+  *nothing* gets modified.
 -}
 
 

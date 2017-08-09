@@ -369,7 +369,11 @@ enterClosure vm c vs =
 
        LuaFunction fid f ->
          do entries <- readIOWordRef cloCounter
-            if entries > 5000
+            -- Only compile functions that get called many times.
+            -- This does not help with functions, like the "main" event loop
+            -- which are not called than many time, but have loops inside
+            -- them...
+            if False -- entries >= 0 -- 5000
                then jitLua fid f cloUpvalues
                else do writeIOWordRef cloCounter (entries + 1)
                        interpLua fid f cloUpvalues
@@ -406,7 +410,10 @@ enterClosure vm c vs =
                                          show (funcLineDefined f) ++ "--" ++
                                          show (funcLastLineDefined f))
 
-                          code <- jit fid f
+                          let menv = vmMachineEnv vm
+                              globalTable = machGlobals menv
+                          metas <- readIORef (machMetatablesRef menv)
+                          code  <- jit metas globalTable fid c f
                           writeIORef jitRef $! Map.insert fid code jitMap
                           return code
 

@@ -422,8 +422,9 @@ evalFun caller cid as glob =
     OneValue (CFunImpl ptr) ->
       do mbPrim  <- getPrim ptr
          case mbPrim of
-           -- XXX: UNSOUND!!!
-           -- For now we just treat C functions as if they don't do anything.
+           -- XXX: POTENTIALLY UNSOUND!!!
+           -- For now we just treat unknown C functions as if they don't
+           -- throw exceptoins or modify the Lua world in any way.
            Nothing -> return (Right (listConst topVal), glob)
            Just (PrimImpl prim) -> prim glob as
 

@@ -63,19 +63,16 @@ compile modNameStr modText' =
                                      Just (stringToStringBuffer modText, nowish)
                                  }
 
-            liftIO $ putStrLn "*************COMPILING********************"
             setTargets [target]
             r <- load LoadAllTargets
             case r of
               Failed    -> throw CompilationFail
               Succeeded ->
-                do liftIO $ putStrLn "*************SET CONTEXT*****************"
-                   setContext [IIDecl (simpleImportDecl modName)]
+                do setContext [IIDecl (simpleImportDecl modName)]
                    summary <- getModSummary modName
                    intepr <- isModuleInterpreted summary
-                   liftIO $ putStrLn $ "INTERP: " ++ show intepr
                    result <- compileExpr (modNameStr ++ ".main")
-                   liftIO $ putStrLn "*************COMPILE EXPR***********"
+                   liftIO $ putStrLn "Finished compilation"
                    return $! unsafeCoerce result
 
   where

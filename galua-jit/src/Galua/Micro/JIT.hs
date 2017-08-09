@@ -8,24 +8,29 @@ import qualified Data.Map as Map
 import           Data.ByteString(ByteString)
 
 
-import           Galua.Mach(CompiledFunction)
+import           Galua.Value(Reference,Table,Closure)
+import           Galua.Mach(CompiledFunction,TypeMetatables)
 import           Galua.Pretty(pp)
 
 import           Galua.Micro.AST
 import           Galua.Micro.Translate(translate)
+import           Galua.Micro.Translate.InferTypes(inferTypes)
 import           Galua.Code hiding (Reg(..))
 import qualified Galua.Code as Code (Reg(..),UpIx(..),Function(..))
 import qualified Galua.Micro.Compile as GHC (compile)
 
 import Prelude hiding ((.))
 
-
-jit :: FunId -> Function -> IO CompiledFunction
-jit fid f = do -- writeFile (modName ++ ".dot") (show dot)
-               GHC.compile modName code
+-- | Most of the arguments are for type analysis
+jit :: TypeMetatables -> Reference Table ->
+      FunId -> Reference Closure -> Function ->
+      IO CompiledFunction
+jit metas env fid clo f =
+  do -- writeFile (modName ++ ".dot") (show dot)
+     (dot,code) <- compile modName metas env fid clo f
+     GHC.compile modName code
   where
   modName    = "Lua_" ++ funIdString fid
-  (dot,code) = compile modName f
 
 
 {-
@@ -41,45 +46,50 @@ Read only values:
 -}
 
 
-compile :: String -> Function -> (Doc, HsModule)
-compile modName func = (dot, vcat $
-  [ "{-# Language BangPatterns, OverloadedStrings #-}"
-  , "{-# Language MagicHash, UnboxedTuples #-}"
-  , "module" <+> text modName <+> "(main) where"
-  , "import Data.Maybe"
-  , "import Data.IORef"
-  , "import qualified Data.Map as Map"
-  , "import           Data.Vector.Mutable(IOVector)"
-  , "import qualified Data.Vector.Mutable as IOVector"
-  , "import qualified Data.Vector as Vector"
-  , "import qualified Data.ByteString as BS"
-  , "import GHC.Prim"
-  , "import GHC.Types(IO(..))"
-  , ""
-  , "import Galua.Mach"
-  , "import Galua.Value"
-  , "import Galua.FunValue"
-  , "import Galua.Number"
-  , "import Galua.LuaString"
-  , "import Galua.Code(Function(funcNested))"
-  , "import qualified Galua.Code as Code"
-  , "import           Galua.Util.SmallVec (SmallVec)"
-  , "import qualified Galua.Util.SmallVec as SMV"
-  , ""
-  ] ++
-  [ "main :: Reference Closure -> VM -> SmallVec Value -> IO NextStep"
-  , "main cloRef vm reg_args ="
-  , nest 2 $ doBlock $
-      [ "let MkClosure { cloFun = LuaFunction fid fun"
-      , "              , cloUpvalues = upvalues }  = referenceVal cloRef"
-      ] ++
-      [ "let" <+> vcat [ blockDecl mf k v $$ " "
-                            | (k,v) <- Map.toList (functionCode mf) ]
-      , "IO $ \\hS ->" <+> enterBlock mf EntryBlock
-      ]
-  ] ++
-  [ "{-", pp mf, "-}" ]
-  )
+compile :: String ->
+           TypeMetatables -> Reference Table ->
+           FunId -> Reference Closure -> Function ->
+           IO (Doc, HsModule)
+compile modName metas env fid clo func =
+  do inferTypes metas env fid clo mf
+     return (dot, vcat $
+       [ "{-# Language BangPatterns, OverloadedStrings #-}"
+       , "{-# Language MagicHash, UnboxedTuples #-}"
+       , "module" <+> text modName <+> "(main) where"
+       , "import Data.Maybe"
+       , "import Data.IORef"
+       , "import qualified Data.Map as Map"
+       , "import           Data.Vector.Mutable(IOVector)"
+       , "import qualified Data.Vector.Mutable as IOVector"
+       , "import qualified Data.Vector as Vector"
+       , "import qualified Data.ByteString as BS"
+       , "import GHC.Prim"
+       , "import GHC.Types(IO(..))"
+       , ""
+       , "import Galua.Mach"
+       , "import Galua.Value"
+       , "import Galua.FunValue"
+       , "import Galua.Number"
+       , "import Galua.LuaString"
+       , "import Galua.Code(Function(funcNested))"
+       , "import qualified Galua.Code as Code"
+       , "import           Galua.Util.SmallVec (SmallVec)"
+       , "import qualified Galua.Util.SmallVec as SMV"
+       , ""
+       ] ++
+       [ "main :: Reference Closure -> VM -> SmallVec Value -> IO NextStep"
+       , "main cloRef vm reg_args ="
+       , nest 2 $ doBlock $
+           [ "let MkClosure { cloFun = LuaFunction fid fun"
+           , "              , cloUpvalues = upvalues }  = referenceVal cloRef"
+           ] ++
+           [ "let" <+> vcat [ blockDecl mf k v $$ " "
+                                 | (k,v) <- Map.toList (functionCode mf) ]
+           , "IO $ \\hS ->" <+> enterBlock mf EntryBlock
+           ]
+       ] ++
+       [ "{-", pp mf, "-}" ]
+       )
   where
   mf = translate func
   dot = ppDot (functionCode mf)

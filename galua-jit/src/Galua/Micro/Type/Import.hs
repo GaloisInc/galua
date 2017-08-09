@@ -21,10 +21,13 @@ import           Galua.Code(UpIx(..))
 
 
 importClosure ::
-  IORef C.TypeMetatables {- ^ Type metatables      -} ->
+  C.TypeMetatables       {- ^ Type metatables      -} ->
   C.Reference C.Table    {- ^ Global environment   -} ->
   C.Reference C.Closure  {- ^ Analysis entry point -} ->
   IO (A.ClosureId, A.TableId, A.GlobalState)
+    -- ^ Returns the name of the closure,
+    -- the name of the globals tables, and
+    -- the current state of Lua.
 importClosure metas envTable c =
   do let s0 = RW { nextName         = 0
                  , importedUpVals   = []
@@ -34,10 +37,11 @@ importClosure metas envTable c =
                  }
      ((cid,gid), rw) <- runStateT s0 $ unM $
                         do importMetas metas
-                           cid <- importFunRef c
-                           gid <- importTableRef envTable
+                           cid  <- importFunRef c
+                           gid  <- importTableRef envTable
                            return (cid,gid)
      return (cid, gid, globs rw)
+
 
 
 newtype M a = M { unM :: StateT RW IO a }
@@ -84,11 +88,9 @@ newExternalRef ty = A.externalId ty <$> newName
 importNewRef :: (A.GlobalBlockName -> Int -> a) -> C.Reference b -> M a
 importNewRef ty _r = newExternalRef ty
 
-importMetas :: IORef C.TypeMetatables -> M ()
-importMetas ref =
-  do mp <- liftIO (readIORef ref)
-
-     let lkp t = case Map.lookup t mp of
+importMetas :: C.TypeMetatables -> M ()
+importMetas mp =
+  do let lkp t = case Map.lookup t mp of
                    Nothing -> return (A.basic A.Nil)
                    Just r  -> do tid <- importTableRef r
                                  return (A.newTable tid)
@@ -214,3 +216,11 @@ importValue val =
     C.UserData _      -> return (A.basic A.UserData)
     C.LightUserData _ -> return (A.basic A.UserData)
     C.Thread _        -> return (A.basic A.Thread)
+
+
+importArgs :: [C.Value] -> M (A.List A.Value)
+importArgs as =
+  do vs <- mapM importValue as
+     return (A.listAppend vs (A.listConst (A.basic A.Nil)))
+
+

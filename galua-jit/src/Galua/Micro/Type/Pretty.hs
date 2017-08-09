@@ -7,6 +7,7 @@ import qualified Data.Set as Set
 import           Data.Map ( Map )
 import qualified Data.Map as Map
 import Data.List(intersperse)
+import Data.Maybe(maybeToList,fromMaybe)
 import Text.PrettyPrint
 import Galua.Micro.Type.Value
 import Galua.Pretty
@@ -64,9 +65,8 @@ instance Pretty Value where
   pp Value { .. } =
       ppOpts $ map pp (Set.toList valueBasic) ++
                ppStr ++
-               [ ppSet "fun"   valueFunction
-               , ppSet "table" valueTable ]
-
+               [ d | d <- maybeToList $ ppSetNonBot "fun" valueFunction ] ++
+               [ d | d <- maybeToList $ ppSetNonBot "table " valueTable ]
     where
     ppStr = case valueString of
               NoValue        -> []
@@ -74,17 +74,18 @@ instance Pretty Value where
               MultipleValues -> [ "String" ]
 
 ppOpts :: [Doc] -> Doc
+ppOpts [] = text "⊥"
 ppOpts ds = hsep (intersperse "/" ds)
 
-
-
-ppSet :: Pretty a => String -> WithTop (Set.Set a) -> Doc
-ppSet tag Top = braces (text tag <> ": ⊤")
-ppSet tag (NotTop xs)
-  | Set.null xs = braces (text tag <> ": ⊥")
-  | otherwise   = braces (text tag <> ":" <+>
+ppSetNonBot :: Pretty a => String -> WithTop (Set.Set a) -> Maybe Doc
+ppSetNonBot tag Top = Just (braces (text tag <> ": ⊤"))
+ppSetNonBot tag (NotTop xs)
+  | Set.null xs = Nothing
+  | otherwise   = Just $ braces (text tag <> ":" <+>
                                     ppOpts (map pp (Set.toList xs)))
 
+ppSet :: Pretty a => String -> WithTop (Set.Set a) -> Doc
+ppSet tag s = fromMaybe (braces (text tag <> ": ⊥")) (ppSetNonBot tag s)
 
 instance (Pretty a, Pretty b) => Pretty (a :-> b) where
   pp (FFun mp b) =

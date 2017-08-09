@@ -105,7 +105,8 @@ data LocalState = LocalState
   , listReg     :: List Value     -- ^ The "list" register.
                                   -- This is used when we make function
                                   -- calls or to return results.
-  , upvals      :: Map UpIx (WithTop (Set RefId))  -- ^ Upvalues for current function
+  , upvals      :: Map UpIx (WithTop (Set RefId)) 
+                                  -- ^ Upvalues for current function
   } deriving (Eq,Show,Generic)
 
 -- | The current abstract state of the interpreter.
@@ -154,6 +155,10 @@ data TableV = TableV
   } deriving (Generic,Show,Eq)
 
 
+-- | A function value. Currently when a function is called, we
+-- analyize it again--one for each call site.
+-- Instead, we could use somethink akin `FunBehavior` instead,
+-- which summarizes the behavior of the function.
 data FunV = FunV
   { functionUpVals :: Map UpIx (WithTop (Set RefId)) -- ^ UpValues
   , functionFID    :: Lift FunImpl    -- ^ Code
@@ -167,6 +172,7 @@ data FunImpl
   deriving (Generic,Eq,Show)
 
 -- | A type for a function.  Similar to a pre- post-condition pair.
+-- XXX: This is unused...
 data FunBehavior = FunBehavior
   { funUpVals :: [Value]                -- ^ Types for up-values, if any
   , funArgs   :: List Value             -- ^ Types for arguments
