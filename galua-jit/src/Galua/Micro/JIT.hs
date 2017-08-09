@@ -15,6 +15,7 @@ import           Galua.Pretty(pp)
 import           Galua.Micro.AST
 import           Galua.Micro.Translate(translate)
 import           Galua.Micro.Translate.InferTypes(inferTypes)
+import           Galua.Micro.Translate.Specialize(specialize)
 import           Galua.Code hiding (Reg(..))
 import qualified Galua.Code as Code (Reg(..),UpIx(..),Function(..))
 import qualified Galua.Micro.Compile as GHC (compile)
@@ -51,7 +52,8 @@ compile :: String ->
            FunId -> Reference Closure -> Function ->
            IO (Doc, HsModule)
 compile modName metas env fid clo func =
-  do inferTypes metas env fid clo mf
+  do tys <- inferTypes metas env fid clo mf0
+     let mf = specialize tys mf0
      return (dot, vcat $
        [ "{-# Language BangPatterns, OverloadedStrings #-}"
        , "{-# Language MagicHash, UnboxedTuples #-}"
@@ -91,8 +93,8 @@ compile modName metas env fid clo func =
        [ "{-", pp mf, "-}" ]
        )
   where
-  mf = translate func
-  dot = ppDot (functionCode mf)
+  mf0 = translate func
+  dot = ppDot (functionCode mf0)
 
 
 

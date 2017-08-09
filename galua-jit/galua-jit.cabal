@@ -31,6 +31,7 @@ library
                        Galua.Micro.Translate.JoinBlocks
                        Galua.Micro.Translate.ComputeInputs
                        Galua.Micro.Translate.InferTypes
+                       Galua.Micro.Translate.Specialize
 
                        Galua.Micro.Type.Eval
                        Galua.Micro.Type.Import
