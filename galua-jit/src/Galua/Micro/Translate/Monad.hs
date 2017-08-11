@@ -156,10 +156,6 @@ ite p yes no =
 ifNil :: (IsExpr e, ToBlockName yes, ToBlockName no) => e -> yes -> no -> M ()
 ifNil e yes no = typeCase e $ IfType NilType yes $ Default no
 
-ifNone :: (IsExpr e, ToBlockName yes, ToBlockName no) => e -> yes -> no -> M ()
-ifNone e = ite (Prop IsNone [toExpr e])
-
-
 
 
 

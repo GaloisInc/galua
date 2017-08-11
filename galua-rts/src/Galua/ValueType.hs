@@ -14,7 +14,10 @@ data ValueType
   | UserDataType
   | LightUserDataType
   | ThreadType
-  deriving (Generic,Show,Eq,Ord)
+  deriving (Generic,Show,Eq,Ord,Enum,Bounded)
+
+allTypes :: [ValueType]
+allTypes = [ minBound .. maxBound ]
 
 instance Pretty ValueType where
   pp ty = text (prettyValueType ty)

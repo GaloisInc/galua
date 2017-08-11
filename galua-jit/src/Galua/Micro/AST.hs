@@ -215,7 +215,7 @@ data Expr       = EReg Reg
 data Prop       = Prop !Pred ![Expr]
                   deriving Show
 
-data Pred       = IsInteger | IsNaN | IsNone
+data Pred       = IsInteger | IsNaN
                 | Equals
                 | NumberLT | NumberLEQ
                 | StringLT | StringLEQ
@@ -443,7 +443,6 @@ instance Pretty Pred where
     case pre of
       IsInteger -> "isInteger"
       IsNaN     -> "isNan"
-      IsNone    -> "isNone"
       Equals    -> "="
       NumberLT  -> "<"
       NumberLEQ -> "<="

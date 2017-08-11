@@ -16,6 +16,8 @@ import           Galua.Micro.AST
 import           Galua.Micro.Translate(translate)
 import           Galua.Micro.Translate.InferTypes(inferTypes)
 import           Galua.Micro.Translate.Specialize(specialize)
+import           Galua.Micro.Translate.JoinBlocks(joinBlocks)
+import           Galua.Micro.Translate.ComputeInputs(computeBlockInputs)
 import           Galua.Code hiding (Reg(..))
 import qualified Galua.Code as Code (Reg(..),UpIx(..),Function(..))
 import qualified Galua.Micro.Compile as GHC (compile)
@@ -27,8 +29,8 @@ jit :: TypeMetatables -> Reference Table ->
       FunId -> Reference Closure -> Function ->
       IO CompiledFunction
 jit metas env fid clo f =
-  do -- writeFile (modName ++ ".dot") (show dot)
-     (dot,code) <- compile modName metas env fid clo f
+  do (dot,code) <- compile modName metas env fid clo f
+     writeFile (modName ++ ".dot") (show dot)
      GHC.compile modName code
   where
   modName    = "Lua_" ++ funIdString fid
@@ -53,8 +55,8 @@ compile :: String ->
            IO (Doc, HsModule)
 compile modName metas env fid clo func =
   do tys <- inferTypes metas env fid clo mf0
-     let mf = specialize tys mf0
-     return (dot, vcat $
+     let mf = computeBlockInputs $ joinBlocks $ specialize tys mf0
+     return (ppDot (functionCode mf), vcat $
        [ "{-# Language BangPatterns, OverloadedStrings #-}"
        , "{-# Language MagicHash, UnboxedTuples #-}"
        , "module" <+> text modName <+> "(main) where"
@@ -392,12 +394,6 @@ getProp (Prop pre ~(v1 : ~(v2 : _))) =
   parens $
   vcat $
   case pre of
-    IsNone ->
-      [ "case" <+> getExpr v1 <+> "of"
-      , "  (# hS, Bool b #) -> (# hS, b     #)"
-      , "  (# hS, Nil    #) -> (# hS, False #)"
-      , "  (# hS, _      #) -> (# hS, True  #)"
-      ]
 
     IsInteger ->
       [ "case" <+> getExpr v1 <+> "of"

@@ -501,7 +501,6 @@ analyze ::
   List Value ->
   GlobalState -> Result
 analyze funs prims cid args glob =
-  trace (unlines logs) $
   Result { resReturns     = joins [ v | Right v <- nexts ]
          , resRaises      = joins [ v | Left  v <- nexts ]
          , resGlobals     = joins gs
