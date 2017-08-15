@@ -719,7 +719,7 @@ addSourceFile brks breakRef sources mbName bytes cid fun =
   addBrk b mp = Map.insertWith (\_ y -> y) b Nothing mp
 
   -- Line 0 is special cased to stop on the first instruction of a chunk.
-  findClosest _ 0 = Just (0, FunId [cid])
+  findClosest _ 0 = Just (0, rootFun cid)
 
   findClosest info ln =
     chooseExactLoc $

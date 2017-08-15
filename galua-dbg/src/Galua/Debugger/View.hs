@@ -880,11 +880,6 @@ lookupFun funs fid =
   go [] f       = return f
   go (x : xs) f = go xs =<< funcNested f Vector.!? x
 
-funIdParent :: FunId -> Maybe FunId
-funIdParent (FunId []) = Nothing
-funIdParent (FunId (_:xs)) = Just (FunId xs)
-
-
 
 -- | Merge together the source lines of a function with their corresponding
 -- opcodes.

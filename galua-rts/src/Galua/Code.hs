@@ -12,7 +12,6 @@ import Data.ByteString(ByteString)
 import qualified Data.ByteString.Lazy as L
 import Data.Vector(Vector)
 import Data.Map(Map)
-import Data.Coerce(coerce)
 
 import           Language.Lua.Bytecode (Count(..),DebugInfo(..),VarInfo(..))
 import qualified Language.Lua.Bytecode as BC
@@ -190,7 +189,9 @@ lookupLocalName :: Function -> Int -> Reg -> Maybe ByteString
 lookupLocalName f pc (Reg r) = BC.lookupLocalName (funcOrig f) pc (BC.Reg r)
 
 deepLineNumberMap :: Function -> Map Int [(FunId,[Int])]
-deepLineNumberMap x = coerce (BC.deepLineNumberMap (funcOrig x))
+deepLineNumberMap = fmap (map cvt) . BC.deepLineNumberMap . funcOrig
+  where cvt (x,y) = (funIdFromList (BC.funIdList x), y)
+
 
 inferFunctionName :: Function -> Int -> Maybe ByteString
 inferFunctionName f = BC.inferFunctionName (funcOrig f)

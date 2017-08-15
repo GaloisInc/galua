@@ -46,6 +46,7 @@ library
                        Galua.Util.IOURef
                        Galua.Util.SmallVec
                        Galua.Util.IOVector
+                       Galua.Util.ByteString
 
   other-modules:       CMath
 
