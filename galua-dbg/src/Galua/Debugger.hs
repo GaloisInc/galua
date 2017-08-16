@@ -115,7 +115,7 @@ easily, without having to pass the state aroud.  For example, when we
 load a new module, the interpreter uses an IO action, which modifies 
 dbgSource. -}
 data Debugger = Debugger
-  { dbgSources   :: !(IORef Chunks)
+  { dbgSources   :: {-# UNPACK #-} !(IORef Chunks)
     {- ^ Source code for chunks and corresponding parsed functions.
           The functions are also in the VM state, but that's only available
           while the machine is running. -}
@@ -123,36 +123,37 @@ data Debugger = Debugger
   , dbgCommand   :: {-# UNPACK #-} !(CommandQueue DebuggerCommand)
 
 
-  , dbgClients   :: !(IORef [MVar ()]) --
+  , dbgClients   :: {-# UNPACK #-} !(IORef [MVar ()]) --
     -- ^ Notify these when we stop
 
 
-  , dbgIdleReason :: !(IORef IdleReason)
+  , dbgIdleReason :: {-# UNPACK #-} !(IORef IdleReason)
     -- ^ Why are we not running
 
-  , dbgStateVM   :: !(IORef VMState)                -- ^ The interpreter state
+  , dbgStateVM   :: {-# UNPACK #-} !(IORef VMState) -- ^ The interpreter state
 
-  , dbgBreaks    :: !(IORef (Map (Int,FunId) (Maybe BreakCondition)))
+  , dbgBreaks    :: {-# UNPACK #-}
+                          !(IORef (Map (Int,FunId) (Maybe BreakCondition)))
     -- ^ Static break points.  The key of the map is the break point,
     -- the value is an optional condition.  The breakpoint will only
     -- be active if the condition is true.
 
-  , dbgBreakOnError :: !(IOURef Bool)
+  , dbgBreakOnError :: {-# UNPACK #-} !(IOURef Bool)
     -- ^ Should we stop automatically, when we encounter an error.
 
-  , dbgBrkAddOnLoad :: !(IORef CommandLineBreakPoints)
+  , dbgBrkAddOnLoad :: {-# UNPACK #-} !(IORef CommandLineBreakPoints)
     {- ^ When a chunk is loaded, we added a break point at the beginning
          of each of the functions in the corresponding entry in the map.
          The break points at key 'Nothing' are added to the first chunk
          tath is loaded. -}
 
-  , dbgWatches   :: !(IORef WatchList)
+  , dbgWatches   :: {-# UNPACK #-} !(IORef WatchList)
 
-  , dbgExportable :: !(IORef ExportableState)
+  , dbgExportable :: {-# UNPACK #-} !(IORef ExportableState)
     -- ^ Things that may be expanded further.
 
     -- ^ Types
-  , dbgDeclaredTypes :: !(IORef GlobalTypeMap)
+  , dbgDeclaredTypes :: {-# UNPACK #-} !(IORef GlobalTypeMap)
   }
 
 
