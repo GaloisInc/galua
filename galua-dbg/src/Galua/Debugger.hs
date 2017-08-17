@@ -1,5 +1,5 @@
-{-# OPTIONS_GHC -fno-warn-deprecations #-}
-{-# LANGUAGE NamedFieldPuns, RecordWildCards, BangPatterns, OverloadedStrings #-}
+{-# LANGUAGE NamedFieldPuns, RecordWildCards #-}
+{-# Language BangPatterns, OverloadedStrings #-}
 module Galua.Debugger
   ( Debugger(..)
   , IdleReason(..)
@@ -49,55 +49,43 @@ module Galua.Debugger
 
 import           Galua(setupLuaState)
 import           Galua.CallIntoC (handleCCallState)
-import           Galua.Debugger.PrettySource
-                  (lexChunk,Line,NameId,LocatedExprName)
+import           Galua.Debugger.PrettySource(NameId)
 import           Galua.Debugger.Options
 import           Galua.Debugger.NameHarness
 import           Galua.Debugger.Console(recordConsoleInput,recordConsoleValues)
 import           Galua.Debugger.CommandQueue
+import           Galua.Debugger.ValuePath
+import           Galua.Debugger.Source
+import           Galua.Debugger.WatchList
+import           Galua.Debugger.Specs
+import           Galua.Debugger.Exportable
+import           Galua.Debugger.ResolveName
 
 import           Galua.Code
 import           Galua.Mach
 import           Galua.MachUtils(VMState(..))
 import           Galua.Stepper
-import           Galua.Reference
 import           Galua.Value
 import           Galua.FunValue
 import           Galua.Names.Eval
 import           Galua.Names.Find(LocatedExprName(..),ppExprName)
-import qualified Galua.Util.SizedVector as SV
 import qualified Galua.Util.SmallVec as SMV
 import           Galua.Util.IOURef
 
 import qualified Galua.Spec.AST as Spec
 import qualified Galua.Spec.Parser as Spec
 
-import           Data.Maybe (catMaybes,mapMaybe,fromMaybe,maybeToList)
+import           Data.Maybe (fromMaybe)
 import           Data.Map (Map)
 import qualified Data.Map as Map
-import           Data.IntMap (IntMap)
-import qualified Data.IntMap as IntMap
-import           Data.Set ( Set )
-import qualified Data.Set as Set
 import           Data.Word(Word64)
 import           Data.Text(Text)
 import qualified Data.Text as Text
-import           Data.Text.Read(decimal)
-import           Data.Text.Encoding(decodeUtf8,encodeUtf8)
-
-import           Data.ByteString (ByteString)
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Char8 as B
 
 import           Foreign (Ptr)
-import           Data.Ord(comparing)
-import           Data.List(unfoldr,minimumBy)
-import           Data.Vector (Vector)
 import qualified Data.Vector as Vector
-import qualified Data.Vector.Mutable as IOVector
 import           Data.IORef(IORef,readIORef,writeIORef,
-                            modifyIORef,modifyIORef',newIORef,
-                            atomicModifyIORef')
+                            modifyIORef,modifyIORef',newIORef)
 
 import            Control.Concurrent
                     ( MVar, newEmptyMVar, putMVar, takeMVar, forkIO )
@@ -106,7 +94,6 @@ import           Control.Concurrent (killThread, ThreadId)
 import           Control.Concurrent.STM (atomically, takeTMVar)
 import           Control.Monad(when,forever)
 import           Control.Exception
-import           MonadLib(ExceptionT,runExceptionT,raise,lift)
 import           System.Timeout(timeout)
 
 
@@ -130,7 +117,8 @@ data Debugger = Debugger
   , dbgIdleReason :: {-# UNPACK #-} !(IORef IdleReason)
     -- ^ Why are we not running
 
-  , dbgStateVM   :: {-# UNPACK #-} !(IORef VMState) -- ^ The interpreter state
+  , dbgStateVM   :: {-# UNPACK #-} !(IORef VMState)
+    -- ^ The interpreter state
 
   , dbgBreaks    :: {-# UNPACK #-}
                           !(IORef (Map (Int,FunId) (Maybe BreakCondition)))
@@ -145,603 +133,47 @@ data Debugger = Debugger
     {- ^ When a chunk is loaded, we added a break point at the beginning
          of each of the functions in the corresponding entry in the map.
          The break points at key 'Nothing' are added to the first chunk
-         tath is loaded. -}
+         that is loaded. -}
 
   , dbgWatches   :: {-# UNPACK #-} !(IORef WatchList)
+    -- ^ Monitored locations.
 
   , dbgExportable :: {-# UNPACK #-} !(IORef ExportableState)
     -- ^ Things that may be expanded further.
 
-    -- ^ Types
   , dbgDeclaredTypes :: {-# UNPACK #-} !(IORef GlobalTypeMap)
+    -- ^ Types
   }
 
 
-type SpecType = Spec.ValDecl Spec.Parsed
-type SpecDecl = Spec.Decl Spec.Parsed
-
-
+--------------------------------------------------------------------------------
+-- | Tell the user why we stopped.
 data IdleReason = Ready
                 | ReachedBreakPoint
                 | ThrowingError Value
                 | Executing
 
+-- | Modify the paused setting.
+setIdleReason :: Debugger -> IdleReason -> IO ()
+setIdleReason Debugger { .. } x = writeIORef dbgIdleReason x
+--------------------------------------------------------------------------------
+
+
+-- | Conditional break points.
 data BreakCondition = BreakCondition
   { brkCond :: CompiledStatment
     -- ^ Use this to evaluate the condition
+
   , brkText :: Text
     -- ^ Use this to display the condition
+
   , brkActive :: IORef (Maybe Bool)
     -- ^ Did we alerady check this condition.
   }
 
 
 --------------------------------------------------------------------------------
--- The watch list
 
-data WatchList = WatchList
-  { wlNextId :: !Int
-  , wlItems  :: !(IntMap ValuePath)
-  }
-
-watchListEmpty :: WatchList
-watchListEmpty = WatchList { wlNextId = 0, wlItems = IntMap.empty }
-
-watchListToList :: WatchList -> [(Int,ValuePath)]
-watchListToList WatchList { .. } = IntMap.toList wlItems
-
-watchListExtend :: ValuePath -> WatchList -> (Int,WatchList)
-watchListExtend vp WatchList { .. } =
-  (wlNextId, WatchList { wlNextId = 1 + wlNextId
-                       , wlItems  = IntMap.insert wlNextId vp wlItems
-                       })
-
-watchListRemove :: Int -> WatchList -> WatchList
-watchListRemove n WatchList { .. } =
-  WatchList { wlItems = IntMap.delete n wlItems, .. }
-
-
-
---------------------------------------------------------------------------------
-
---------------------------------------------------------------------------------
--- Keeping track of expand/collapsed state of references
-
-data ExportableState = ExportableState
-  { expNextThing    :: !Integer
-  , expClosed       :: Map Integer Exportable
-  , openThreads     :: !(Set Int)
-    -- ^ Reference ids of the threads that have been expended.
-    -- We keep an int instead of the actual reference, so that the reference
-    -- can be garbage collected if it finished.
-  }
-
-newExportableState :: ExportableState
-newExportableState = ExportableState { expNextThing = 0
-                                     , expClosed = Map.empty
-                                     , openThreads = Set.empty
-                                     }
-
-data Exportable = ExportableValue ValuePath Value
-                    -- ^ a collapsed value that may be
-
-                | ExportableStackFrame Int ExecEnv
-                  -- ^ A collapse stack frame for a function call
-
-data ValuePath
-  = VP_Field ValuePath Value -- ^ path to value indexed by given key
-  | VP_Key   ValuePath Value -- ^ path to actual key
-  | VP_CUpvalue ValuePath Int -- ^ path to upvalues of a closure
-  | VP_MetaTable ValuePath
-  | VP_Register ExecEnv Int
-  | VP_Upvalue ExecEnv Int
-  | VP_Varargs ExecEnv Int
-  | VP_Registry Value
-  | VP_None
-
-
-
-showValuePath :: ValuePath -> String
-showValuePath = flip go ""
-  where
-  go (VP_Key p v) = go p . showChar '{' . showString (prettyValue v) . showChar '}'
-  go (VP_Field p v) = go p . showChar '[' . showString (prettyValue v) . showChar ']'
-  go (VP_MetaTable p) = go p . showString ".MT"
-  go (VP_Register _env n)= showString ("R["++show (n+1)++"]")
-  go (VP_CUpvalue p n) = go p . showString (".U["++show (n+1)++"]")
-  go (VP_Upvalue _env n) = showString ("U["++show (n+1)++"]")
-  go (VP_Varargs _env n) = showString ("{...}["++show (n+1)++"]")
-  go VP_Registry{}       = showString "REGISTRY"
-  go VP_None    = showString "none"
-
-
--- | Get the value referenced by the given path, if any.
-getValue :: ValuePath -> IO (Maybe Value)
-getValue vp0 = do res <- runExceptionT (getVal vp0)
-                  case res of
-                    Left _  -> return Nothing
-                    Right a -> return (Just a)
-  where
-  getVal :: ValuePath -> ExceptionT () IO Value
-  getVal vp =
-    case vp of
-
-      VP_Field vp' key ->
-        do val <- getVal vp'
-           case val of
-             Table ref -> lift (getTableRaw ref key)
-             _         -> raise ()
-
-      VP_Key vp' key ->
-        do val <- getVal vp'
-           case val of
-             Table _  -> return key  -- XXX: Should we check that key present?
-             _        -> raise ()
-
-      VP_CUpvalue vp' n ->
-        do val <- getVal vp'
-           case val of
-             Closure ref ->
-                do let ups = cloUpvalues (referenceVal ref)
-                   if 0 <= n && n < IOVector.length ups
-                     then lift (readIORef =<< IOVector.read ups n)
-                     else raise ()
-             _ -> raise ()
-
-      VP_MetaTable vp' ->
-        do val <- getVal vp'
-           case val of
-             Table r -> do mb <- lift $ getTableMeta r
-                           case mb of
-                             Just tr -> return (Table tr)
-                             Nothing -> raise ()
-             UserData r ->
-               do mb <- lift (readIORef (userDataMeta (referenceVal r)))
-                  case mb of
-                    Just tr -> return (Table tr)
-                    Nothing -> raise ()
-             _ -> raise () -- XXX: Does anything else have a metatable?
-
-      VP_Register eenv n ->
-        case eenv of
-          ExecInLua lenv ->
-            do mb <- lift (getMb lenv n)
-               case mb of
-                 Just r  -> lift (readIORef r)
-                 Nothing -> raise ()
-
-          ExecInC cenv ->
-            do mb <- lift (SV.getMaybe (cExecStack cenv) n)
-               case mb of
-                 Just r  -> return r
-                 Nothing -> raise ()
-
-      VP_Upvalue eenv n ->
-        let us = execUpvals eenv
-        in if 0 <= n && n < IOVector.length us
-             then lift (readIORef =<< IOVector.read us n)
-             else raise ()
-
-      VP_Varargs eenv n ->
-        case eenv of
-          ExecInLua lenv ->
-             do varargs <- lift (readIORef (luaExecVarargs lenv))
-                case drop n varargs of
-                  r:_ -> return r
-                  []  -> raise ()
-          _ -> raise ()
-
-      VP_Registry registry -> return registry
-
-      VP_None -> raise ()
-
-
-
-
-setValue :: ValuePath -> Value -> IO ()
-setValue vp v =
-  case vp of
-    VP_Field vp' key   -> getValue vp' `andThen` setField key
-    VP_Key   vp' key   -> getValue vp' `andThen` setKey   key
-    VP_CUpvalue vp' n  -> getValue vp' `andThen` setCUpval n
-    VP_MetaTable vp'   -> getValue vp' `andThen` setMeta
-    VP_Register env n  -> setReg n env
-    VP_Upvalue  env n  -> setUVal n env
-    VP_Varargs env n   -> setVArg n env
-                                    -- or put the var-args in a reference.
-    VP_Registry{}      -> return () -- not currently supported
-    VP_None            -> return ()
-
-
-  where
-  andThen :: IO (Maybe a) -> (a -> IO ()) -> IO ()
-  andThen thing k =
-    do res <- thing
-       case res of
-         Nothing -> return ()
-         Just a  -> k a
-
-  setField key val =
-    case val of
-      Table ref -> setTableRaw ref key v
-      _         -> return ()
-
-  -- Note that this if the new key clashes with another key,
-  -- the value at the other key will be lost
-  setKey key val =
-    case val of
-      Table ref -> do f <- getTableRaw ref key
-                      setTableRaw ref key Nil
-                      setTableRaw ref v f
-      _ -> return ()
-
-  setCUpval n val =
-    case val of
-      Closure ref ->
-        do let ups = cloUpvalues (referenceVal ref)
-           when (0 <= n && n < IOVector.length ups) $
-              do r <- IOVector.read ups n
-                 writeIORef r v
-
-      _ -> return ()
-
-  setMeta val =
-    case v of
-      Nil     -> doSetMeta val Nothing
-      Table r -> doSetMeta val (Just r)
-      _       -> return ()
-
-  doSetMeta val mb1 =
-    case val of
-      Table ref    -> setTableMeta ref mb1
-      UserData ref -> writeIORef (userDataMeta (referenceVal ref)) mb1
-      _            -> return ()
-
-  setReg n eenv =
-    case eenv of
-      ExecInLua lenv ->
-       do mb <- getMb lenv n
-          case mb of
-            Just r  -> writeIORef r v
-            Nothing -> return ()
-
-      ExecInC cenv -> SV.setMaybe (cExecStack cenv) n v
-
-  setUVal n env =
-    let uvs = execUpvals env
-    in when (0 <= n && n < IOVector.length uvs) $
-          do r <- IOVector.read uvs n
-             writeIORef r v
-
-  setVArg n env =
-    case env of
-      ExecInLua lenv ->
-        modifyIORef' (luaExecVarargs lenv) $ \varargs ->
-          case splitAt n varargs of
-            (a,_:b) -> a++v:b
-            _       -> varargs
-
-      _ -> return ()
-
-
-getMb :: LuaExecEnv -> Int -> IO (Maybe (IORef Value))
-getMb lenv n = if n >= IOVector.length (luaExecRegs lenv) || n < 0
-                    then return Nothing
-                    else Just <$> IOVector.unsafeRead (luaExecRegs lenv) n
-
---------------------------------------------------------------------------------
-
--- | Identifies an execution environment>
--- This is used when we resolve name references.
-
-data ExecEnvId = StackFrameExecEnv !Integer
-                 -- ^ Exportable id of a stack frame
-
-               | ThreadExecEnv !Int
-                 -- ^ Reference id of a thread object
-
-               | ClosureEnvId !Int
-                 -- ^ Reference id of a closure object
-
-                 deriving Show
-
-exportExecEnvId :: ExecEnvId -> Text
-exportExecEnvId eid =
-  Text.pack $
-  case eid of
-    StackFrameExecEnv n -> "s_" ++ show n
-    ThreadExecEnv n     -> "t_" ++ show n
-    ClosureEnvId n      -> "c_" ++ show n
-
-importExecEnvId :: Text -> Maybe ExecEnvId
-importExecEnvId txt =
-  case Text.splitAt 2 txt of
-    ("s_", s) | Just n <- num s -> Just (StackFrameExecEnv n)
-    ("t_", s) | Just n <- num s -> Just (ThreadExecEnv n)
-    ("c_", s) | Just n <- num s -> Just (ClosureEnvId n)
-    _                           -> Nothing
-  where
-  num s = case decimal s of
-            Right (a,"") -> Just a
-            _            -> Nothing
-
-findNameResolveEnv :: Debugger -> VM -> ExecEnvId -> IO (FunId, NameResolveEnv)
-findNameResolveEnv dbg vm eid =
-  do metaTabs <- readIORef $ machMetatablesRef $ vmMachineEnv vm
-     case eid of
-       StackFrameExecEnv sid ->
-         do ExportableState { expClosed } <- readIORef (dbgExportable dbg)
-            case Map.lookup sid expClosed of
-              Just (ExportableStackFrame _ env) ->
-                execEnvToNameResolveEnv metaTabs env
-              _ -> nameResolveException ("Invalid stack frame: " ++ show sid)
-
-       ThreadExecEnv tid ->
-         do mb <- lookupRef (vmAllocRef vm) tid
-            case mb of
-              Nothing  -> nameResolveException "Invalid thread."
-              Just ref ->
-                do eenv <- getThreadField stExecEnv ref
-                   execEnvToNameResolveEnv metaTabs eenv
-
-       ClosureEnvId cid ->
-         do mb <- lookupRef (vmAllocRef vm) cid
-            case mb of
-              Nothing  -> nameResolveException "Invalid closure."
-              Just ref ->
-                do let closure = referenceVal ref
-                   closureToResolveEnv metaTabs closure
-
-closureToResolveEnv ::
-  TypeMetatables -> Closure -> IO (FunId, NameResolveEnv)
-closureToResolveEnv metaTabs c =
-  do (fid,func) <- case luaOpCodes (cloFun c) of
-                     Just (fid,func) -> return (fid,func)
-                     _ -> nameResolveException "Not in a Lua function."
-     let sz = funcMaxStackSize func
-     stack <- IOVector.replicateM sz (newIORef Nil)
-     ups <- Vector.freeze (cloUpvalues c)
-     let nre = NameResolveEnv
-                 { nrUpvals   = ups
-                 , nrStack    = stack
-                 , nrFunction = func
-                 , nrMetas    = metaTabs
-                 }
-     return (fid, nre)
-
-execEnvToNameResolveEnv ::
-  TypeMetatables -> ExecEnv -> IO (FunId, NameResolveEnv)
-execEnvToNameResolveEnv metaTabs eenv =
-  case eenv of
-    ExecInLua lenv ->
-     do ups <- Vector.freeze (luaExecUpvals lenv)
-        let nre = NameResolveEnv
-                    { nrUpvals   = ups
-                    , nrStack    = luaExecRegs lenv
-                    , nrFunction = luaExecFunction lenv
-                    , nrMetas    = metaTabs
-                    }
-
-        nre `seq` return (luaExecFID lenv, nre)
-    ExecInC {} -> nameResolveException "Not in a Lua function."
-
-
-resolveName :: Debugger -> ExecEnvId -> Maybe Int -> NameId ->
-                IO (Either NotFound (String,Value,Maybe GlobalTypeEntry))
-resolveName dbg eid pc nid =
-  whenStable dbg False $
-  whenNotFinishied dbg (Left $ NotFound "Not executing") $ \vm _ ->
-  try $
-  do (fid, resEnv) <- findNameResolveEnv dbg vm eid
-     chunks        <- readIORef (dbgSources dbg)
-
-     chunk <- case getRoot fid of
-                Nothing   -> nameResolveException "Empty function?"
-                Just cid  ->
-                  case Map.lookup cid (topLevelChunks chunks) of
-                    Nothing -> nameResolveException "Invalid context."
-                    Just c  -> return c
-
-     name <- case Map.lookup nid (srcNames (chunkSource chunk)) of
-               Nothing -> nameResolveException "Invalid name idnentifier."
-               Just e  -> return e
-
-
-     let en = exprName name
-     v <- exprToValue resEnv pc en
-     mbG <- globalInfo resEnv pc en
-     mbT <- case mbG of
-              Nothing -> return Nothing
-              Just (g,revSel) ->
-                do ds <- readIORef (dbgDeclaredTypes dbg)
-                   return (lookupGlobal ds g (reverse revSel))
-     return (ppExprName en, v, mbT)
-
-
-
-newtype GlobalTypeMap = GTM (Map ByteString GlobalTypeEntry)
-data GlobalTypeEntry  = GlobalType [SpecType] | GlobalNamespace GlobalTypeMap
-
-
-makeGlobalTypeMap :: [SpecDecl] -> GlobalTypeMap
-makeGlobalTypeMap = mk . mapMaybe decl
-  where
-  nm x = encodeUtf8 (Spec.nameText x)
-
-  decl d = case d of
-             Spec.DClass {}     -> Nothing
-             Spec.DType {}      -> Nothing
-             Spec.DNamespace ns -> Just (namespace ns)
-             Spec.DValDecl vd   -> Just (valDecl vd)
-
-  valDecl vd = (nm (Spec.valName vd), GlobalType [vd])
-
-  jn (GlobalType xs) (GlobalType ys) = GlobalType (xs ++ ys)
-  jn (GlobalNamespace (GTM x)) (GlobalNamespace (GTM y)) =
-      GlobalNamespace (GTM (Map.unionWith jn x y))
-  jn x _ = x -- XXX: shouldn't happen
-
-  mk = GTM . Map.fromListWith jn
-
-  namespace x =
-    ( nm (Spec.namespaceName x)
-    , GlobalNamespace $ mk $ map valDecl (Spec.namespaceMembers x) ++
-                             map namespace (Spec.namespaceNested x)
-    )
-
-
-
-
-lookupGlobal ::
-  GlobalTypeMap -> ByteString -> [ByteString] -> Maybe GlobalTypeEntry
-lookupGlobal (GTM mp) x ls =
-  do ent <- Map.lookup x mp
-     case ls of
-       [] -> Just ent
-       l : more ->
-          case ent of
-            GlobalType _        -> Nothing
-            GlobalNamespace mp1 -> lookupGlobal mp1 l more
-
-
-
---------------------------------------------------------------------------------
-
--- | All loaded top-level functions.
-data Chunks = Chunks
-  { topLevelChunks :: Map Int ChunkInfo
-    -- ^ The key is the chunk id.  The top-level id for chunk @k@ is @[k]@.
-  , allFunNames    :: Map FunId FunVisName
-  }
-
-data FunVisName = FunVisName
-                    { funVisName        :: !(Maybe Text)
-                    , funVisLineStart   :: !Int
-                    , funVisLineEnd     :: !Int
-                    , funVisFile        :: !(Maybe Text)
-                    }
-
-
-data ChunkInfo = ChunkInfo
-  { chunkSource   :: Source
-  , chunkFunction :: Function
-  , chunkLineInfo :: Map Int [(FunId,[Int])]
-    -- ^ Map line numbers to the (function & pc) pair that occupies it.
-  }
-
-
-
-addTopLevel ::
-  Maybe String -> ByteString -> Int -> Function -> Chunks -> Chunks
-addTopLevel mbName bytes cid fun Chunks { .. } =
-  Chunks { topLevelChunks = Map.insert cid newChunk topLevelChunks
-         , allFunNames = foldr (uncurry Map.insert)
-                               (Map.insert (rootFun cid) chunkName allFunNames)
-                             $ concat
-                             $ unfoldr nextFun [(rootFun cid,fun)]
-         }
-  where
-  bytes'
-    | B.isPrefixOf "\ESCLua" bytes = B.empty
-    | otherwise                    = bytes
-
-  newChunk =
-    ChunkInfo { chunkSource   = lexSourceFile cid mbName bytes'
-              , chunkFunction = fun
-              , chunkLineInfo = fmap (\xs -> [ (subFun path cid,n) | (path,n) <- xs ])
-                                       $ deepLineNumberMap fun
-              }
-
-  chunkName = FunVisName { funVisName      = Just "(top level)"
-                         , funVisLineStart = 1
-                         , funVisLineEnd   = length (B.lines bytes)
-                         , funVisFile      = Text.pack <$> mbName
-                         }
-
-
-  nextFun todo =
-    case todo of
-      []             -> Nothing
-      ((fid,f) : fs) -> Just (out,new ++ fs)
-        where
-        protos    = zip [ 0 .. ] (Vector.toList (funcNested f))
-        subNames  = Map.fromList (inferSubFunctionNames f)
-        out       = [ (subFun fid i, funVisName (Map.lookup i subNames) sf)
-                                         | (i,sf) <- protos ]
-        new       = [ (subFun fid i, sf) | (i,sf) <- protos ]
-
-
-  funVisName mb f = FunVisName
-    { funVisName      = decodeUtf8 <$> mb
-    , funVisLineStart = funcLineDefined f
-    , funVisLineEnd   = funcLastLineDefined f
-    , funVisFile      = fmap Text.pack mbName
-    }
-
-
-
-
--- | Source code for a chunk.
-data Source = Source { srcName  :: Maybe String
-                     , srcLines :: Vector Line
-                     , srcNames :: Map NameId LocatedExprName
-                     }
-
-
--- | Syntax high-lighting for a source file.
-lexSourceFile :: Int -> Maybe String -> ByteString -> Source
-lexSourceFile chunkId srcName bytes = Source { srcName, srcLines, srcNames }
-  where (srcLines,srcNames) = lexChunk chunkId (fromMaybe "" srcName) bytes
-
--- | Keep track of the source code for loaded modules.
-addSourceFile :: IORef CommandLineBreakPoints ->
-                 IORef (Map (Int,FunId) (Maybe BreakCondition)) ->
-                 IORef Chunks ->
-                 Maybe String -> ByteString -> Int -> Function -> IO ()
-addSourceFile brks breakRef sources mbName bytes cid fun =
-  do modifyIORef' sources (addTopLevel mbName bytes cid fun)
-     todo <- atomicModifyIORef' brks $ \brkPoints ->
-              let del _ _    = Nothing
-                  (mb1,brk1) = Map.updateLookupWithKey del "" brkPoints
-                  (mb2,brk2) =
-                    case mbName of
-                      Nothing -> (Nothing, brk1)
-                      Just s  -> Map.updateLookupWithKey del s brk1
-              in (brk2, concat (maybeToList mb1 ++ maybeToList mb2 ))
-     Chunks { topLevelChunks } <- readIORef sources
-     case Map.lookup cid topLevelChunks of
-       Nothing -> return () -- should not happen
-       Just c  ->
-         do let lineInfo = chunkLineInfo c
-                newBrk   = catMaybes [ findClosest lineInfo ln | ln <- todo ]
-            modifyIORef' breakRef $ \old -> foldr addBrk old newBrk
-
-  where
-  addBrk b mp = Map.insertWith (\_ y -> y) b Nothing mp
-
-  -- Line 0 is special cased to stop on the first instruction of a chunk.
-  findClosest _ 0 = Just (0, rootFun cid)
-
-  findClosest info ln =
-    chooseExactLoc $
-    case Map.splitLookup ln info of
-      (_,Just b,_) -> b
-      (_,_,bigger)  | Just (a,_) <- Map.minView bigger  -> a
-      (smaller,_,_) | Just (a,_) <- Map.maxView smaller -> a
-      _ -> []
-
-
-  choosePC :: (FunId,[Int]) -> Maybe (Int,FunId)
-  choosePC (fid,pcs)
-    | null pcs  = Nothing
-    | otherwise = Just (minimum pcs, fid)
-
-  chooseExactLoc :: [ (FunId,[Int]) ] -> Maybe (Int,FunId)
-  chooseExactLoc funs =
-    case funs of
-      []   -> Nothing
-      [x]  -> choosePC x
-      many -> choosePC (minimumBy (comparing (funNestDepth . fst)) many)
 
 
 newEmptyDebugger :: MVar ThreadId -> Options -> IO (Ptr (), Debugger)
@@ -798,12 +230,46 @@ newEmptyDebugger threadVar opts =
 
 
 
-setIdleReason :: Debugger -> IdleReason -> IO ()
-setIdleReason Debugger { .. } x = writeIORef dbgIdleReason x
+
+
 
 
 --------------------------------------------------------------------------------
 -- Entry points
+
+resolveName :: Debugger -> ExecEnvId -> Maybe Int -> NameId ->
+                IO (Either NotFound (String,Value,Maybe GlobalTypeEntry))
+resolveName dbg eid pc nid =
+  whenStable dbg False $
+  whenNotFinishied dbg (Left $ NotFound "Not executing") $ \vm _ ->
+  try $
+  do (fid, resEnv) <- findNameResolveEnv (dbgExportable dbg) vm eid
+     chunks        <- readIORef (dbgSources dbg)
+
+     chunk <- case getRoot fid of
+                Nothing   -> nameResolveException "Empty function?"
+                Just cid  ->
+                  case Map.lookup cid (topLevelChunks chunks) of
+                    Nothing -> nameResolveException "Invalid context."
+                    Just c  -> return c
+
+     name <- case Map.lookup nid (srcNames (chunkSource chunk)) of
+               Nothing -> nameResolveException "Invalid name idnentifier."
+               Just e  -> return e
+
+
+     let en = exprName name
+     v <- exprToValue resEnv pc en
+     mbG <- globalInfo resEnv pc en
+     mbT <- case mbG of
+              Nothing -> return Nothing
+              Just (g,revSel) ->
+                do ds <- readIORef (dbgDeclaredTypes dbg)
+                   return (lookupGlobal ds g (reverse revSel))
+     return (ppExprName en, v, mbT)
+
+
+
 
 
 setPathValue :: Debugger -> Integer -> Value -> IO (Maybe ValuePath)
