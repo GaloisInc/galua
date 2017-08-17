@@ -30,6 +30,7 @@ library
                     Galua.Debugger.WatchList,
                     Galua.Debugger.Specs,
                     Galua.Debugger.Exportable,
+                    Galua.Debugger.StepMode,
                     Galua.Debugger.ResolveName,
                     Galua.Debugger.CommandQueue,
                     Galua.Debugger.Server,

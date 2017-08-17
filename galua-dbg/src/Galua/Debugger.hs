@@ -60,6 +60,7 @@ import           Galua.Debugger.WatchList
 import           Galua.Debugger.Specs
 import           Galua.Debugger.Exportable
 import           Galua.Debugger.ResolveName
+import           Galua.Debugger.StepMode
 
 import           Galua.Code
 import           Galua.Mach
@@ -175,7 +176,8 @@ data BreakCondition = BreakCondition
 --------------------------------------------------------------------------------
 
 
-
+-- | Allocate a new debugger structure and fork off a thread that
+-- listens for things to do.
 newEmptyDebugger :: MVar ThreadId -> Options -> IO (Ptr (), Debugger)
 newEmptyDebugger threadVar opts =
   do let chunks = Chunks { topLevelChunks = Map.empty
@@ -189,7 +191,7 @@ newEmptyDebugger threadVar opts =
      dbgBrkAddOnLoad <- newIORef (optBreakPoints opts)
      dbgBreaks       <- newIORef Map.empty
 
-     let query "port" = return (Number 8000)
+     let query "port" = return (Number 8000)    -- XXX:??
          query _      = return Nil
 
          cfg = MachConfig
@@ -224,13 +226,102 @@ newEmptyDebugger threadVar opts =
                         , dbgDeclaredTypes
                         }
 
-     _ <- forkIO (runDebugger dbg)
+     _ <- forkIO (forever (runDebugger dbg))
 
      return (cptr, dbg)
 
+-- | Handle a dommand for the debugger.
+runDebugger :: Debugger -> IO ()
+runDebugger dbg =
+  do cmd    <- waitForCommand (dbgCommand dbg)
+     mbMode <- handleCommand dbg True cmd
+     case mbMode of
+       Nothing   -> return ()
+       Just Stop -> return () -- already stopped
+       Just mode ->
+         do state <- readIORef (dbgStateVM dbg)
+            case state of
+              Running vm next ->
+                do setIdleReason dbg Executing
+                   let mode' = nextMode vm next mode
+                   vms <- doStepMode dbg vm next $! mode'
+                   writeIORef (dbgStateVM dbg) vms
+              _ -> return ()
+            clients  <- readIORef (dbgClients dbg)
+            writeIORef (dbgClients dbg) []
+            mapM_ (\client -> putMVar client ()) clients
 
 
 
+data DebuggerCommand =
+    StartExec StepMode (MVar ())
+    -- ^ Switch exetion to the given mode, or start executing if we were idle.
+
+  | AddClient (MVar ())
+
+  | TemporaryStop (IO ())
+    -- ^ Pause the debugger---if it was executing---and execute the
+    -- given IO action.  Once the action completes, the debugger will resume.
+
+  | WhenIdle (IO ())
+    -- ^ Execute the IO action, but only if the debugger is currently
+    -- not doing anything el
+
+
+handleCommand :: Debugger -> Bool -> DebuggerCommand -> IO (Maybe StepMode)
+handleCommand dbg isIdle cmd =
+  case cmd of
+    WhenIdle io        -> Nothing <$ when isIdle io
+    TemporaryStop m    -> Nothing <$ m
+    AddClient client   -> Nothing <$ modifyIORef (dbgClients dbg) (client :)
+    StartExec m client -> Just m  <$ modifyIORef (dbgClients dbg) (client :)
+
+
+
+doStepMode :: Debugger -> VM -> NextStep -> StepMode -> IO VMState
+doStepMode dbg vm next mode = oneStep' Cont { .. } vm next
+  where
+  runningInC !vm' =
+    do let luaTMVar = machLuaServer (vmMachineEnv vm')
+       res <- atomically $ Left  <$> waitForCommandSTM (dbgCommand dbg)
+                       <|> Right <$> takeTMVar luaTMVar
+       case res of
+         Left m ->
+           do command <- m
+              mbNewMode <- handleCommand dbg False command
+              doStepMode dbg vm' WaitForC (fromMaybe mode mbNewMode)
+
+         Right cResult ->
+           do next' <- handleCCallState vm' cResult
+              let mode' = nextMode vm' next' mode
+              checkStop dbg mode' (Running vm' next') $
+                doStepMode dbg vm' next' mode'
+
+
+
+  running !vm' !next' =
+    do mode' <- return $! nextMode vm' next' mode
+       checkStopError dbg vm' next' $
+         if not (mayPauseBefore next')
+           then doStepMode dbg vm' next' mode'
+           else checkStop dbg mode' (Running vm' next') $
+                checkBreakPoint dbg mode' vm' next' $
+                do mb <- peekCmd (dbgCommand dbg)
+                   case mb of
+                     Nothing      -> doStepMode dbg vm' next' mode'
+                     Just command ->
+                       do mbNewMode <- handleCommand dbg False command
+                          let mode'' = fromMaybe mode' mbNewMode
+                          -- external stop directive and we're already
+                          -- at a safe point
+                          checkStop dbg mode'' (Running vm' next') $
+                            doStepMode dbg vm' next' mode''
+
+  finishedOk vs       = return $! FinishedOk vs
+  finishedWithError v = return $! FinishedWithError v
+
+
+--------------------------------------------------------------------------------
 
 
 
@@ -362,8 +453,6 @@ poll dbg _ secs =
      getCommandCount (dbgCommand dbg)
 
 
---------------------------------------------------------------------------------
-
 
 addBreakPoint ::
   Debugger -> (Int,FunId) -> Maybe Text -> IO (Maybe BreakCondition)
@@ -393,7 +482,7 @@ lookupFID dbg fid =
     [] -> fail "Invalid chunk"
     r : rs ->
       do chunks <- readIORef (dbgSources dbg)
-         case (go rs . chunkFunction) =<< Map.lookup r (topLevelChunks chunks) of
+         case go rs . chunkFunction =<< Map.lookup r (topLevelChunks chunks) of
            Nothing  -> fail "Invalid chunk."
            Just fun -> return fun
   where
@@ -411,129 +500,6 @@ clearBreakPoints dbg@Debugger { dbgBreaks } =
   whenStable dbg True $ writeIORef dbgBreaks Map.empty
 
 
-
-data StepMode
-  = Run
-    -- ^ Evaluate until something causes us to stop.
-
-  | StepIntoOp
-    -- ^ Evaluate one op-code.
-    -- If the op-code is a function call, stop at the beginning of the
-    -- function.
-
-  | StepOverOp
-    -- ^ Evaluate one op-code.
-    -- If the op-code is a function call, do not stop until the function
-    -- returns, or something else causes us to stop.
-
-  | StepOutOp
-    -- ^ Finish evaluating the current code, step over function calls
-
-  | Stop
-    -- ^ Evaluate until the closest safe place to stop.
-
-  | StepOut StepMode
-    -- ^ Evaluate until we return from the current function.
-    -- After that, procdeed with the given mode.
-
-
-  | StepOverLine {-# UNPACK #-} !Int
-    -- ^ Evaluate while we are on this line number.
-    -- If we encoutner functions, do not stop until they return
-    -- or some other condition caused us to stop.
-
-  | StepIntoLine {-# UNPACK #-} !Int
-    -- ^ Evaluate while we are on this line number.
-    -- ^ If we encoutner a function-call, then we stop at the beginning
-    -- of the called function.
-
-  | StepOutYield StepMode
-    -- ^ Evaluate until the current thread yeilds (or something else
-    -- causes us to stop).
-    -- After that, proceed with the given mode.
-
-  deriving (Eq, Show)
-
-runDebugger :: Debugger -> IO ()
-runDebugger dbg =
-  forever $
-    do cmd    <- waitForCommand (dbgCommand dbg)
-       mbMode <- handleCommand dbg True cmd
-       case mbMode of
-         Nothing   -> return ()
-         Just Stop -> return () -- already stopped
-         Just mode ->
-           do state <- readIORef (dbgStateVM dbg)
-              case state of
-                Running vm next ->
-                  do setIdleReason dbg Executing
-                     let mode' = nextMode vm next mode
-                     vms <- doStepMode dbg vm next $! mode'
-                     writeIORef (dbgStateVM dbg) vms
-                _ -> return ()
-              clients  <- readIORef (dbgClients dbg)
-              writeIORef (dbgClients dbg) []
-              mapM_ (\client -> putMVar client ()) clients
-
-
-handleCommand :: Debugger -> Bool -> DebuggerCommand -> IO (Maybe StepMode)
-handleCommand dbg isIdle cmd =
-  case cmd of
-    WhenIdle io        -> Nothing <$ when isIdle io
-    TemporaryStop m    -> Nothing <$ m
-    AddClient client   -> Nothing <$ modifyIORef (dbgClients dbg) (client :)
-    StartExec m client -> Just m  <$ modifyIORef (dbgClients dbg) (client :)
-
-
--- | Returns 0 if there was no line number associated with this PC getLineNumberForCurFunPC :: VM -> Int -> Int
-getLineNumberForCurFunPC :: VM -> Int -> Int
-getLineNumberForCurFunPC vm pc =
-  case vmCurExecEnv vm of
-    ExecInLua lenv -> fromMaybe 0 (lookupLineNumber (luaExecFunction lenv) pc)
-    ExecInC {}     -> 0
-
-
-doStepMode :: Debugger -> VM -> NextStep -> StepMode -> IO VMState
-doStepMode dbg vm next mode = oneStep' Cont { .. } vm next
-  where
-  runningInC !vm' =
-    do let luaTMVar = machLuaServer (vmMachineEnv vm')
-       res <- atomically $ Left  <$> waitForCommandSTM (dbgCommand dbg)
-                       <|> Right <$> takeTMVar luaTMVar
-       case res of
-         Left m ->
-           do command <- m
-              mbNewMode <- handleCommand dbg False command
-              doStepMode dbg vm' WaitForC (fromMaybe mode mbNewMode)
-
-         Right cResult ->
-           do next' <- handleCCallState vm' cResult
-              let mode' = nextMode vm' next' mode
-              checkStop dbg mode' (Running vm' next') $
-                doStepMode dbg vm' next' mode'
-
-
-
-  running !vm' !next' =
-    do mode' <- return $! nextMode vm' next' mode
-       checkStopError dbg vm' next' $
-         if not (mayPauseBefore next')
-           then doStepMode dbg vm' next' mode'
-           else checkStop dbg mode' (Running vm' next') $
-                checkBreakPoint dbg mode' vm' next' $
-                do mb <- peekCmd (dbgCommand dbg)
-                   case mb of
-                     Nothing      -> doStepMode dbg vm' next' mode'
-                     Just command ->
-                       do mbNewMode <- handleCommand dbg False command
-                          let mode'' = fromMaybe mode' mbNewMode
-                          -- external stop directive and we're already
-                          -- at a safe point
-                          checkStop dbg mode'' (Running vm' next') $
-                            doStepMode dbg vm' next' mode''
-
-  finishedOk vs = return $! FinishedOk vs
-  finishedWithError v = return $! FinishedWithError v
 
 
 checkStop :: Debugger -> StepMode -> VMState -> IO VMState -> IO VMState
@@ -594,122 +560,6 @@ checkBreakPoint dbg mode vm nextStep k =
                return (Running vm nextStep)
 
 
--- | Before executing this "step" we may pause execution.
-mayPauseBefore :: NextStep -> Bool
-mayPauseBefore nextStep =
-  case nextStep of
-    Goto{}        -> True
-    ApiStart{}    -> True
-    ApiEnd{}      -> True
-    _             -> False
-
-
-{-# INLINE nextMode #-}
-nextMode :: VM -> NextStep -> StepMode -> StepMode
-
-nextMode _ (Interrupt _) _ = Stop
-
-nextMode vm step mode =
-  case mode of
-
-    Stop                -> Stop
-
-    StepIntoOp ->
-      case step of
-        Goto    {}      -> Stop
-        ApiStart{}      -> Stop
-        ApiEnd {}       -> Stop
-        _               -> mode
-
-    StepOverOp ->
-      case step of
-        Goto    {}      -> StepOutOp
-        ApiStart{}      -> StepOutOp
-        ApiEnd {}       -> StepOutOp
-        FunCall {}      -> StepOut StepOutOp      -- shouldn't happen
-        Resume  {}      -> StepOutYield StepOutOp -- shouldn't happen
-        _               -> mode
-
-    StepOutOp ->
-      case step of
-        Goto    {}      -> Stop
-        ApiStart{}      -> Stop
-        ApiEnd {}       -> Stop
-        FunCall {}      -> StepOut StepOutOp
-        Resume  {}      -> StepOutYield StepOutOp
-        _               -> mode
-
-    StepOut m ->
-      case step of
-        FunCall   {}    -> StepOut mode
-        ApiStart  {}    -> StepOut mode
-        Resume    {}    -> StepOutYield mode
-        FunReturn {}    -> m
-        ErrorReturn {}  -> m
-        ApiEnd    {}    -> m
-
-        -- ThreadExit and ThreadFail can't happen, because we should have
-        -- first reached the end of the function that we are trying to exit,
-        -- and stopped at that point
-
-        _               -> mode
-
-    StepIntoLine n ->
-      case step of
-        FunCall {}      -> Stop
-        FunTailcall {}  -> Stop
-        FunReturn {}    -> Stop
-        ErrorReturn {}  -> Stop
-        ApiStart {}     -> Stop
-        ApiEnd {}       -> Stop
-        Goto pc
-          | n >= 0 && n /= l -> Stop
-          | otherwise        -> StepIntoLine l
-          where l = getLineNumberForCurFunPC vm pc
-
-        _ -> mode
-
-    StepOverLine n ->
-      case step of
-        FunCall {}      -> StepOut mode
-        FunTailcall {}  -> StepOut mode
-        FunReturn {}    -> Stop
-        ErrorReturn {}  -> Stop
-        ApiStart {}     -> StepOut mode
-        ApiEnd {}       -> Stop
-        Resume {}       -> StepOutYield mode
-        Goto pc
-          | n >= 0 && n /= l -> Stop
-          | otherwise        -> StepOverLine l
-          where l = getLineNumberForCurFunPC vm pc
-
-        _ -> mode
-
-    StepOutYield m ->
-      case step of
-        Yield {}        -> m
-        ThreadExit {}   -> m
-        ThreadFail {}   -> m
-        Resume {}       -> StepOutYield mode
-        _               -> mode
-
-    Run                 -> Run
-
-
-
-data DebuggerCommand =
-    StartExec StepMode (MVar ())
-    -- ^ Switch exetion to the given mode, or start executing if we were idle.
-
-  | AddClient (MVar ())
-
-  | TemporaryStop (IO ())
-    -- ^ Pause the debugger---if it was executing---and execute the
-    -- given IO action.  Once the action completes, the debugger will resume.
-
-  | WhenIdle (IO ())
-    -- ^ Execute the IO action, but only if the debugger is currently
-    -- not doing anything else.
 
 
 
