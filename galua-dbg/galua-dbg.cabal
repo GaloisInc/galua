@@ -34,7 +34,6 @@ library
                     Galua.Debugger.CommandQueue,
                     Galua.Debugger.Server,
                     Galua.Debugger.EmbedDirectory,
-                    Galua.Debugger.Tree,
                     Galua.Debugger.View,
                     Galua.Debugger.View.Utils,
                     Galua.Debugger.PrettySource,
@@ -43,7 +42,6 @@ library
                     Galua.Debugger.Console,
                     Galua.Debugger.View.Analysis,
                     Galua.Debugger.View.Spec,
-                    Galua.Debugger.View.MicroCode,
                     Galua.Debugger.NameHarness
 
   other-modules:    HexFloatFormat
