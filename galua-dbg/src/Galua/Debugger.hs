@@ -180,13 +180,10 @@ data BreakCondition = BreakCondition
 -- listens for things to do.
 newEmptyDebugger :: MVar ThreadId -> Options -> IO (Ptr (), Debugger)
 newEmptyDebugger threadVar opts =
-  do let chunks = Chunks { topLevelChunks = Map.empty
-                         , allFunNames    = Map.empty
-                         }
-     dbgCommand <- newCommandQueue
+  do dbgCommand <- newCommandQueue
 
      dbgClients <- newIORef []
-     dbgSources <- newIORef chunks
+     dbgSources <- newIORef blankChunks
      dbgWatches <- newIORef watchListEmpty
      dbgBrkAddOnLoad <- newIORef (optBreakPoints opts)
      dbgBreaks       <- newIORef Map.empty

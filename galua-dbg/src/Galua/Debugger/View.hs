@@ -38,7 +38,6 @@ import qualified Galua.Micro.Type.Primitives  as Analysis
 import qualified Galua.Micro.Type.Import as Analysis
 import qualified Galua.Micro.Type.Value  as Analysis
 import qualified Galua.Micro.Type.Eval   as Analysis
-import qualified Galua.Micro.Translate   as Analysis
 
 import Language.Lua.StringLiteral (constructStringLiteral)
 
@@ -263,7 +262,7 @@ analyze dbg n =
                        metas <- readIORef (machMetatablesRef menv)
                        (cid,gid,glob) <- Analysis.importClosure metas globalTable r
                        srcs <- readIORef (dbgSources dbg)
-                       let funs = expandSources (topLevelChunks srcs)
+                       let funs = allMicroFuns srcs
                            args = Analysis.initLuaArgList
                            prims = Analysis.buildPrimMap gid glob
                            res  = Analysis.analyze funs prims cid args glob
@@ -279,9 +278,6 @@ analyze dbg n =
            _ -> return Nothing
 
   where
-  expandSources     = foldr expandTop Map.empty . Map.toList
-  expandTop (r,f) m = Analysis.translateAll (rootFun r) (chunkFunction f) m
-
   save pre x = sequence_
                     [ writeFile (dotFile pre fid)
                                 (show $ Analysis.ppDot $ Analysis.functionCode fu) |

@@ -406,7 +406,11 @@ setList r vs = updLocal $ \s ->
 -- Does not return bottom
 getUpVal :: UpIx -> BlockM RegVal
 getUpVal u = do LocalState { upvals } <- getLocal
-                let r = Map.findWithDefault bottom u upvals
+                let r = Map.findWithDefault Top u upvals
+                {- NOTE: generally, upvalues should not be missing, however,
+                if we are analyzing some source code, and we have no info
+                about the up-values, it is simpler to pass an empty map,
+                rather than a map full of Top. -}
                 return (RegRef r)
 
 

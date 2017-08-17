@@ -1,6 +1,6 @@
 {-# LANGUAGE RecordWildCards, OverloadedStrings, NamedFieldPuns #-}
 {-# LANGUAGE TypeOperators #-}
-module Galua.Micro.Type.Import (importClosure) where
+module Galua.Micro.Type.Import (importClosure,importEnv) where
 
 import qualified Data.Vector as Vector
 import           Data.IORef(IORef,readIORef)
@@ -18,6 +18,29 @@ import qualified Galua.Value            as C hiding (getTableMeta)
 import           Galua.LuaString(toByteString)
 import qualified Galua.Micro.Type.Value as A -- abstract
 import           Galua.Code(UpIx(..))
+
+
+
+importEnv ::
+  C.TypeMetatables       {- ^ Type metatables      -} ->
+  C.Reference C.Table    {- ^ Global environment   -} ->
+  IO (A.TableId, A.GlobalState)
+    -- ^ Returns the name of the closure,
+    -- the name of the globals tables, and
+    -- the current state of Lua.
+importEnv metas envTable =
+  do let s0 = RW { nextName         = 0
+                 , importedUpVals   = []
+                 , importedTables   = Map.empty
+                 , importedClosures = Map.empty
+                 , globs            = A.bottom
+                 }
+     (gid, rw) <- runStateT s0 $ unM $
+                        do importMetas metas
+                           importTableRef envTable
+     return (gid, globs rw)
+
+
 
 
 importClosure ::

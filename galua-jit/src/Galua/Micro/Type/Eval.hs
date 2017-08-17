@@ -1,17 +1,17 @@
 {-# LANGUAGE RecordWildCards, NamedFieldPuns, GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
 module Galua.Micro.Type.Eval
-  ( analyze, Result(..), GlobalBlockName(..), QualifiedBlockName(..)
+  ( analyze, analyzeFun, Result(..), GlobalBlockName(..), QualifiedBlockName(..)
   , valueCasesM
   ) where
 
 import           Control.Monad
 import           Data.Map ( Map )
 import qualified Data.Map as Map
+import           Data.Set ( Set )
 import qualified Data.Set as Set
 import qualified Data.ByteString as BS
 import           Text.PrettyPrint
-import           Debug.Trace
 
 import Galua.Micro.AST
 import Galua.Micro.Type.Value
@@ -411,6 +411,36 @@ callFun mb as = case mb of
                         return next
 
 
+-- | Evaluate a call to a lua function
+evalFunId :: AnalysisM m =>
+            CallsiteId {- ^ Location of the call -} ->
+            FunId      {- ^ Lua function being called -} ->
+            Map UpIx (WithTop (Set RefId)) {- ^ Info about free vars -} ->
+            List Value {- ^ Info about arguments -} ->
+            GlobalState {- ^ Info about the global state -} ->
+            m (Either Value (List Value), GlobalState)
+evalFunId caller fid ups as glob =
+  do (next,s1) <- go EntryBlock State { localState = locals
+                                      , globalState = glob }
+     return (next, globalState s1)
+
+  where
+  locals = LocalState { env     = bottom
+                      , argReg  = as
+                      , listReg = bottom
+                      , upvals  = ups
+                      }
+  block b = GlobalBlockName caller (QualifiedBlockName fid b)
+
+  go b s  = do (next,s1) <- evalBlock (block b) s
+               case next of
+                 Continue      -> error "Continue"
+                 EnterBlock b1 -> go b1 s1
+                 RaiseError v  -> return (Left v, s1)
+                 ReturnWith xs -> return (Right xs, s1)
+
+
+
 
 evalFun :: AnalysisM m =>
             CallsiteId -> ClosureId -> List Value -> GlobalState ->
@@ -429,27 +459,10 @@ evalFun caller cid as glob =
            Just (PrimImpl prim) -> prim glob as
 
     OneValue (LuaFunImpl fid) ->
-      do let locals = LocalState
-                        { env     = bottom
-                        , argReg  = as
-                        , listReg = bottom
-                        , upvals  = functionUpVals funV
-                        }
-             block b = GlobalBlockName caller (QualifiedBlockName fid b)
-
-             go b s  =
-               do (next,s1) <- evalBlock (block b) s
-                  case next of
-                    Continue      -> error "Continue"
-                    EnterBlock b1 -> go b1 s1
-                    RaiseError v  -> return (Left v, s1)
-                    ReturnWith xs -> return (Right xs, s1)
-
-         (next,s1) <- go EntryBlock State { localState = locals
-                                          , globalState = glob }
-         return (next, globalState s1)
+      evalFunId caller fid (functionUpVals funV) as glob
   where
   funV = functions glob Map.! cid
+
 
 data Result = Result
   { resReturns      :: List Value
@@ -513,5 +526,26 @@ analyze funs prims cid args glob =
                       = singlePath funs prims
                       $ evalFun initialCaller cid args glob
 
+
+
+analyzeFun ::
+  Map FunId MicroFunction ->
+  Map CFun PrimImpl ->
+  FunId ->
+  Map UpIx (WithTop (Set RefId)) ->
+  List Value ->
+  GlobalState -> Result
+analyzeFun funs prims fid ups args glob =
+  Result { resReturns     = joins [ v | Right v <- nexts ]
+         , resRaises      = joins [ v | Left  v <- nexts ]
+         , resGlobals     = joins gs
+         , resStates      = states
+         , resBlockRaises = errs
+         }
+  where
+  (nexts,gs)          = unzip rss
+  (rss, states, errs, logs)
+                      = singlePath funs prims
+                      $ evalFunId initialCaller fid ups args glob
 
 

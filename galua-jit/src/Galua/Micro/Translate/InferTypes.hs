@@ -5,7 +5,7 @@ import qualified Data.Map as Map
 import Text.PrettyPrint
 
 import Galua.Value
-import Galua.Code(FunId)
+import Galua.Code(FunId,UpIx(..))
 import Galua.Pretty(pp)
 import Galua.Mach(TypeMetatables)
 import Galua.Micro.AST(MicroFunction,BlockName)
@@ -14,10 +14,31 @@ import Galua.Micro.Type.Value( GlobalBlockName(..), QualifiedBlockName(..)
                              , initLuaArgList,State(..)
                              , LocalState
                              , (\/)
+                             , WithTop(..)
                              )
-import Galua.Micro.Type.Import(importClosure)
+import Galua.Micro.Type.Import(importClosure,importEnv)
 import Galua.Micro.Type.Primitives(buildPrimMap)
-import Galua.Micro.Type.Eval(analyze,Result(..))
+import Galua.Micro.Type.Eval(analyze,analyzeFun,Result(..))
+
+
+-- | Gather information about a function in the current environment.
+inferFunTypes ::
+  Map FunId MicroFunction {- ^ Source code for functions -} ->
+  TypeMetatables          {- ^ Metatables for prim types -} ->
+  Reference Table         {- ^ Global environemnt -}        ->
+  FunId                   {- ^ FunId to analyze -}          ->
+  IO (Map BlockName LocalState)
+inferFunTypes funsCode meta env fid =
+  do (gid,gs) <- importEnv meta env
+     let prims    = buildPrimMap gid gs
+         args     = initLuaArgList
+         ups      = Map.empty
+         generalResult   = analyzeFun funsCode prims fid ups args gs
+         result = extractInteresting fid generalResult
+     writeFile (show (pp fid)) $ show $ prInteresting $ result -- for debug
+     return result
+
+
 
 
 inferTypes :: TypeMetatables    {- ^ Metatables for prim types -} ->

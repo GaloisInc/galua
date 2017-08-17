@@ -17,6 +17,8 @@ import           Data.Maybe(catMaybes,maybeToList,fromMaybe)
 import           Data.Ord(comparing)
 
 import Galua.Code
+import Galua.Micro.AST(MicroFunction)
+import Galua.Micro.Translate(translateTop)
 import Galua.Debugger.PrettySource (lexChunk,Line,NameId,LocatedExprName)
 import Galua.Debugger.Options
 
@@ -27,6 +29,16 @@ data Chunks = Chunks
 
   , allFunNames    :: Map FunId FunVisName
     -- ^ User visiable names for known functions.
+
+  , allMicroFuns   :: Map FunId MicroFunction
+    -- ^ Code for all functions in a form suitable for analysis and compilation
+  }
+
+blankChunks :: Chunks
+blankChunks = Chunks
+  { topLevelChunks = Map.empty
+  , allFunNames    = Map.empty
+  , allMicroFuns   = Map.empty
   }
 
 -- | All information needed to show a nice user readable function name.
@@ -57,6 +69,7 @@ addTopLevel mbName bytes cid fun Chunks { .. } =
                                (Map.insert (rootFun cid) chunkName allFunNames)
                              $ concat
                              $ unfoldr nextFun [(rootFun cid,fun)]
+         , allMicroFuns = Map.union (translateTop cid fun) allMicroFuns
          }
   where
   bytes'
@@ -102,8 +115,13 @@ addTopLevel mbName bytes cid fun Chunks { .. } =
 
 -- | Source code for a chunk.
 data Source = Source { srcName  :: Maybe String
+                       -- ^ Name of the chunk, if any.
+
                      , srcLines :: Vector Line
+                       -- ^ Syntax high-lighted lines
+
                      , srcNames :: Map NameId LocatedExprName
+                       -- ^ All names in the check, with info.
                      }
 
 
