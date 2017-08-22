@@ -76,7 +76,7 @@ compile modNameStr modText' =
                    return $! unsafeCoerce result
 
   where
-  dbg dflags = dflags {-
+  dbg dflags = const dflags $
     let add x y = insert (fromEnum x) y
     in dflags
          { generalFlags = add Opt_SuppressCoercions
@@ -88,9 +88,9 @@ compile modNameStr modText' =
                         $ generalFlags dflags
 
          , dumpFlags = add Opt_D_dump_simpl
-                     $ add Opt_D_dump_simpl_stats
+                     -- $ add Opt_D_dump_simpl_stats
                      $ dumpFlags dflags
-         } -}
+         }
 
 -- | Exception, which is thrown if compilation fails.
 data CompileException = CompilationFail | TypeError deriving Show
