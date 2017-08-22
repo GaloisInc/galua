@@ -51,7 +51,7 @@ library
   other-modules:       CMath
 
   -- We rely on internal details of hashtables, so we have a tight bound
-  build-depends:       base                 >=4.8  && <4.10,
+  build-depends:       base                 >=4.8  && <4.11,
                        ghc-prim             >=0.5  && <0.6,
                        primitive            >=0.6  && <0.7,
 

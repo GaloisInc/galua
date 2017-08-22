@@ -44,7 +44,7 @@ library
                        Galua.Micro.Compile
 
   -- We rely on internal details of hashtables, so we have a tight bound
-  build-depends:       base                 >=4.8  && <4.10,
+  build-depends:       base                 >=4.8  && <4.11,
                        containers           >=0.5  && <0.6,
                        vector               >=0.10 && <0.13,
                        bytestring           >=0.10 && <0.11,
