@@ -157,7 +157,7 @@ data TableV = TableV
 
 -- | A function value. Currently when a function is called, we
 -- analyize it again--one for each call site.
--- Instead, we could use somethink akin `FunBehavior` instead,
+-- Instead, we could use something akin `FunBehavior` instead,
 -- which summarizes the behavior of the function.
 data FunV = FunV
   { functionUpVals :: Map UpIx (WithTop (Set RefId)) -- ^ UpValues
@@ -171,6 +171,7 @@ data FunImpl
   | LuaFunImpl FunId
   deriving (Generic,Eq,Show)
 
+{-
 -- | A type for a function.  Similar to a pre- post-condition pair.
 -- XXX: This is unused...
 data FunBehavior = FunBehavior
@@ -181,6 +182,7 @@ data FunBehavior = FunBehavior
     -- and arguments.
   }
 
+
 -- | Information about the return type of a function, and its side-effects.
 data FunPost = FunPost
   { funReturns    :: List Value     -- ^ Values that are returns
@@ -188,6 +190,7 @@ data FunPost = FunPost
   , funModTables  :: Set TableId    -- ^ Tables that might be modified
   , funModRefs    :: Set RefId      -- ^ Heap locations that might be modified
   } deriving (Eq,Show,Generic)
+-}
 
 
 -- | A helper type to keep track of a specific concrete values
@@ -555,10 +558,11 @@ instance Lattice a => Lattice (List a) where
               (_,[])             -> map (`addNewInfo` oldD) ns
 
 
+{-
 instance Lattice FunPost where
   bottom = default_bottom
   addNewInfo = default_addNewInfo
-
+-}
 --------------------------------------------------------------------------------
 -- Instances for products.
 
