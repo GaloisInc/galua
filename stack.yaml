@@ -10,8 +10,8 @@ packages:
 - location: galua-spec
 - location: lib/dwarf-tools
 - location: lib/language-lua
+- location: lib/lua-bc
 - location: https://github.com/yav/dump-core/archive/master.zip
-- location: https://github.com/GaloisInc/lua-bc/archive/master.zip
   extra-dep: true
 
 resolver: lts-9.0

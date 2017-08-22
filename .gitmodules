@@ -11,3 +11,6 @@
 [submodule "lib/language-lua"]
 	path = lib/language-lua
 	url = https://github.com/glguy/language-lua.git
+[submodule "lib/lua-bc"]
+	path = lib/lua-bc
+	url = git@github.com:GaloisInc/lua-bc.git
