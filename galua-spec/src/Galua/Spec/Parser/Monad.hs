@@ -51,7 +51,8 @@ runParser (Parser m) ts = case m rw of
   rw = RW { next    = []
           , lastPos = SourcePos { sourceLine = 0
                                 , sourceColumn = 0
-                                , sourceIndex = -1 }
+                                , sourceIndex = -1
+                                , sourceFile = Text.pack "" }
           , tokens = ts
           , layoutContext = []
           }

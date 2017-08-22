@@ -19,7 +19,7 @@ extra-deps:
 - config-value-0.5
 - config-value-getopt-0.1.0.0
 - elf-0.27
-- alex-tools-0.1.1.0
+- alex-tools-0.3
 - lua-bc-0.1.1
 - GraphSCC-1.0.4
 - monadLib-3.7.3

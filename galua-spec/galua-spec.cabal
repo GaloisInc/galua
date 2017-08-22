@@ -23,8 +23,8 @@ library
     Galua.Spec.Parser.Grammar,
     Galua.Spec.Parser.Monad
 
-  build-depends:       base >=4.8 && <4.10,
-                       alex-tools >=0.1 && <0.2,
+  build-depends:       base >=4.8 && <4.11,
+                       alex-tools >=0.3 && <0.4,
                        array >=0.5 && <0.6,
                        language-lua >= 0.11,
                        text, pretty, containers, vector, monadLib, pretty-show

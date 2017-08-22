@@ -32,7 +32,7 @@ indentOf = sourceColumn . startOf
 addLayoutTokens :: [ Lexeme Token ] -> [ Lexeme Token ]
 addLayoutTokens ts =
   case ts of
-    []     -> [ open 1 startPos ]
+    []     -> [ open 1 (startPos "") ]
     x : xs ->
       case lexemeToken x of
         KW_open_brace -> x : goIndent x xs

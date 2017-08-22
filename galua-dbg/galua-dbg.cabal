@@ -49,10 +49,10 @@ library
   other-modules:    HexFloatFormat
 
   build-depends:       lua-bc               >=0.1  && <0.2,
-                       base                 >=4.8  && <4.10,
-                       config-value         >=0.5 && <0.6,
+                       base                 >=4.8  && <4.11,
+                       config-value         >=0.5 && <0.7,
                        config-value-getopt  >=0.1 && < 0.2,
-                       template-haskell     >=2.10 && <2.12,
+                       template-haskell     >=2.10 && <2.13,
                        directory            >=1.2.2 && <1.4,
                        unordered-containers >=0.2.5.1 && <0.3,
                        clock                >=0.7 && <0.8,
@@ -73,8 +73,7 @@ library
                        galua-rts,
                        galua-spec,
                        alex-tools,
-                       pretty,
-                       dump-core
+                       pretty
 
 
   hs-source-dirs:      src

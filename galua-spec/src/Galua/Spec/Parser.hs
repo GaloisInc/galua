@@ -1,3 +1,4 @@
+{-# Language OverloadedStrings #-}
 module Galua.Spec.Parser
   ( module Galua.Spec.Parser
   , Lexeme(..)
@@ -19,7 +20,7 @@ import Galua.Spec.Parser.Layout(addLayoutTokens)
 
 -- | Construct a list of lexemes.  Preserves white space.
 lexText :: Text -> [ Lexeme Token ]
-lexText txt = lexer (initialInput txt)
+lexText txt = lexer (initialInput "" txt)
 
 -- | Parse a stream of lexemes.
 specFromTokens :: [ Lexeme Token ] -> Either ParseError (Spec Parsed)
