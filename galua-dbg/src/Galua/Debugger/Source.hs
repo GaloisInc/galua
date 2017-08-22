@@ -60,6 +60,20 @@ data ChunkInfo = ChunkInfo
   }
 
 
+lookupFun :: Chunks -> FunId -> Maybe Function
+lookupFun chunks fid =
+  case funIdList fid of
+    [] -> Nothing
+    r : rs -> go rs . chunkFunction =<< Map.lookup r (topLevelChunks chunks)
+  where
+  go path fun =
+    case path of
+      []     -> Just fun
+      x : xs -> go xs =<< (funcNested fun Vector.!? x)
+
+
+
+
 
 addTopLevel ::
   Maybe String -> ByteString -> Int -> Function -> Chunks -> Chunks

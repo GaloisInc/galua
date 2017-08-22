@@ -84,7 +84,6 @@ import           Data.Text(Text)
 import qualified Data.Text as Text
 
 import           Foreign (Ptr)
-import qualified Data.Vector as Vector
 import           Data.IORef(IORef,readIORef,writeIORef,
                             modifyIORef,modifyIORef',newIORef)
 
@@ -475,18 +474,10 @@ prepareCondition dbg (pc,fid) expr =
 
 lookupFID :: Debugger -> FunId -> IO Function
 lookupFID dbg fid =
-  case funIdList fid of
-    [] -> fail "Invalid chunk"
-    r : rs ->
-      do chunks <- readIORef (dbgSources dbg)
-         case go rs . chunkFunction =<< Map.lookup r (topLevelChunks chunks) of
-           Nothing  -> fail "Invalid chunk."
-           Just fun -> return fun
-  where
-  go path fun =
-    case path of
-      []     -> return fun
-      x : xs -> go xs =<< (funcNested fun Vector.!? x)
+  do chunks <- readIORef (dbgSources dbg)
+     case lookupFun chunks fid of
+       Nothing -> fail "Invalid chunk"
+       Just f  -> return f
 
 removeBreakPoint :: Debugger -> (Int,FunId) -> IO ()
 removeBreakPoint dbg@Debugger { dbgBreaks } loc =

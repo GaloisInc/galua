@@ -37,7 +37,11 @@ type LexToken = Lexeme L.Token
 newtype Line    = Line [Token]
                   deriving Show
 
-data Token      = Token TokenType Text (Maybe NameId) [NameId] (Maybe FunId)
+data Token      = Token TokenType         -- What sort of token is this
+                        Text              -- The actual text of the token
+                        (Maybe NameId)    -- A name token, may refer to stuff
+                        [NameId]          -- Part of these names
+                        (Maybe FunId)     -- Does it refer to a function
                   deriving Show
 
 data TokenType  = Keyword | Operator | Symbol | Ident | Literal
@@ -47,7 +51,8 @@ data TokenType  = Keyword | Operator | Symbol | Ident | Literal
 omittedLine :: Line
 omittedLine = Line [Token Comment "..." Nothing [] Nothing]
 
-lexChunk :: Int -> String -> BS.ByteString -> (Vector Line, Map NameId LocatedExprName)
+lexChunk :: Int -> String -> BS.ByteString ->
+                                      (Vector Line, Map NameId LocatedExprName)
 lexChunk chunkId name bytes =
     ( Vector.fromList
       $ map (Line . map token)
@@ -100,6 +105,10 @@ aTokLine :: AnnotToken -> Int
 aTokLine = sourceLine . sourceFrom . getRange
 
 
+-- | Identifies a specific occurance of a name.
+-- We use the start and end character positions to identify the name.
+-- Note that something like @a.b.c@ is also considered a name, so
+-- names may be nested.
 data NameId = NameId !Int !Int
               deriving (Show,Eq,Ord)
 
