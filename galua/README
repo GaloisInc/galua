@@ -1,0 +1,18 @@
+This package contains the main part of the Lua interpreter, which is
+used both by the interpreter and the debugger.  The main modules of
+interest are:
+
+  * 'Galua.OpcodeInterpreter', which contains the implementations of
+    all Lua byte-codes
+
+  * 'Galua.Stepper', cotains the logic for "punctuated" execution---running
+    multiple-opcodes, calling and returning from functions, etc.
+
+  * 'Galua.Overloading' all things related to Lua's overloading features
+    (e.g., treating tables like functions, etc)
+
+  * 'Galua.CApi' contains the implementation of the C interface to Lua---
+    these are the functions that the Lua interpreter exposes to the C world.
+
+
+

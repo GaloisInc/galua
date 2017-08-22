@@ -1,0 +1,11 @@
+This package contains code for abstract intepretation (type inference)
+and run-time code-generation of Lau code.  Both of these featuers use
+a lower-lever representation of byte-codes (aka Micro Lua).
+Modules of interest:
+
+  * Galua.Micro.AST: asbtract syntax for micro Lua
+  * Galua.Micro.JIT: compilation of Micro Lua (via Haskell and GHC)
+  * Galua.Micro.Translate(.*): translation from Lua byte-code to Micro Lua
+  * Galua.Micro.Type.*: abstract interpretation of Micro Lua
+
+

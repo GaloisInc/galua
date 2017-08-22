@@ -1,0 +1,11 @@
+This package contains the core types used by both the interpreter
+and the JIT compiler.  This inclues:
+
+  * Representation of Lua byte-codes (Galua.Code)
+  * Representation of Lua values (Galua.Value)
+  * Representations for varius execution-related constructs,
+    such as call stacks, and stack frames (Galua.Mach)
+
+
+
+

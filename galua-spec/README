@@ -1,0 +1,7 @@
+This package contains a specification language for describing Lua environments.
+It is not quite complete and integrated with the rest of the debugger, but
+the intention is that Lua frameworks, such as Lua Love, can provide a
+specification file describing the types of the various methods they provide,
+which can in turn be used by the system to check for correct uses of the
+API, and resolving of Lua overloading, which leads to more efficient code.
+

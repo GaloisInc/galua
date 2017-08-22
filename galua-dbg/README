@@ -1,0 +1,7 @@
+This package contains the Galua debugger, in particular parts related to
+the user interface and actual debugging features.
+Modules of interest might be:
+
+  * Galua.Debugger: contains the strucutre with the debugger state
+  * Galua.Debugger.Server: the web-server used by the front end
+  * Galua.Debugger.View: code to export the debugger state to JSON
