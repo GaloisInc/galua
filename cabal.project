@@ -1,9 +1,11 @@
 packages:
   lib/hashtables
-  lib/dump-core
-  lib/dwarf-tools
   lib/language-lua
+  lib/lua-bc
+  lib/dwarf-tools
+  lib/macho
+  galua-rts
   galua
-  galua-analysis
+  galua-jit
   galua-dbg
   galua-spec
