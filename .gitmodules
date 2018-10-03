@@ -1,6 +1,6 @@
 [submodule "lib/hashtables"]
 	path = lib/hashtables
-	url = https://github.com/glguy/hashtables
+	url = https://github.com/gregorycollins/hashtables
 	branch = nextByIndex
 [submodule "lib/dwarf-tools"]
 	path = lib/dwarf-tools
